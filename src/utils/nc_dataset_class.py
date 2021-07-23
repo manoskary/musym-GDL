@@ -29,12 +29,12 @@ FILE_LIST = [
 	]
 
 class MozartPianoGraphDataset(DGLDataset):
-	def __init__(self, url, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
+	def __init__(self, name, url, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
 		self.add_inverse_edges = add_inverse_edges
 		self.add_aug = add_aug
 		self.select_piece = select_piece
 		# url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mozart_piano_sonatas/"
-		super().__init__(name='mozart_piano_sonatas_graph', raw_dir=raw_dir, url=url)
+		super().__init__(name=name, raw_dir=raw_dir, url=url)
 
 	def process(self):
 		self.PIECE_LIST = PIECE_LIST
@@ -127,16 +127,12 @@ class MozartPianoGraphDataset(DGLDataset):
 						path = self.url + "/" + fn + "/" + csv
 						if csv == "note.csv":
 							notes = pd.read_csv(path)
-							note_node_features = torch.from_numpy(notes[["onset", "duration", "pitch"]].to_numpy())
+							note_node_features = torch.from_numpy(notes[["onset", "duration", "ts", "pitch"]].to_numpy())
 							note_node_labels = torch.from_numpy(notes['label'].astype('category').cat.codes.to_numpy()).long()
 						elif csv == "rest.csv":      
 							rests = pd.read_csv(path)
-							a = rests[["onset", "duration"]].to_numpy()
+							a = rests[["onset", "duration", "ts"]].to_numpy()
 							rest_node_features = torch.from_numpy(np.hstack((a,np.zeros((a.shape[0],1)))))
-							rest_node_labels = torch.from_numpy(rests['label'].astype('category').cat.codes.to_numpy()).long()
-						elif csv == "ts.csv":
-							ts = pd.read_csv(path)
-							rest_node_features = torch.from_numpy(np.zeros((ts.shape[0],3)))
 							rest_node_labels = torch.from_numpy(rests['label'].astype('category').cat.codes.to_numpy()).long()
 						else :
 							name = tuple(csv.split(".")[0].split("-"))
@@ -164,7 +160,7 @@ class MozartPianoGraphDataset(DGLDataset):
 						self.graph = dgl.batch_hetero([g, graph])
 					except AttributeError:
 						self.graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" : rests.shape[0]})
-						self.graph.nodes['note'].data['feature'] = note_node_features.float() + torch.tensor([0, 0 , -6]).float()
+						self.graph.nodes['note'].data['feature'] = note_node_features.float()
 						self.graph.nodes['note'].data['labels'] = note_node_labels
 						self.graph.nodes['rest'].data['feature'] = rest_node_features.float()
 						self.graph.nodes['rest'].data['labels'] = rest_node_labels
@@ -177,8 +173,8 @@ class MozartPianoGraphDataset(DGLDataset):
 							resize_factor = random.choice([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5])
 							n = random.choice(range(-6, 6, 1))
 							if resize_factor != 1 or n != 0:
-								dur_resize = torch.tensor([resize_factor, resize_factor, 1]).float()
-								pitch_aug = torch.tensor([0, 0 , n]).float()
+								dur_resize = torch.tensor([resize_factor, resize_factor, resize_factor, 1]).float()
+								pitch_aug = torch.tensor([0, 0 , 0, n]).float()
 								graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" :rests.shape[0]})
 								graph.nodes['note'].data['feature'] = note_node_features.float()*dur_resize + pitch_aug
 								graph.nodes['note'].data['labels'] = note_node_labels
@@ -220,14 +216,14 @@ class MozartPianoGraphDataset(DGLDataset):
 
 class MPGD_cad(MozartPianoGraphDataset):
 	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mozart_piano_sonatas/"
-		super.__init__(name='mpgd_cad', url=url)
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_cadlab"
+		super().__init__(name='mpgd_cad', url=url)
 
 
 class MPGD_onset(MozartPianoGraphDataset):
 	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mozart_piano_sonatas_onset/"
-		super.__init__(name='mpgd_onset', url=url)
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_onlab/"
+		super().__init__(name='mpgd_onset', url=url)
 
 
 
