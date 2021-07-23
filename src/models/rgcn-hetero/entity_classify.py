@@ -1,4 +1,4 @@
-"""Entity Classification for Music with Relational Graph Neural Networks
+"""Entity Classification for Music with Relational Graph Convolutional Networks
 
 Author : Emmanouil Karystinaios
 

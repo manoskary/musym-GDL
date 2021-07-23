@@ -19,5 +19,25 @@ Cadence and Voice Leading Detection in Symbolic Classical Music is a challenging
 ## Dependencies
 
 - pytorch  1+
+
 - dgl v0.6
+
 - pandas
+
+  
+
+### Quickstart
+
+Install requirements with pip: 
+
+```shell
+pip install requirements.txt
+```
+
+Run a experiment :
+
+```shell
+cd src/models/rgcn-hetero
+python entity_classify.py -d mps_onset --testing --gpu 0
+```
+
