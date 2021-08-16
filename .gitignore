@@ -127,3 +127,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+# Specific folders with artifacts and samples to be produced on the first run
+
+data/

@@ -19,7 +19,7 @@ PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
-from utils import MPGD_cad, MPGD_onset 
+from utils import MPGD_cad, MPGD_onset, MPGD_onset_test
 
 # Define a Heterograph Conv model
 class RGCN(nn.Module):
@@ -80,7 +80,8 @@ class RGCN(nn.Module):
             A dictionary with the predict category node type features.
         """
         # inputs are features of nodes
-        h = {k : F.normalize(v) for k, v in inputs.items()}  
+        # h = {k : F.normalize(v) for k, v in inputs.items()}  
+        h = inputs
         for i, conv_l in enumerate(self.layers):
             h = conv_l(graph, h)
             if i == len(self.layers)-1:
@@ -163,6 +164,9 @@ def softmax_focal_loss(x, target, gamma=2, alpha=0.5):
     return th.sum(loss) / pos_num
 
 
+def normalize(x, eps=1e-8):
+    normed = (x - x.mean(axis=0) ) / (x.std(axis=0) + eps)
+    return normed
 
 def main(args):
     """
@@ -177,6 +181,9 @@ def main(args):
     elif args.dataset == "mps_onset":
         print("Loading Mozart Sonatas For Bar Onset Detection")
         dataset = MPGD_onset()
+    elif args.dataset == "mps_onset_test":
+        print("Loading Mozart Sonatas For Bar Onset Detection")
+        dataset = MPGD_onset_test()
     else:
         raise ValueError()
 
@@ -219,7 +226,10 @@ def main(args):
     model = RGCN(in_feats, args.n_hidden, num_classes, g.etypes, 
         num_hidden_layers=args.n_layers - 2)
     # Load the node features as a Dictionary to feed to the forward layer.
-    node_features = {nt: g.nodes[nt].data['feature'] for nt in g.ntypes}
+    if args.normalize:
+        node_features = {nt: normalize(g.nodes[nt].data['feature']) for nt in g.ntypes}
+    else:
+        node_features = {nt: g.nodes[nt].data['feature'] for nt in g.ntypes}
 
     if use_cuda:
         model.cuda()
@@ -277,7 +287,7 @@ if __name__ == '__main__':
             help="number of filter weight matrices, default: -1 [use all]")
     parser.add_argument("--n-layers", type=int, default=2,
             help="number of propagation rounds")
-    parser.add_argument("-e", "--n-epochs", type=int, default=50,
+    parser.add_argument("-e", "--n-epochs", type=int, default=300,
             help="number of training epochs")
     parser.add_argument("-d", "--dataset", type=str, required=True,
             help="dataset to use")
@@ -287,6 +297,8 @@ if __name__ == '__main__':
             help="l2 norm coef")
     parser.add_argument("--use-self-loop", default=False, action='store_true',
             help="include self feature as a special relation")
+    parser.add_argument("--normalize", default=True, required=False, type=bool,
+            help="Normalize with 0 mean and unit variance")
     fp = parser.add_mutually_exclusive_group(required=False)
     fp.add_argument('--validation', dest='validation', action='store_true')
     fp.add_argument('--testing', dest='validation', action='store_false')
