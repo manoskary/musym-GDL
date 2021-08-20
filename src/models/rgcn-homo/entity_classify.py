@@ -16,14 +16,17 @@ import dgl.nn as dglnn
 from dgl import load_graphs
 from dgl.data.utils import load_info
 
-from models import SAGE, SGC
+from models import SGC
+
+
+from train_full import GraphSAGE as SAGE
 
 
 PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
-from utils import MPGD_homo_onset
+from utils import MPGD_homo_onset, toy_homo_onset
 
 
 def normalize(x, eps=1e-8):
@@ -53,6 +56,11 @@ def main(args):
             # Load the Homogeneous Graph
             g= dataset[0]
             num_classes = dataset.num_classes
+    elif args.dataset == "toy":
+        dataset =  toy_homo_onset()
+        # Load the Homogeneous Graph
+        g= dataset[0]
+        num_classes = dataset.num_classes        
 
     else:
         raise ValueError()
@@ -99,7 +107,8 @@ def main(args):
     # create model
     in_feats = node_features.shape[1]
     model = SAGE(in_feats, args.n_hidden, num_classes,
-        num_hidden_layers=args.n_layers - 2, aggr_type="pool")
+        n_layers=args.n_layers, activation=F.relu, dropout=args.dropout, aggregator_type=args.aggregator_type)
+    # model = SGC(in_feats, args.n_hidden, args.n_hidden, num_hidden_layers=args.n_layers-2)
     if use_cuda:
         model.cuda()
     # optimizer
@@ -167,6 +176,8 @@ if __name__ == '__main__':
             help="include self feature as a special relation")
     parser.add_argument("--normalize", default=False, required=False, type=bool,
             help="Normalize with 0 mean and unit variance")
+    parser.add_argument("--aggregator-type", type=str, default="gcn",
+                        help="Aggregator type: mean/gcn/pool/lstm")
     parser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
     fp = parser.add_mutually_exclusive_group(required=False)
     fp.add_argument('--validation', dest='validation', action='store_true')

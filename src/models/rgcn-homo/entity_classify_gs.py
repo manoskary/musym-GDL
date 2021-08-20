@@ -150,13 +150,13 @@ def train(config, checkpoint_dir=None, data_dir=None):
     print()
 
 
-def main(num_samples=10, max_num_epochs=10, gpus_per_trial=2):
+def main(num_samples=10, max_num_epochs=10, gpus_per_trial=0):
     data_dir = os.path.abspath("./data")
     config = {
-        "l1": tune.sample_from(lambda _: 2 ** np.random.randint(2, 9)),
-        "l2": tune.sample_from(lambda _: 2 ** np.random.randint(2, 9)),
+        "n-hidden": tune.sample_from(lambda _: 2**np.random.randint(4, 7)),
+        "n_epochs": tune.choice([50, 100, 150]),
         "lr": tune.loguniform(1e-4, 1e-1),
-        "batch_size": tune.choice([2, 4, 8, 16])
+        "n-layers": tune.choice([2, 3, 4, 5])
     }
     scheduler = ASHAScheduler(
         metric="loss",
@@ -202,10 +202,5 @@ def main(num_samples=10, max_num_epochs=10, gpus_per_trial=2):
 
 if __name__ == '__main__':
     
-    config = {
-        "n-hidden": tune.sample_from(lambda _: 2**np.random.randint(4, 7)),
-        "n_epochs": tune.choice([50, 100, 150]),
-        "lr": tune.loguniform(1e-4, 1e-1),
-        "n-layers": tune.choice([2, 3, 4, 5])
-    }
+    
     main()
