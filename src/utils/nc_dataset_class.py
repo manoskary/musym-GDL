@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch as torch
 from torch import tensor
+from torch.nn.functional import normalize
 import pandas as pd
 import random
 import dgl
@@ -59,6 +60,10 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 			self._process_select_piece()
 			n_nodes = self.graph.num_nodes()
 			n_train = int(n_nodes * 0.8)
+		elif "toy" in self.name:
+			self._process_toy()
+			n_nodes = self.graph.num_nodes()
+			n_train = int(n_nodes * 0.8)
 		else:             
 			print("------- Loading Train Pieces -------")
 			self._process_loop(self.train_piece_list)
@@ -69,7 +74,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 
 		# If your dataset is a node classification dataset, you will need to assign
 		# masks indicating whether a node belongs to training, validation, and test set.
-		self.num_classes = int(self.graph.ndata['labels'].max().item() + 1)
+		self.num_classes = int(self.graph.ndata['label'].max().item() + 1)
 		self.predict_category = "note"
 		n_nodes = self.graph.num_nodes()
 		
@@ -79,6 +84,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 		train_mask[:n_train] = True
 		test_mask[n_train :] = True
 		self.graph.ndata['train_mask'] = train_mask
+		self.graph.ndata['val_mask'] = train_mask
 		self.graph.ndata['test_mask'] = test_mask
 
 	def _process_loop(self, piece_list):            
@@ -112,13 +118,13 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 			try:
 				g = self.graph
 				graph = dgl.graph(edges)
-				graph.ndata['feature'] = note_node_features.float()
-				graph.ndata['labels'] = note_node_labels                    
+				graph.ndata['feat'] = note_node_features.float()
+				graph.ndata['label'] = note_node_labels                    
 				self.graph = dgl.batch([g, graph])
 			except AttributeError:
 				self.graph = dgl.graph(edges)
-				self.graph.ndata['feature'] = note_node_features.float()
-				self.graph.ndata['labels'] = note_node_labels
+				self.graph.ndata['feat'] = note_node_features.float()
+				self.graph.ndata['label'] = note_node_labels
 				
 
 
@@ -134,15 +140,15 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 							dur_resize = torch.tensor([resize_factor for _ in range(num_feat-1) + [1]]).float()
 							pitch_aug = torch.tensor([0 for _ in  range(num_feat-1)] + [n]).float()
 							graph = dgl.graph(edges)
-							graph.ndata['feature'] = note_node_features.float()*dur_resize + pitch_aug
-							graph.ndata['labels'] = note_node_labels
+							graph.ndata['feat'] = note_node_features.float()*dur_resize + pitch_aug
+							graph.ndata['label'] = note_node_labels
 							self.graph = dgl.batch([g, graph])
 						else:                           
 							num_feat = len(self.features)
 							dur_resize = torch.tensor([resize_factor for _ in range(num_feat)]).float()
 							graph = dgl.graph(edges)
-							graph.ndata['feature'] = note_node_features.float()*dur_resize
-							graph.ndata['labels'] = note_node_labels
+							graph.ndata['feat'] = note_node_features.float()*dur_resize
+							graph.ndata['label'] = note_node_labels
 							self.graph = dgl.batch([g, graph])
 
 
@@ -168,9 +174,45 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 					edges_dst = dst
 				edges = (edges_src, edges_dst)
 		self.graph = dgl.graph(edges)
-		self.graph.ndata['feature'] = note_node_features.float()
-		self.graph.ndata['labels'] = note_node_labels
+		self.graph.ndata['feat'] = note_node_features.float()
+		self.graph.ndata['label'] = note_node_labels
 
+	def _process_toy(self):	
+		for ind in range(200):
+			for csv in self.FILE_LIST:
+				path = os.path.join(self.url, "toy_"+str(ind), csv)
+				if csv == "nodes.csv":
+					notes = pd.read_csv(path)
+					a = notes[self.features].to_numpy()
+					if self.normalize:
+						a = min_max_scaler(a)
+					note_node_features = torch.from_numpy(a)
+					note_node_labels = torch.from_numpy(notes['label'].astype('category').cat.codes.to_numpy()).long()
+				else :
+					edges_data = pd.read_csv(path)
+					if edges_data.empty:   
+						edges_src = torch.tensor([0])
+						edges_dst = torch.tensor([0])                       
+					else :
+						edges_src = torch.from_numpy(edges_data['src'].to_numpy())
+						edges_dst = torch.from_numpy(edges_data['dst'].to_numpy())
+					if self.add_inverse_edges:
+						src = torch.cat((edges_src, edges_dst))
+						dst = torch.cat((edges_dst, edges_src))
+						edges_src = src
+						edges_dst = dst
+					edges = (edges_src, edges_dst)
+			try:
+				g = self.graph
+				graph = dgl.graph(edges)
+				graph.ndata['feat'] = note_node_features.float()
+				graph.ndata['label'] = note_node_labels                    
+				self.graph = dgl.batch([g, graph])
+			except AttributeError:
+				self.graph = dgl.graph(edges)
+				self.graph.ndata['feat'] = note_node_features.float()
+				self.graph.ndata['label'] = note_node_labels
+			
 
 	def __getitem__(self, i):
 		return self.graph
@@ -254,10 +296,10 @@ class MozartPianoGraphDataset(DGLDataset):
 						edge_dict[inv_name] = (edges_dst, edges_src)
 
 			self.graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" :rests.shape[0]})
-			self.graph.nodes['note'].data['feature'] = note_node_features.float()
-			self.graph.nodes['note'].data['labels'] = note_node_labels
-			self.graph.nodes['rest'].data['feature'] = rest_node_features.float()
-			self.graph.nodes['rest'].data['labels'] = rest_node_labels
+			self.graph.nodes['note'].data['feat'] = note_node_features.float()
+			self.graph.nodes['note'].data['label'] = note_node_labels
+			self.graph.nodes['rest'].data['feat'] = rest_node_features.float()
+			self.graph.nodes['rest'].data['label'] = rest_node_labels
 		else:             
 			for fn in self.PIECE_LIST:
 				print(fn)
@@ -304,17 +346,17 @@ class MozartPianoGraphDataset(DGLDataset):
 					g = self.graph
 					
 					graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" :rests.shape[0]})
-					graph.nodes['note'].data['feature'] = note_node_features.float()
-					graph.nodes['note'].data['labels'] = note_node_labels
-					graph.nodes['rest'].data['feature'] = rest_node_features.float()
-					graph.nodes['rest'].data['labels'] = rest_node_labels
+					graph.nodes['note'].data['feat'] = note_node_features.float()
+					graph.nodes['note'].data['label'] = note_node_labels
+					graph.nodes['rest'].data['feat'] = rest_node_features.float()
+					graph.nodes['rest'].data['label'] = rest_node_labels
 					self.graph = dgl.batch_hetero([g, graph])
 				except AttributeError:
 					self.graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" : rests.shape[0]})
-					self.graph.nodes['note'].data['feature'] = note_node_features.float()
-					self.graph.nodes['note'].data['labels'] = note_node_labels
-					self.graph.nodes['rest'].data['feature'] = rest_node_features.float()
-					self.graph.nodes['rest'].data['labels'] = rest_node_labels
+					self.graph.nodes['note'].data['feat'] = note_node_features.float()
+					self.graph.nodes['note'].data['label'] = note_node_labels
+					self.graph.nodes['rest'].data['feat'] = rest_node_features.float()
+					self.graph.nodes['rest'].data['label'] = rest_node_labels
 
 
 				# Perform Data Augmentation
@@ -327,16 +369,16 @@ class MozartPianoGraphDataset(DGLDataset):
 							dur_resize = torch.tensor([resize_factor, resize_factor, resize_factor, 1]).float()
 							pitch_aug = torch.tensor([0, 0, 0, n]).float()
 							graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" :rests.shape[0]})
-							graph.nodes['note'].data['feature'] = note_node_features.float()*dur_resize + pitch_aug
-							graph.nodes['note'].data['labels'] = note_node_labels
-							graph.nodes['rest'].data['feature'] = rest_node_features.float()
-							graph.nodes['rest'].data['labels'] = rest_node_labels
+							graph.nodes['note'].data['feat'] = note_node_features.float()*dur_resize + pitch_aug
+							graph.nodes['note'].data['label'] = note_node_labels
+							graph.nodes['rest'].data['feat'] = rest_node_features.float()
+							graph.nodes['rest'].data['label'] = rest_node_labels
 							self.graph = dgl.batch_hetero([g, graph])
 
 
 		# If your dataset is a node classification dataset, you will need to assign
 		# masks indicating whether a node belongs to training, validation, and test set.
-		self.num_classes = int(self.graph.nodes['note'].data['labels'].max().item() + 1)
+		self.num_classes = int(self.graph.nodes['note'].data['label'].max().item() + 1)
 		self.predict_category = "note"
 		n_nodes = self.graph.num_nodes("note")
 		n_train = int(n_nodes * 0.8)
@@ -396,6 +438,13 @@ class MPGD_homo_onset(MozartPianoHomoGraphDataset):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mps_homo_onlab/"
 		super().__init__(name='mpgd_homo_onset', url=url, 
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=False, features=["onset", "ts"], save_path=save_path)
+
+class toy_homo_onset(MozartPianoHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
+		super().__init__(name='toy_homo_onset', url=url, 
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=False, features=["onset", "ts"], save_path=save_path)
+
 
 if __name__ == "__main__":
 	import dgl
