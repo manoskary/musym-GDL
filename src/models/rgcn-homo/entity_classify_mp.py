@@ -1,3 +1,10 @@
+"""Entity Classification with Mini Batch sampling for Music with Graph Convolutional Networks
+
+Author : Emmanouil Karystinaios
+
+Reference repo : https://github.com/melkisedeath/musym-GDL
+"""
+
 import argparse, gc
 import numpy as np
 import time
@@ -244,6 +251,5 @@ if __name__ == '__main__':
     # Pack data
     data = n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
            val_nfeat, val_labels, test_nfeat, test_labels
-    print(train_labels.shape)
 
     run(args, device, data)

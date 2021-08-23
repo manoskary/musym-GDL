@@ -1,4 +1,4 @@
-"""Entity Classification for Music with Relational Graph Convolutional Networks
+"""Entity Classification for Music with Graph Convolutional Networks
 
 Author : Emmanouil Karystinaios
 
@@ -17,9 +17,7 @@ from dgl import load_graphs
 from dgl.data.utils import load_info
 
 from models import SGC
-
-
-from train_full import GraphSAGE as SAGE
+from models import GraphSAGE as SAGE
 
 
 PACKAGE_PARENT = '..'
@@ -27,6 +25,7 @@ SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
 from utils import MPGD_homo_onset, toy_homo_onset
+from entity_classify_mp import load_reddit
 
 
 def normalize(x, eps=1e-8):
@@ -39,7 +38,7 @@ def main(args):
 
     """
 
-    # load graph data (from submodule repo)
+    # load graph data
     if args.dataset == 'mps_onset':
         print("Loading Mozart Sonatas For Cadence Detection")
         data_dir = os.path.abspath("./data")
@@ -50,20 +49,26 @@ def main(args):
             # Load the Homogeneous Graph
             g = load_graphs(graph_path)[0][0]
             info_path = os.path.join(data_dir, name, name + '_info.pkl')
-            num_classes = load_info(info_path)['num_classes']
+            n_classes = load_info(info_path)['num_classes']
         else:
             dataset =  MPGD_homo_onset(save_path = data_dir) # select_piece = "K533-1"
             # Load the Homogeneous Graph
             g= dataset[0]
-            num_classes = dataset.num_classes
+            n_classes = dataset.num_classes
     elif args.dataset == "toy":
         dataset =  toy_homo_onset()
         # Load the Homogeneous Graph
         g= dataset[0]
-        num_classes = dataset.num_classes        
-
+        n_classes = dataset.num_classes   
+    elif args.dataset == "cora":
+        dataset = dgl.data.CoraGraphDataset()
+        g= dataset[0]
+        n_classes = dataset.num_classes
+    elif args.dataset == "reddit":
+        g, n_classes = load_reddit()
     else:
         raise ValueError()
+
 
     # category = dataset.predict_category
     # num_classes = dataset.num_classes
@@ -71,7 +76,7 @@ def main(args):
     test_mask = g.ndata['test_mask']
     train_idx = th.nonzero(train_mask, as_tuple=False).squeeze()
     test_idx = th.nonzero(test_mask, as_tuple=False).squeeze()
-    labels = g.ndata['labels']
+    labels = g.ndata['label']
     # Informative label balance to choose loss (if balance is relevantly balanced change to cross_entropy loss)
     label_balance = {u : th.count_nonzero(labels == u)/labels.shape[0] for u in th.unique(labels)}
     print("The label balance is :", label_balance)
@@ -81,7 +86,8 @@ def main(args):
         val_idx = train_idx[:len(train_idx) // 5]
         train_idx = train_idx[len(train_idx) // 5:]
     else:
-        val_idx = train_idx
+        val_mask = g.ndata['val_mask']
+        val_idx = th.nonzero(val_mask, as_tuple=False).squeeze()
 
     # check cuda
     use_cuda = args.gpu >= 0 and th.cuda.is_available()
@@ -95,9 +101,9 @@ def main(args):
     
     # Load the node features as a Dictionary to feed to the forward layer.
     if args.normalize:
-        node_features = normalize(g.ndata['feature'])
+        node_features = normalize(g.ndata['feat'])
     else:
-        node_features = g.ndata['feature']
+        node_features = g.ndata['feat']
 
     if args.init_eweights:
         w = th.empty(g.num_edges())
@@ -106,7 +112,7 @@ def main(args):
     
     # create model
     in_feats = node_features.shape[1]
-    model = SAGE(in_feats, args.n_hidden, num_classes,
+    model = SAGE(in_feats, args.n_hidden, n_classes,
         n_layers=args.n_layers, activation=F.relu, dropout=args.dropout, aggregator_type=args.aggregator_type)
     # model = SGC(in_feats, args.n_hidden, args.n_hidden, num_hidden_layers=args.n_layers-2)
     if use_cuda:

@@ -31,6 +31,7 @@ class GraphSAGE(nn.Module):
 
     def forward(self, graph, inputs):
         h = self.dropout(inputs)
+        h = F.normalize(h)
         for l, layer in enumerate(self.layers):
             h = layer(graph, h)
             if l != len(self.layers) - 1:

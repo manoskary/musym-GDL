@@ -1,6 +1,3 @@
-# import torch as th
-import math
-
 import torch
 from sklearn.model_selection import StratifiedKFold
 
@@ -13,7 +10,6 @@ class StratifiedSampler:
             y = y.numpy()
         assert len(y.shape) == 1, 'label array must be 1D'
         n_batches = int(len(y) / batch_size)
-        print(y.shape)
         self.skf = StratifiedKFold(n_splits=n_batches, shuffle=shuffle)
         self.X = torch.randn(len(y),1).numpy()
         self.y = y
