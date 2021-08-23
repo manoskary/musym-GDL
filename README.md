@@ -31,13 +31,13 @@ Cadence and Voice Leading Detection in Symbolic Classical Music is a challenging
 Install requirements with pip: 
 
 ```shell
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 Run a experiment :
 
 ```shell
-cd src/models/rgcn-hetero
-python entity_classify.py -d mps_onset --testing --gpu 0
+cd src/models/rgcn-homo
+python entity_classify.py -d cora --testing --gpu 0
 ```
 

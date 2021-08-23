@@ -172,47 +172,48 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 					dst = torch.cat((edges_dst, edges_src))
 					edges_src = src
 					edges_dst = dst
-				edges = (edges_src, edges_dst)
+				edges = (edges_src, edges_dst) 
 		self.graph = dgl.graph(edges)
 		self.graph.ndata['feat'] = note_node_features.float()
 		self.graph.ndata['label'] = note_node_labels
 
 	def _process_toy(self):	
-		for ind in range(200):
-			for csv in self.FILE_LIST:
-				path = os.path.join(self.url, "toy_"+str(ind), csv)
-				if csv == "nodes.csv":
-					notes = pd.read_csv(path)
-					a = notes[self.features].to_numpy()
-					if self.normalize:
-						a = min_max_scaler(a)
-					note_node_features = torch.from_numpy(a)
-					note_node_labels = torch.from_numpy(notes['label'].astype('category').cat.codes.to_numpy()).long()
+		# for ind in range(200):
+		for csv in self.FILE_LIST:
+			# path = os.path.join(self.url, "toy_"+str(ind), csv)
+			path = os.path.join(self.url, "toy", csv)
+			if csv == "nodes.csv":
+				notes = pd.read_csv(path)
+				a = notes[self.features].to_numpy()
+				if self.normalize:
+					a = min_max_scaler(a)
+				note_node_features = torch.from_numpy(a)
+				note_node_labels = torch.from_numpy(notes['label'].astype('category').cat.codes.to_numpy()).long()
+			else :
+				edges_data = pd.read_csv(path)
+				if edges_data.empty:   
+					edges_src = torch.tensor([0])
+					edges_dst = torch.tensor([0])                       
 				else :
-					edges_data = pd.read_csv(path)
-					if edges_data.empty:   
-						edges_src = torch.tensor([0])
-						edges_dst = torch.tensor([0])                       
-					else :
-						edges_src = torch.from_numpy(edges_data['src'].to_numpy())
-						edges_dst = torch.from_numpy(edges_data['dst'].to_numpy())
-					if self.add_inverse_edges:
-						src = torch.cat((edges_src, edges_dst))
-						dst = torch.cat((edges_dst, edges_src))
-						edges_src = src
-						edges_dst = dst
-					edges = (edges_src, edges_dst)
-			try:
-				g = self.graph
-				graph = dgl.graph(edges)
-				graph.ndata['feat'] = note_node_features.float()
-				graph.ndata['label'] = note_node_labels                    
-				self.graph = dgl.batch([g, graph])
-			except AttributeError:
-				self.graph = dgl.graph(edges)
-				self.graph.ndata['feat'] = note_node_features.float()
-				self.graph.ndata['label'] = note_node_labels
-			
+					edges_src = torch.from_numpy(edges_data['src'].to_numpy())
+					edges_dst = torch.from_numpy(edges_data['dst'].to_numpy())
+				if self.add_inverse_edges:
+					src = torch.cat((edges_src, edges_dst))
+					dst = torch.cat((edges_dst, edges_src))
+					edges_src = src
+					edges_dst = dst
+				edges = (edges_src, edges_dst)
+		try:
+			g = self.graph
+			graph = dgl.graph(edges)
+			graph.ndata['feat'] = note_node_features.float()
+			graph.ndata['label'] = note_node_labels                    
+			self.graph = dgl.batch([g, graph])
+		except AttributeError:
+			self.graph = dgl.graph(edges)
+			self.graph.ndata['feat'] = note_node_features.float()
+			self.graph.ndata['label'] = note_node_labels
+		
 
 	def __getitem__(self, i):
 		return self.graph
