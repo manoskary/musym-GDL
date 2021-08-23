@@ -15,7 +15,7 @@ import dgl
 import dgl.nn as dglnn
 from dgl import load_graphs
 from dgl.data.utils import load_info
-
+import torch
 from models import SGC
 from models import GraphSAGE as SAGE
 
@@ -125,6 +125,7 @@ def main(args):
     dur = []
     model.train()
     for epoch in range(args.n_epochs):
+        model.train()
         optimizer.zero_grad()
         if epoch > 5:
             t0 = time.time()
@@ -137,10 +138,12 @@ def main(args):
 
         if epoch > 5:
             dur.append(t1 - t0)
-        train_acc = th.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
-        # val_loss = softmax_focal_loss(logits[val_idx], labels[val_idx])
-        val_loss = F.cross_entropy(logits[val_idx], labels[val_idx])
-        val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
+        with torch.no_grad():
+            model.eval()
+            train_acc = th.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
+            # val_loss = softmax_focal_loss(logits[val_idx], labels[val_idx])
+            val_loss = F.cross_entropy(logits[val_idx], labels[val_idx])
+            val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
               format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
     print()
@@ -148,10 +151,11 @@ def main(args):
         th.save(model.state_dict(), args.model_path)
 
     model.eval()
-    logits = model.forward(g, node_features)
-    # test_loss = softmax_focal_loss(logits[test_idx], labels[test_idx])
-    test_loss = F.cross_entropy(logits[test_idx], labels[test_idx])
-    test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
+    with torch.no_grad():
+        logits = model.forward(g, node_features)
+        # test_loss = softmax_focal_loss(logits[test_idx], labels[test_idx])
+        test_loss = F.cross_entropy(logits[test_idx], labels[test_idx])
+        test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
 
     print("Test Acc: {:.4f} | Test loss: {:.4f}| " .format(test_acc, test_loss.item()))
     print()
