@@ -15,7 +15,6 @@ import dgl
 import dgl.nn as dglnn
 from dgl import load_graphs
 from dgl.data.utils import load_info
-import torch
 from models import SGC
 from models import GraphSAGE as SAGE
 
@@ -138,7 +137,7 @@ def main(args):
 
         if epoch > 5:
             dur.append(t1 - t0)
-        with torch.no_grad():
+        with th.no_grad():
             model.eval()
             train_acc = th.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
             # val_loss = softmax_focal_loss(logits[val_idx], labels[val_idx])
@@ -151,7 +150,7 @@ def main(args):
         th.save(model.state_dict(), args.model_path)
 
     model.eval()
-    with torch.no_grad():
+    with th.no_grad():
         logits = model.forward(g, node_features)
         # test_loss = softmax_focal_loss(logits[test_idx], labels[test_idx])
         test_loss = F.cross_entropy(logits[test_idx], labels[test_idx])
