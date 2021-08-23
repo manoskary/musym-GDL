@@ -442,7 +442,8 @@ class MPGD_homo_onset(MozartPianoHomoGraphDataset):
 
 class toy_homo_onset(MozartPianoHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
+		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy_homo_onlab/"
 		super().__init__(name='toy_homo_onset', url=url, 
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=False, features=["onset", "ts"], save_path=save_path)
 
