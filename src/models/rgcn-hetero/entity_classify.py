@@ -19,7 +19,7 @@ PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
-from utils import MPGD_cad, MPGD_onset 
+from src.utils import MPGD_cad, MPGD_onset
 
 # Define a Heterograph Conv model
 class RGCN(nn.Module):
