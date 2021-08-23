@@ -108,7 +108,7 @@ def main(args):
     if args.init_eweights:
         w = th.empty(g.num_edges())
         nn.init.uniform_(w)
-        g.edata["w"] = w
+        g.edata["w"] = w.to('cuda:%d' % args.gpu)
     
     # create model
     in_feats = node_features.shape[1]
