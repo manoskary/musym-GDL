@@ -24,14 +24,14 @@ class GraphSAGE(nn.Module):
         # input layer
         self.layers.append(SAGEConv(in_feats, n_hidden, aggregator_type))
         # hidden layers
-        for i in range(n_layers - 1):
+        for i in range(n_layers - 2):
             self.layers.append(SAGEConv(n_hidden, n_hidden, aggregator_type))
         # output layer
         self.layers.append(SAGEConv(n_hidden, n_classes, aggregator_type)) # activation None
 
     def forward(self, graph, inputs):
         h = self.dropout(inputs)
-        h = F.normalize(h)
+        # h = F.normalize(h)
         for l, layer in enumerate(self.layers):
             h = layer(graph, h)
             if l != len(self.layers) - 1:

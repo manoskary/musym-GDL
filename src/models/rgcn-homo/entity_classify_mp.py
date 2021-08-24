@@ -169,7 +169,7 @@ def run(args, device, data):
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
 
 if __name__ == '__main__':
-    argparser = argparse.ArgumentParser()
+    argparser = argparse.ArgumentParser(description='GraphSAGE')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument('--dataset', type=str, default='reddit')

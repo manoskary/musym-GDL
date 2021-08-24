@@ -9,6 +9,8 @@ import dgl
 from dgl.data import DGLDataset
 from dgl import save_graphs, load_graphs
 from dgl.data.utils import makedirs, save_info, load_info
+import networkx as nx
+import matplotlib.pyplot as plt
 
 
 PIECE_LIST = [
@@ -35,7 +37,7 @@ def min_max_scaler(X):
 	data_min = np.nanmin(X, axis=0)
 	data_max = np.nanmax(X, axis=0)
 	data_range = data_max - data_min
-	X_std = (X - data_min) / data_range
+	X_std = (X - data_min) / (data_range + 1e-8)
 	return X_std
 
 
@@ -53,22 +55,28 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 
 	def process(self):
 		self.PIECE_LIST = PIECE_LIST
-		self.test_piece_list = random.sample(self.PIECE_LIST, 16) 
-		self.train_piece_list = list(set(self.PIECE_LIST)-set(self.test_piece_list))
+		self.test_piece_list = random.sample(self.PIECE_LIST, int(0.2*len(self.PIECE_LIST)))
+		self.val_piece_list = random.sample(list(set(self.PIECE_LIST)-set(self.test_piece_list)), int(0.2*len(self.PIECE_LIST))) 
+		self.train_piece_list = list(set(self.PIECE_LIST)-(set(self.test_piece_list).union(set(self.val_piece_list))))
 		self.FILE_LIST = ["nodes.csv", "edges.csv"]
 		if self.select_piece and self.select_piece in self.PIECE_LIST:          
 			self._process_select_piece()
 			n_nodes = self.graph.num_nodes()
-			n_train = int(n_nodes * 0.8)
+			n_train = int(n_nodes * 0.6)
+			n_val = n_train + int(n_nodes*0.2)
 		elif "toy" in self.name:
 			self._process_toy()
 			n_nodes = self.graph.num_nodes()
-			n_train = int(n_nodes * 0.8)
+			n_train = int(n_nodes * 0.6)
+			n_val = n_train + int(n_nodes*0.2)
 		else:             
 			print("------- Loading Train Pieces -------")
 			self._process_loop(self.train_piece_list)
 			n_train = self.graph.num_nodes()
 			self.add_aug = False
+			print("------- Loading Validation Pieces -------")
+			self._process_loop(self.train_piece_list)
+			n_val = self.graph.num_nodes()
 			print("------- Loading Test Pieces -------")
 			self._process_loop(self.test_piece_list)
 
@@ -80,12 +88,17 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 		
 
 		train_mask = torch.zeros(n_nodes, dtype=torch.bool)
+		val_mask = torch.zeros(n_nodes, dtype=torch.bool)
 		test_mask = torch.zeros(n_nodes, dtype=torch.bool)
 		train_mask[:n_train] = True
-		test_mask[n_train :] = True
+		val_mask[n_train:n_val] = True
+		test_mask[n_val :] = True
 		self.graph.ndata['train_mask'] = train_mask
-		self.graph.ndata['val_mask'] = train_mask
+		self.graph.ndata['val_mask'] = val_mask
 		self.graph.ndata['test_mask'] = test_mask
+
+		self.print_dataset_info()
+
 
 	def _process_loop(self, piece_list):            
 		for fn in piece_list:
@@ -178,10 +191,8 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 		self.graph.ndata['label'] = note_node_labels
 
 	def _process_toy(self):	
-		# for ind in range(200):
 		for csv in self.FILE_LIST:
-			# path = os.path.join(self.url, "toy_"+str(ind), csv)
-			path = os.path.join(self.url, "toy", csv)
+			path = self.url + "/toy/" + csv
 			if csv == "nodes.csv":
 				notes = pd.read_csv(path)
 				a = notes[self.features].to_numpy()
@@ -203,16 +214,9 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 					edges_src = src
 					edges_dst = dst
 				edges = (edges_src, edges_dst)
-		try:
-			g = self.graph
-			graph = dgl.graph(edges)
-			graph.ndata['feat'] = note_node_features.float()
-			graph.ndata['label'] = note_node_labels                    
-			self.graph = dgl.batch([g, graph])
-		except AttributeError:
-			self.graph = dgl.graph(edges)
-			self.graph.ndata['feat'] = note_node_features.float()
-			self.graph.ndata['label'] = note_node_labels
+		self.graph = dgl.graph(edges)
+		self.graph.ndata['feat'] = note_node_features.float()
+		self.graph.ndata['label'] = note_node_labels
 		
 
 	def __getitem__(self, i):
@@ -248,6 +252,30 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 		graph_path = os.path.join(self.save_path, self.name + '_dgl_graph.bin')
 		info_path = os.path.join(self.save_path, self.name + '_info.pkl')
 		return os.path.exists(graph_path) and os.path.exists(info_path)
+
+	def print_dataset_info(self):
+		print("NumNodes: ", self.graph.num_nodes())
+		print("NumEdges: ", self.graph.num_edges())
+		print("NumFeats: ", self.graph.ndata["feat"].shape[1])
+		print("NumClasses: ", self.num_classes)
+		print("NumTrainingSamples: ", torch.count_nonzero(self.graph.ndata["train_mask"]).item())
+		print("NumValidationSamples: ", torch.count_nonzero(self.graph.ndata["val_mask"]).item())
+		print("NumTestSamples: ", torch.count_nonzero(self.graph.ndata["test_mask"]).item())
+
+	def visualize_graph(self, save_dir, name=None):
+		G = dgl.node_subgraph(self.graph, list(range(10, 50)))
+		nx_G = G.to_networkx().to_undirected()
+		# Kamada-Kawaii layout usually looks pretty for arbitrary graphs
+		pos = nx.kamada_kawai_layout(nx_G)
+		nx.draw(nx_G, pos, with_labels=True, node_color=[[.7, .7, .7]])
+		plt.show(block=False)
+		if not os.path.exists(save_dir):
+			os.path.makedirs(save_dir)
+		if name:
+			plt.savefig(os.path.join(save_dir, name+".png"), format="PNG")
+		else:
+			plt.savefig(os.path.join(save_dir, "graph.png"), format="PNG")
+
 
 
 
@@ -419,33 +447,33 @@ class MozartPianoGraphDataset(DGLDataset):
 
 class MPGD_cad(MozartPianoGraphDataset):
 	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_cadlab"
+		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_cadlab"
 		super().__init__(name='mpgd_cad', url=url)
 
 
 class MPGD_onset(MozartPianoGraphDataset): 
 	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_onlab/"
+		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_onlab/"
 		super().__init__(name='mpgd_onset', url=url)
 
 class MPGD_onset_test(MozartPianoGraphDataset):
 	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=False, select_piece=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_onlab/"
+		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_onlab/"
 		super().__init__(name='mpgd_onset', url=url, raw_dir=raw_dir, 
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, features = ["onset", "ts"], normalize=True)
 
 class MPGD_homo_onset(MozartPianoHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mps_homo_onlab/"
+		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/mps_homo_onlab/"
 		super().__init__(name='mpgd_homo_onset', url=url, 
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=False, features=["onset", "ts"], save_path=save_path)
 
 class toy_homo_onset(MozartPianoHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy_homo_onlab/"
+		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/toy_homo_onlab/"
 		super().__init__(name='toy_homo_onset', url=url, 
-				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=False, features=["onset", "ts"], save_path=save_path)
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=True, features=None, save_path=save_path)
 
 
 if __name__ == "__main__":

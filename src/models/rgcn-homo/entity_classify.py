@@ -33,7 +33,7 @@ def normalize(x, eps=1e-8):
 
 def main(args):
     """
-    Main Call for Node Classification with RGCN on Mozart Data.
+    Main Call for Node Classification with GraphSage.
 
     """
 
@@ -56,7 +56,7 @@ def main(args):
             n_classes = dataset.num_classes
     elif args.dataset == "toy":
         dataset =  toy_homo_onset()
-        # Load the Homogeneous Graph
+        # dataset.visualize_graph(save_dir = os.path.join(os.path.dirname(__file__), "data"), name="toy_graph")
         g= dataset[0]
         n_classes = dataset.num_classes   
     elif args.dataset == "cora":
@@ -69,8 +69,6 @@ def main(args):
         raise ValueError()
 
 
-    # category = dataset.predict_category
-    # num_classes = dataset.num_classes
     train_mask = g.ndata['train_mask']
     test_mask = g.ndata['test_mask']
     train_idx = th.nonzero(train_mask, as_tuple=False).squeeze()
@@ -81,12 +79,13 @@ def main(args):
     print("The label balance is :", label_balance)
 
     # split dataset into train, validate, test
-    if args.validation:
-        val_idx = train_idx[:len(train_idx) // 5]
-        train_idx = train_idx[len(train_idx) // 5:]
-    else:
+    
+    if args.inductive:
         val_mask = g.ndata['val_mask']
         val_idx = th.nonzero(val_mask, as_tuple=False).squeeze()
+    else:
+        val_idx = train_idx[:len(train_idx) // 5]
+        train_idx = train_idx[len(train_idx) // 5:]
 
     # check cuda
     use_cuda = args.gpu >= 0 and th.cuda.is_available()
@@ -98,38 +97,39 @@ def main(args):
         test_idx = test_idx.cuda()
 
     
-    # Load the node features as a Dictionary to feed to the forward layer.
-    if args.normalize:
-        node_features = normalize(g.ndata['feat'])
-    else:
-        node_features = g.ndata['feat']
+    # # Load the node features as a Dictionary to feed to the forward layer.
+    # if args.normalize:
+    #     node_features = (g.ndata['feat'])
+    # else:
+    #     node_features = g.ndata['feat']
 
-    if args.init_eweights:
-        w = th.empty(g.num_edges())
-        nn.init.uniform_(w)
-        g.edata["w"] = w.to('cuda:%d' % args.gpu)
+    node_features = g.ndata.pop('feat')
+    
+
+    # if args.init_eweights:
+    #     w = th.empty(g.num_edges())
+    #     nn.init.uniform_(w)
+    #     g.edata["w"] = w.to('cuda:%d' % args.gpu) if use_cuda else w
     
     # create model
     in_feats = node_features.shape[1]
-    model = SAGE(in_feats, args.n_hidden, n_classes,
-        n_layers=args.n_layers, activation=F.relu, dropout=args.dropout, aggregator_type=args.aggregator_type)
-    # model = SGC(in_feats, args.n_hidden, args.n_hidden, num_hidden_layers=args.n_layers-2)
+    model = SAGE(in_feats, args.num_hidden, n_classes,
+        n_layers=args.num_layers, activation=F.relu, dropout=args.dropout, aggregator_type=args.aggregator_type)
     if use_cuda:
         model.cuda()
     # optimizer
-    optimizer = th.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2norm)
+    optimizer = th.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     # training loop
     print("start training...")
     dur = []
     model.train()
-    for epoch in range(args.n_epochs):
+    for epoch in range(args.num_epochs):
         model.train()
         optimizer.zero_grad()
         if epoch > 5:
             t0 = time.time()
         logits = model(g, node_features)
-        # loss = softmax_focal_loss(logits[train_idx], labels[train_idx]) 
         loss = F.cross_entropy(logits[train_idx], labels[train_idx]) 
         loss.backward()
         optimizer.step()
@@ -140,19 +140,19 @@ def main(args):
         with th.no_grad():
             model.eval()
             train_acc = th.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
-            # val_loss = softmax_focal_loss(logits[val_idx], labels[val_idx])
             val_loss = F.cross_entropy(logits[val_idx], labels[val_idx])
             val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
               format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
     print()
-    if args.model_path is not None:
-        th.save(model.state_dict(), args.model_path)
+    # Saving Model for later
+    # if args.model_path is not None:
+    #     th.save(model.state_dict(), args.model_path)
 
     model.eval()
     with th.no_grad():
         logits = model.forward(g, node_features)
-        # test_loss = softmax_focal_loss(logits[test_idx], labels[test_idx])
+
         test_loss = F.cross_entropy(logits[test_idx], labels[test_idx])
         test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
 
@@ -160,40 +160,29 @@ def main(args):
     print()
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='RGCN')
-    parser.add_argument("--dropout", type=float, default=0,
-            help="dropout probability")
-    parser.add_argument("--n-hidden", type=int, default=16,
-            help="number of hidden units")
-    parser.add_argument("--gpu", type=int, default=-1,
-            help="gpu")
-    parser.add_argument("--lr", type=float, default=1e-2,
-            help="learning rate")
-    parser.add_argument("--n-bases", type=int, default=-1,
-            help="number of filter weight matrices, default: -1 [use all]")
-    parser.add_argument("--n-layers", type=int, default=3,
-            help="number of propagation rounds")
-    parser.add_argument("-e", "--n-epochs", type=int, default=50,
-            help="number of training epochs")
-    parser.add_argument("-d", "--dataset", type=str, required=True,
-            help="dataset to use")
-    parser.add_argument("--model_path", type=str, default=None,
-            help='path for save the model')
-    parser.add_argument("--l2norm", type=float, default=0,
-            help="l2 norm coef")
-    parser.add_argument("--use-self-loop", default=False, action='store_true',
-            help="include self feature as a special relation")
-    parser.add_argument("--normalize", default=False, required=False, type=bool,
-            help="Normalize with 0 mean and unit variance")
-    parser.add_argument("--aggregator-type", type=str, default="gcn",
-                        help="Aggregator type: mean/gcn/pool/lstm")
-    parser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
-    fp = parser.add_mutually_exclusive_group(required=False)
-    fp.add_argument('--validation', dest='validation', action='store_true')
-    fp.add_argument('--testing', dest='validation', action='store_false')
-    parser.set_defaults(validation=True)
 
-    args = parser.parse_args()
+    argparser = argparse.ArgumentParser(description='GraphSAGE')
+    argparser.add_argument('--gpu', type=int, default=0,
+                           help="GPU device ID. Use -1 for CPU training")
+    argparser.add_argument("-d", '--dataset', type=str, default='reddit')
+    argparser.add_argument('--num-epochs', type=int, default=30)
+    argparser.add_argument('--num-hidden', type=int, default=16)
+    argparser.add_argument('--num-layers', type=int, default=1)
+    argparser.add_argument('--lr', type=float, default=1e-2)
+    argparser.add_argument('--dropout', type=float, default=0.5)
+    argparser.add_argument('--inductive', action='store_true',
+                           help="Inductive learning setting")
+    argparser.add_argument("--weight-decay", type=float, default=5e-4,
+                        help="Weight for L2 loss")
+    argparser.add_argument("--aggregator-type", type=str, default="gcn",
+                        help="Aggregator type: mean/gcn/pool/lstm")
+    argparser.add_argument('--data-cpu', action='store_true',
+                           help="By default the script puts all node features and labels "
+                                "on GPU when using it to save time for data copy. This may "
+                                "be undesired if they cannot fit in GPU memory at once. "
+                                "This flag disables that.")
+    # argparser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
+    args = argparser.parse_args()
     
     print(args)
     main(args)
