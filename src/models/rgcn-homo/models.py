@@ -24,7 +24,7 @@ class GraphSAGE(nn.Module):
         # input layer
         self.layers.append(SAGEConv(in_feats, n_hidden, aggregator_type))
         # hidden layers
-        for i in range(n_layers - 2):
+        for i in range(n_layers - 1):
             self.layers.append(SAGEConv(n_hidden, n_hidden, aggregator_type))
         # output layer
         self.layers.append(SAGEConv(n_hidden, n_classes, aggregator_type)) # activation None
@@ -65,46 +65,100 @@ class SGC(nn.Module):
         The number of hidden layers
 
     """
-    def __init__(self, in_feats, hid_feats, out_feats, num_hidden_layers=2,):
+    def __init__(self,
+                 in_feats,
+                 n_hidden,
+                 n_classes,
+                 n_layers,
+                 activation,
+                 dropout):
         super().__init__()
-        self.activation = True
         self.layers = nn.ModuleList()
-        self.num_hidden_layers = num_hidden_layers
+        self.dropout = nn.Dropout(dropout)
+        self.activation = activation
             
         # i2h
         self.layers.append(dglnn.SGConv(
-            in_feats=in_feats, out_feats=hid_feats))
+            in_feats=in_feats, out_feats=n_hidden))
         # h2h
-        for i in range(self.num_hidden_layers):
+        for i in range(n_layers - 1):
             self.layers.append(dglnn.SGConv(
-            in_feats=hid_feats, out_feats=hid_feats))
+            in_feats=n_hidden, out_feats=n_hidden))
         # h2o
         self.layers.append(dglnn.SGConv(
-            in_feats=hid_feats, out_feats=out_feats))
+            in_feats=n_hidden, out_feats=n_classes))
 
 
     def forward(self, graph, inputs):
-        """
-        Forward Funtion
-
-        Parameters
-        ----------
-        graph : dgl object
-            A heterogenous graph
-        inputs : dict
-            A dictionary with the predict category node type features.
-        """
-        # inputs are features of nodes
-        graph = add_self_loop(graph)
-        h = F.normalize(inputs)
-        # h = inputs
-        for i, conv_l in enumerate(self.layers):
-            h = conv_l(graph, h)
-            if i == len(self.layers)-1:
-                self.activation = False
-            if self.activation:
-                h = F.relu(h)
+        h = self.dropout(inputs)
+        # h = F.normalize(h)
+        for l, layer in enumerate(self.layers):
+            h = layer(graph, h)
+            if l != len(self.layers) - 1:
+                h = self.activation(h)
+                h = self.dropout(h)
         return h
+
+
+class GAT(nn.Module):
+    """
+    The SAGE object produces a Relational Graph Convolutional Network for homogeneous graphs.
+
+    Parameters
+    ----------
+    in_feats : int
+        The size of the Node Feature Vector
+    hid_feats : int
+        The size of the Latent Node Feature Representation of the hidden layers
+    out_feats : int
+        The number of the node classes we want to predict.
+    rel_names : list
+        The graph edge types
+    num_hidden_layers : int
+        The number of Hidden layers. 
+
+    Attributes
+    ----------
+    layers : nn.ModuleList()
+        The number of layers and information about inputs and outputs
+    num_hidden_layers : int
+        The number of hidden layers
+
+    """
+    def __init__(self,
+                 in_feats,
+                 n_hidden,
+                 n_classes,
+                 n_layers,
+                 activation,
+                 dropout):
+        super().__init__()
+        self.layers = nn.ModuleList()
+        self.dropout = nn.Dropout(dropout)
+        self.activation = activation
+            
+        # i2h
+        self.layers.append(dglnn.GATConv(
+            in_feats=in_feats, out_feats=n_hidden, num_heads=3))
+        # h2h
+        for i in range(n_layers - 1):
+            self.layers.append(dglnn.GATConv(
+            in_feats=n_hidden, out_feats=n_hidden, num_heads=3))
+        # h2o
+        self.layers.append(dglnn.GATConv(
+            in_feats=n_hidden, out_feats=n_classes, num_heads=3))
+
+
+    def forward(self, graph, inputs):
+        h = self.dropout(inputs)
+        # h = F.normalize(h)
+        for l, layer in enumerate(self.layers):
+            h = layer(graph, h)
+            if l != len(self.layers) - 1:
+                h = self.activation(h)
+                h = self.dropout(h)
+        return h
+
 
 
 class SAGE(nn.Module):

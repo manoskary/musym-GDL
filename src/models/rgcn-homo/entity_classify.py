@@ -113,8 +113,19 @@ def main(args):
     
     # create model
     in_feats = node_features.shape[1]
-    model = SAGE(in_feats, args.num_hidden, n_classes,
-        n_layers=args.num_layers, activation=F.relu, dropout=args.dropout, aggregator_type=args.aggregator_type)
+    if args.gnn == "GraphSage" or args.gnn == "SAGE":
+        model = SAGE(in_feats, args.num_hidden, n_classes, 
+            n_layers=args.num_layers, activation=F.relu, dropout=args.dropout, aggregator_type=args.aggregator_type)
+    elif args.gnn == "SGC":
+        g = dgl.add_self_loop(g)
+        model  = SGC(in_feats, args.num_hidden, n_classes,
+             n_layers=args.num_layers, activation=F.relu, dropout=args.dropout)
+    elif args.gnn == "GAT":
+        g = dgl.add_self_loop(g)
+        model  = SGC(in_feats, args.num_hidden, n_classes,
+             n_layers=args.num_layers, activation=F.relu, dropout=args.dropout)
+    else :
+        raise AttributeError("The specified Graph Network is not implemented.")
     if use_cuda:
         model.cuda()
     # optimizer
@@ -165,6 +176,7 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", '--dataset', type=str, default='reddit')
+    argparser.add_argument("-a", '--gnn', type=str, default='GraphSage')
     argparser.add_argument('--num-epochs', type=int, default=30)
     argparser.add_argument('--num-hidden', type=int, default=16)
     argparser.add_argument('--num-layers', type=int, default=1)
