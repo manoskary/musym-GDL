@@ -17,6 +17,7 @@ from dgl import load_graphs
 from dgl.data.utils import load_info
 from models import SGC
 from models import GraphSAGE as SAGE
+import itertools
 
 
 PACKAGE_PARENT = '..'
@@ -25,6 +26,9 @@ sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_P
 
 from utils import MPGD_homo_onset, toy_homo_onset
 from entity_classify_mp import load_reddit
+
+import wandb
+
 
 
 def normalize(x, eps=1e-8):
@@ -37,6 +41,7 @@ def main(args):
 
     """
 
+    
     # load graph data
     if args.dataset == 'mps_onset':
         print("Loading Mozart Sonatas For Cadence Detection")
@@ -69,6 +74,12 @@ def main(args):
         raise ValueError()
 
 
+    # Pass parameters to create experiment
+    run = wandb.init(project='Toy-Entity-Classify-Experiment',
+                   config=vars(args))
+
+    run.name = str(args.gnn) + "_" + str(args.num_layers) + "x" + str(args.num_hidden) + "_" + str(args.num_epochs) + "epo"
+
     train_mask = g.ndata['train_mask']
     test_mask = g.ndata['test_mask']
     train_idx = th.nonzero(train_mask, as_tuple=False).squeeze()
@@ -86,6 +97,7 @@ def main(args):
     else:
         val_idx = train_idx[:len(train_idx) // 5]
         train_idx = train_idx[len(train_idx) // 5:]
+        test_idx = train_idx
 
     # check cuda
     use_cuda = args.gpu >= 0 and th.cuda.is_available()
@@ -128,12 +140,15 @@ def main(args):
         raise AttributeError("The specified Graph Network is not implemented.")
     if use_cuda:
         model.cuda()
+
+
     # optimizer
     optimizer = th.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-
+    criterion = nn.CrossEntropyLoss()
     # training loop
     print("start training...")
     dur = []
+    run.watch(model, criterion, log="all", log_freq=10)
     model.train()
     for epoch in range(args.num_epochs):
         model.train()
@@ -141,7 +156,7 @@ def main(args):
         if epoch > 5:
             t0 = time.time()
         logits = model(g, node_features)
-        loss = F.cross_entropy(logits[train_idx], labels[train_idx]) 
+        loss = criterion(logits[train_idx], labels[train_idx])
         loss.backward()
         optimizer.step()
         t1 = time.time()
@@ -151,8 +166,12 @@ def main(args):
         with th.no_grad():
             model.eval()
             train_acc = th.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
-            val_loss = F.cross_entropy(logits[val_idx], labels[val_idx])
+            val_loss = criterion(logits[val_idx], labels[val_idx])
             val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
+
+            # Log the Experiment
+            run.log({"train/accuracy" : train_acc, "train/loss" : loss, "val/accuracy" : val_acc, "val/loss":val_loss})            
+
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
               format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
     print()
@@ -163,13 +182,11 @@ def main(args):
     model.eval()
     with th.no_grad():
         logits = model.forward(g, node_features)
-
-        test_loss = F.cross_entropy(logits[test_idx], labels[test_idx])
+        test_loss = criterion(logits[test_idx], labels[test_idx])
         test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
-
     print("Test Acc: {:.4f} | Test loss: {:.4f}| " .format(test_acc, test_loss.item()))
     print()
-
+    run.finish()
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser(description='GraphSAGE')
@@ -186,7 +203,7 @@ if __name__ == '__main__':
                            help="Inductive learning setting")
     argparser.add_argument("--weight-decay", type=float, default=5e-4,
                         help="Weight for L2 loss")
-    argparser.add_argument("--aggregator-type", type=str, default="gcn",
+    argparser.add_argument("--aggregator-type", type=str, default="pool",
                         help="Aggregator type: mean/gcn/pool/lstm")
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
@@ -196,5 +213,21 @@ if __name__ == '__main__':
     # argparser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
     args = argparser.parse_args()
     
-    print(args)
-    main(args)
+    wandb.login()
+
+    num_epochs = [50, 100]
+    # dataset = ["toy", "cora"]
+    num_hidden = [16, 32, 64]
+    num_layers = [1, 2]
+    # aggre_type = ["pool", "gcn"]
+    gnn = ["SAGE", "SGC", "GAT"]
+    a = [num_epochs, num_hidden, num_layers, gnn]
+    for combi in (list(itertools.product(*a))):
+        args.num_epochs = combi[0]
+        # args.dataset = combi[1]
+        args.num_hidden = combi[1]
+        args.num_layers = combi[2]
+        args.gnn = combi[3]
+        # args.aggregator_type = combi[4]
+        print(args)
+        main(args)
