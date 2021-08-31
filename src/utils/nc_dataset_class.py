@@ -12,8 +12,7 @@ from dgl.data.utils import makedirs, save_info, load_info
 import networkx as nx
 import matplotlib.pyplot as plt
 
-
-PIECE_LIST = [
+MOZART_PIANO_SONATAS = [
 	'K279-1', 'K279-2', 'K279-3', 'K280-1', 'K280-2', 
 	'K280-3', 'K281-1', 'K281-2', 'K281-3', 'K282-1', 
 	'K282-2', 'K282-3', 'K283-1', 'K283-2', 'K283-3', 
@@ -25,6 +24,16 @@ PIECE_LIST = [
 	'K457-2', 'K457-3', 'K533-1', 'K533-2', 'K533-3', 
 	'K545-1', 'K545-2', 'K545-3', 'K570-1', 'K570-2', 
 	'K570-3', 'K576-1', 'K576-2', 'K576-3'
+	]
+
+MOZART_STRING_QUARTETS = [
+	'k080-01', 'k080-02', 'k155-01', 'k155-02', 'k156-01', 
+	'k156-02', 'k157-01', 'k157-02', 'k158-01', 'k159-01', 
+	'k159-02', 'k168-01', 'k168-02', 'k169-01', 'k171-01', 
+	'k171-03', 'k171-04', 'k172-01', 'k172-02', 'k172-04', 
+	'k173-01', 'k387-01', 'k421-01', 'k428-01', 'k428-02', 
+	'k458-01', 'k465-01', 'k465-04', 'k499-01', 'k499-03', 
+	'k589-01', 'k590-01'
 	]
 
 FILE_LIST = [
@@ -42,7 +51,7 @@ def min_max_scaler(X):
 
 
 class MozartPianoHomoGraphDataset(DGLDataset):
-	def __init__(self, name, url, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, save_path=None):
+	def __init__(self, name, url, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, save_path=None, piece_list=None):
 		if features:
 			self.features = features
 		else :
@@ -50,21 +59,24 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 		self.normalize = normalize
 		self.add_inverse_edges = add_inverse_edges
 		self.add_aug = add_aug
+		if piece_list:
+			self.piece_list = piece_list
 		self.select_piece = select_piece
 		super().__init__(name=name, url=url, save_dir=save_path)
 
 	def process(self):
-		self.PIECE_LIST = PIECE_LIST
-		self.test_piece_list = random.sample(self.PIECE_LIST, int(0.2*len(self.PIECE_LIST)))
-		self.val_piece_list = random.sample(list(set(self.PIECE_LIST)-set(self.test_piece_list)), int(0.2*len(self.PIECE_LIST))) 
-		self.train_piece_list = list(set(self.PIECE_LIST)-(set(self.test_piece_list).union(set(self.val_piece_list))))
+		if not hasattr(self, 'piece_list'):
+			self.piece_list = MOZART_PIANO_SONATAS
+		self.test_piece_list = random.sample(self.piece_list, int(0.2*len(self.piece_list)))
+		self.val_piece_list = random.sample(list(set(self.piece_list)-set(self.test_piece_list)), int(0.2*len(self.piece_list))) 
+		self.train_piece_list = list(set(self.piece_list)-(set(self.test_piece_list).union(set(self.val_piece_list))))
 		self.FILE_LIST = ["nodes.csv", "edges.csv"]
-		if self.select_piece and self.select_piece in self.PIECE_LIST:          
+		if self.select_piece and self.select_piece in self.piece_list:          
 			self._process_select_piece()
 			n_nodes = self.graph.num_nodes()
 			n_train = int(n_nodes * 0.6)
 			n_val = n_train + int(n_nodes*0.2)
-		elif "toy" in self.name:
+		elif self.name == "toy_homo_onset":
 			self._process_toy()
 			n_nodes = self.graph.num_nodes()
 			n_train = int(n_nodes * 0.6)
@@ -75,7 +87,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 			n_train = self.graph.num_nodes()
 			self.add_aug = False
 			print("------- Loading Validation Pieces -------")
-			self._process_loop(self.train_piece_list)
+			self._process_loop(self.val_piece_list)
 			n_val = self.graph.num_nodes()
 			print("------- Loading Test Pieces -------")
 			self._process_loop(self.test_piece_list)
@@ -85,8 +97,8 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 		self.num_classes = int(self.graph.ndata['label'].max().item() + 1)
 		self.predict_category = "note"
 		n_nodes = self.graph.num_nodes()
-		
-
+		if self.normalize:
+			self.graph.ndata["feat"] = min_max_scaler(self.graph.ndata["feat"])
 		train_mask = torch.zeros(n_nodes, dtype=torch.bool)
 		val_mask = torch.zeros(n_nodes, dtype=torch.bool)
 		test_mask = torch.zeros(n_nodes, dtype=torch.bool)
@@ -109,8 +121,6 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 				if csv == "nodes.csv":
 					notes = pd.read_csv(path)
 					a = notes[self.features].to_numpy()
-					if self.normalize:
-						a = min_max_scaler(a)
 					note_node_features = torch.from_numpy(a)
 					note_node_labels = torch.from_numpy(notes['label'].astype('category').cat.codes.to_numpy()).long()
 				else :
@@ -150,7 +160,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 					if resize_factor != 1 or n != 0:
 						if "pitch" in self.features:
 							num_feat = len(self.features)
-							dur_resize = torch.tensor([resize_factor for _ in range(num_feat-1) + [1]]).float()
+							dur_resize = torch.tensor([resize_factor for _ in range(num_feat-1)] + [1]).float()
 							pitch_aug = torch.tensor([0 for _ in  range(num_feat-1)] + [n]).float()
 							graph = dgl.graph(edges)
 							graph.ndata['feat'] = note_node_features.float()*dur_resize + pitch_aug
@@ -233,7 +243,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 		info_path = os.path.join(self.save_path, self.name + '_info.pkl')
 		save_info(info_path, {
 			'num_classes': self.num_classes, "predict_category" : self.predict_category, 
-			"features" : self.features, "PIECE_LIST" : self.PIECE_LIST, 
+			"features" : self.features, "PIECE_LIST" : self.piece_list, 
 			"test_piece_list" : self.test_piece_list, "train_piece_list" : self.train_piece_list})
 
 	def load_data(self):
@@ -243,7 +253,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 		info_path = os.path.join(self.save_path, self.name + '_info.pkl')
 		self.num_classes = load_info(info_path)['num_classes']
 		self.features = load_info(info_path)['features']
-		self.PIECE_LIST = load_info(info_path)['PIECE_LIST']
+		self.piece_list = load_info(info_path)['PIECE_LIST']
 		self.test_piece_list = load_info(info_path)['test_piece_list']
 		self.train_piece_list = load_info(info_path)['train_piece_list']
 
@@ -280,13 +290,15 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 
 
 class MozartPianoGraphDataset(DGLDataset):
-	def __init__(self, name, url, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False):
+	def __init__(self, name, url, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, piece_list=None):
 		if features:
 			self.note_features = features
 			self.rest_features = features.remove("pitch") if "pitch" in features else features 
 		else :
 			self.note_features = ["onset", "duration", "ts", "pitch"]
 			self.rest_features = ["onset", "duration", "ts"]
+		if piece_list:
+			self.piece_list = piece_list
 		self.normalize = normalize
 		self.add_inverse_edges = add_inverse_edges
 		self.add_aug = add_aug
@@ -295,9 +307,10 @@ class MozartPianoGraphDataset(DGLDataset):
 		super().__init__(name=name, raw_dir=raw_dir, url=url)
 
 	def process(self):
-		self.PIECE_LIST = PIECE_LIST
+		if not hasattr(self, 'piece_list'):
+			self.piece_list = MOZART_PIANO_SONATAS
 		self.FILE_LIST = FILE_LIST
-		if self.select_piece and self.select_piece in self.PIECE_LIST:
+		if self.select_piece and self.select_piece in self.piece_list:
 			edge_dict = dict()
 			for csv in self.FILE_LIST:
 				path = self.url + "/" + self.select_piece + "/" + csv
@@ -330,7 +343,7 @@ class MozartPianoGraphDataset(DGLDataset):
 			self.graph.nodes['rest'].data['feat'] = rest_node_features.float()
 			self.graph.nodes['rest'].data['label'] = rest_node_labels
 		else:             
-			for fn in self.PIECE_LIST:
+			for fn in self.piece_list:
 				print(fn)
 				edge_dict = dict()
 				for csv in self.FILE_LIST:
@@ -444,12 +457,10 @@ class MozartPianoGraphDataset(DGLDataset):
 		save_info(info_path, {'num_classes': self.num_classes, "predict_category" : self.predict_category, "features" : self.note_features})
 
 
-
 class MPGD_cad(MozartPianoGraphDataset):
 	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
 		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_cadlab"
 		super().__init__(name='mpgd_cad', url=url)
-
 
 class MPGD_onset(MozartPianoGraphDataset): 
 	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
@@ -474,6 +485,18 @@ class toy_homo_onset(MozartPianoHomoGraphDataset):
 		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/toy_homo_onlab/"
 		super().__init__(name='toy_homo_onset', url=url, 
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=True, features=None, save_path=save_path)
+
+class toy_01_homo(MozartPianoHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
+		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/toy_01_homo/"
+		super().__init__(
+				name='toy_01_homo', url=url, 
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug, 
+				select_piece=select_piece, normalize=True, 
+				features=None, save_path=save_path, 
+				piece_list = MOZART_STRING_QUARTETS)
+		
 
 
 if __name__ == "__main__":

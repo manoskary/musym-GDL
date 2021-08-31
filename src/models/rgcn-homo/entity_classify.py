@@ -24,7 +24,7 @@ PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
-from utils import MPGD_homo_onset, toy_homo_onset
+from utils import MPGD_homo_onset, toy_homo_onset, toy_01_homo
 from entity_classify_mp import load_reddit
 
 import wandb
@@ -60,10 +60,21 @@ def main(args):
             g= dataset[0]
             n_classes = dataset.num_classes
     elif args.dataset == "toy":
-        dataset =  toy_homo_onset()
-        # dataset.visualize_graph(save_dir = os.path.join(os.path.dirname(__file__), "data"), name="toy_graph")
-        g= dataset[0]
-        n_classes = dataset.num_classes   
+        data_dir = os.path.abspath("./data/")
+        name = "toy_01_homo"
+        if os.path.exists(os.path.join(data_dir, name)):
+            # load processed data from directory `self.save_path`
+            graph_path = os.path.join(data_dir, name, name + '_graph.bin')
+            # Load the Homogeneous Graph
+            g = load_graphs(graph_path)[0][0]
+            info_path = os.path.join(data_dir, name, name + '_info.pkl')
+            n_classes = load_info(info_path)['num_classes']
+        else:
+            dataset =  toy_01_homo(save_path = data_dir) # select_piece = "K533-1"
+            dataset.save_data()
+            # Load the Homogeneous Graph
+            g= dataset[0]
+            n_classes = dataset.num_classes 
     elif args.dataset == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g= dataset[0]
@@ -75,10 +86,10 @@ def main(args):
 
 
     # Pass parameters to create experiment
-    run = wandb.init(project='Toy-Entity-Classify-Experiment',
+    run = wandb.init(project='Toy01-Entity-Classify-Experiment',
                    config=vars(args))
 
-    run.name = str(args.gnn) + "_" + str(args.num_layers) + "x" + str(args.num_hidden) + "_" + str(args.num_epochs) + "epo"
+    run.name = str(args.gnn) + "-" + str(args.num_layers) + "x" + str(args.num_hidden)
 
     train_mask = g.ndata['train_mask']
     test_mask = g.ndata['test_mask']
@@ -108,14 +119,8 @@ def main(args):
         train_idx = train_idx.cuda()
         test_idx = test_idx.cuda()
 
-    
-    # # Load the node features as a Dictionary to feed to the forward layer.
-    # if args.normalize:
-    #     node_features = (g.ndata['feat'])
-    # else:
-    #     node_features = g.ndata['feat']
 
-    node_features = g.ndata.pop('feat')
+    node_features = g.ndata['feat']
     
 
     # if args.init_eweights:
@@ -184,9 +189,12 @@ def main(args):
         logits = model.forward(g, node_features)
         test_loss = criterion(logits[test_idx], labels[test_idx])
         test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
+        # Log the Results
+        run.log({"test/accuracy" : test_acc, "test/loss" : test_loss})
     print("Test Acc: {:.4f} | Test loss: {:.4f}| " .format(test_acc, test_loss.item()))
     print()
     run.finish()
+
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser(description='GraphSAGE')
@@ -194,9 +202,9 @@ if __name__ == '__main__':
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", '--dataset', type=str, default='reddit')
     argparser.add_argument("-a", '--gnn', type=str, default='GraphSage')
-    argparser.add_argument('--num-epochs', type=int, default=30)
-    argparser.add_argument('--num-hidden', type=int, default=16)
-    argparser.add_argument('--num-layers', type=int, default=1)
+    argparser.add_argument('--num-epochs', type=int, default=100)
+    argparser.add_argument('--num-hidden', type=int, default=32)
+    argparser.add_argument('--num-layers', type=int, default=2)
     argparser.add_argument('--lr', type=float, default=1e-2)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--inductive', action='store_true',
@@ -215,19 +223,19 @@ if __name__ == '__main__':
     
     wandb.login()
 
-    num_epochs = [50, 100]
+    # num_epochs = [50, 100]
     # dataset = ["toy", "cora"]
-    num_hidden = [16, 32, 64]
-    num_layers = [1, 2]
+    num_hidden = [32, 64]
+    num_layers = [1, 2, 3, 5]
     # aggre_type = ["pool", "gcn"]
     gnn = ["SAGE", "SGC", "GAT"]
-    a = [num_epochs, num_hidden, num_layers, gnn]
+    a = [num_hidden, num_layers, gnn]
     for combi in (list(itertools.product(*a))):
-        args.num_epochs = combi[0]
+        # args.num_epochs = combi[0]
         # args.dataset = combi[1]
-        args.num_hidden = combi[1]
-        args.num_layers = combi[2]
-        args.gnn = combi[3]
-        # args.aggregator_type = combi[4]
+        args.num_hidden = combi[0]
+        args.num_layers = combi[1]
+        args.gnn = combi[2]
+        # args.aggregator_type = combi[2]
         print(args)
         main(args)
