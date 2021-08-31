@@ -30,7 +30,7 @@ sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_P
 
 from utils import MPGD_homo_onset, toy_homo_onset
 
-from utils import StratifiedSampler
+
 
 def load_reddit():
     from dgl.data import RedditDataset
@@ -109,8 +109,7 @@ def run(args, device, data):
         batch_size=args.batch_size,
         # shuffle=True,
         drop_last=False,
-        num_workers=args.num_workers,
-        sampler=StratifiedSampler(train_labels, args.batch_size))
+        num_workers=args.num_workers)
 
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)
