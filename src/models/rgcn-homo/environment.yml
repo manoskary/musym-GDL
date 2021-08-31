@@ -1,0 +1,16 @@
+name cenv
+channels
+  - conda-forge
+dependencies
+  - python
+  - numpy
+  - pip
+  - pip:
+    - torch==1.8.1
+    - dgl==0.7.0
+    - pandas==1.2.4
+    - numpy==1.18.3
+    - tqdm==4.62.1
+    - scikit-learn==0.24.2
+    - matplotlib==3.4.3
+    - wandb==0.12.0
