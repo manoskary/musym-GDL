@@ -43,7 +43,6 @@ def normalize(x, eps=1e-8):
 
 def load_and_save(name, classname=None):
     data_dir = os.path.abspath("./data/")
-    name = "toy_01_homo"
     if os.path.exists(os.path.join(data_dir, name)):
         # load processed data from directory `self.save_path`
         graph_path = os.path.join(data_dir, name, name + '_graph.bin')
@@ -60,7 +59,7 @@ def load_and_save(name, classname=None):
         dataset.save_path = data_dir 
         dataset.save_data()
         # Load the Homogeneous Graph
-        g= dataset[0]
+        g = dataset[0]
         n_classes = dataset.num_classes 
         return g, n_classes
 
