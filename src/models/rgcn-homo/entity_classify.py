@@ -53,10 +53,11 @@ def load_and_save(name, classname=None):
         return g, n_classes
     else:
         if classname:
-            dataset = str_to_class(classname)
+            dataset = str_to_class(classname)(save_path=data_dir)
         else:
-            dataset = str_to_class(name)
-        dataset.save_path = data_dir 
+            dataset = str_to_class(name)(save_path=data_dir)
+        
+        
         dataset.save_data()
         # Load the Homogeneous Graph
         g = dataset[0]
