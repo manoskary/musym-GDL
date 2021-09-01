@@ -72,6 +72,9 @@ def main(args):
 
     """
 
+    config = args if isinstance(args, dict) else vars(args)
+    
+
     # load graph data
     if config["dataset"] == 'mps_onset':
         g, n_classes = load_and_save("mpgd_homo_onset", "MPGD_homo_onset")
@@ -88,11 +91,7 @@ def main(args):
     else:
         raise ValueError()
 
-    if not isinstance(args, dict):
-        config = vars(args)
-    else:
-        config = args
-
+    
 
     # Pass parameters to create experiment
     # wandb.init(config=defaults)
