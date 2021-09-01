@@ -19,6 +19,8 @@ from models import SGC
 from models import GraphSAGE as SAGE
 import itertools
 
+from ray.tune.integration.wandb import wandb_mixin
+
 
 PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
@@ -30,51 +32,53 @@ from entity_classify_mp import load_reddit
 import wandb
 
 
+def str_to_class(classname):
+    return getattr(sys.modules[__name__], classname)
+
 
 def normalize(x, eps=1e-8):
     normed = (x - x.mean(axis=0) ) / (x.std(axis=0) + eps)
     return normed
 
+
+def load_and_save(name, classname=None):
+    data_dir = os.path.abspath("./data/")
+    name = "toy_01_homo"
+    if os.path.exists(os.path.join(data_dir, name)):
+        # load processed data from directory `self.save_path`
+        graph_path = os.path.join(data_dir, name, name + '_graph.bin')
+        # Load the Homogeneous Graph
+        g = load_graphs(graph_path)[0][0]
+        info_path = os.path.join(data_dir, name, name + '_info.pkl')
+        n_classes = load_info(info_path)['num_classes']
+        return g, n_classes
+    else:
+        if classname:
+            dataset = str_to_class(classname)
+        else:
+            dataset = str_to_class(name)
+        dataset.save_path = data_dir 
+        dataset.save_data()
+        # Load the Homogeneous Graph
+        g= dataset[0]
+        n_classes = dataset.num_classes 
+        return g, n_classes
+
+
+@wandb_mixin
 def main(args):
     """
     Main Call for Node Classification with GraphSage.
 
     """
 
-    
     # load graph data
     if args.dataset == 'mps_onset':
-        print("Loading Mozart Sonatas For Cadence Detection")
-        data_dir = os.path.abspath("./data")
-        if os.path.exists(data_dir):
-            name = "mpgd_homo_onset"
-            # load processed data from directory `self.save_path`
-            graph_path = os.path.join(data_dir, name, name + '_graph.bin')
-            # Load the Homogeneous Graph
-            g = load_graphs(graph_path)[0][0]
-            info_path = os.path.join(data_dir, name, name + '_info.pkl')
-            n_classes = load_info(info_path)['num_classes']
-        else:
-            dataset =  MPGD_homo_onset(save_path = data_dir) # select_piece = "K533-1"
-            # Load the Homogeneous Graph
-            g= dataset[0]
-            n_classes = dataset.num_classes
-    elif args.dataset == "toy":
-        data_dir = os.path.abspath("./data/")
-        name = "toy_01_homo"
-        if os.path.exists(os.path.join(data_dir, name)):
-            # load processed data from directory `self.save_path`
-            graph_path = os.path.join(data_dir, name, name + '_graph.bin')
-            # Load the Homogeneous Graph
-            g = load_graphs(graph_path)[0][0]
-            info_path = os.path.join(data_dir, name, name + '_info.pkl')
-            n_classes = load_info(info_path)['num_classes']
-        else:
-            dataset =  toy_01_homo(save_path = data_dir) # select_piece = "K533-1"
-            dataset.save_data()
-            # Load the Homogeneous Graph
-            g= dataset[0]
-            n_classes = dataset.num_classes 
+        g, n_classes = load_and_save("mpgd_homo_onset", "MPGD_homo_onset")
+    elif args.dataset =="toy":
+        g, n_classes = load_and_save("toy_homo_onset")
+    elif args.dataset == "toy01":
+        g, n_classes = load_and_save("toy_01_homo")
     elif args.dataset == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g= dataset[0]
@@ -85,9 +89,11 @@ def main(args):
         raise ValueError()
 
 
+    defaults = vars(args)
+    resume = sys.argv[-1] == "--resume"
     # Pass parameters to create experiment
-    run = wandb.init(project='Toy01-Entity-Classify-Experiment',
-                   config=vars(args))
+    run = wandb.init(config=defaults, resume=resume)
+    args = run.config
 
     run.name = str(args.gnn) + "-" + str(args.num_layers) + "x" + str(args.num_hidden)
 
@@ -175,7 +181,7 @@ def main(args):
             val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
 
             # Log the Experiment
-            run.log({"train/accuracy" : train_acc, "train/loss" : loss, "val/accuracy" : val_acc, "val/loss":val_loss})            
+            run.log({"train_accuracy" : train_acc, "train_loss" : loss, "val_accuracy" : val_acc, "val_loss":val_loss})            
 
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
               format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
@@ -190,7 +196,7 @@ def main(args):
         test_loss = criterion(logits[test_idx], labels[test_idx])
         test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
         # Log the Results
-        run.log({"test/accuracy" : test_acc, "test/loss" : test_loss})
+        run.log({"test_accuracy" : test_acc, "test_loss" : test_loss})
     print("Test Acc: {:.4f} | Test loss: {:.4f}| " .format(test_acc, test_loss.item()))
     print()
     run.finish()
@@ -223,19 +229,6 @@ if __name__ == '__main__':
     
     wandb.login()
 
-    # num_epochs = [50, 100]
-    # dataset = ["toy", "cora"]
-    num_hidden = [32, 64]
-    num_layers = [1, 2, 3, 5]
-    # aggre_type = ["pool", "gcn"]
-    gnn = ["SAGE", "SGC", "GAT"]
-    a = [num_hidden, num_layers, gnn]
-    for combi in (list(itertools.product(*a))):
-        # args.num_epochs = combi[0]
-        # args.dataset = combi[1]
-        args.num_hidden = combi[0]
-        args.num_layers = combi[1]
-        args.gnn = combi[2]
-        # args.aggregator_type = combi[2]
-        print(args)
-        main(args)
+    
+    print(args)
+    main(args)

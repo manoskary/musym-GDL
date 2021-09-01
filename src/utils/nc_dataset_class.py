@@ -487,7 +487,7 @@ class toy_homo_onset(MozartPianoHomoGraphDataset):
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=True, features=None, save_path=save_path)
 
 class toy_01_homo(MozartPianoHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
 		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/toy_01_homo/"
 		super().__init__(
