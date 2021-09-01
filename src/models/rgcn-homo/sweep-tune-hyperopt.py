@@ -32,7 +32,7 @@ if __name__ == '__main__':
     
     wandb.login()
 
-    config = vars(args)
+    config = args
     config["wandb"] = {"project" : "Toy-00-Grid-Search"}
     config["lr"] = tune.grid_search([0.0001, 0.001, 0.1])
     config["num_hidden"] = tune.grid_search([16, 32, 64, 128])
