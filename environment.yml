@@ -1,9 +1,6 @@
 name cenv
-channels
-  - conda-forge
 dependencies
   - python
-  - numpy
   - pip
   - pip:
     - torch==1.8.1
