@@ -1,5 +1,5 @@
-name cenv
-dependencies
+name: cenv
+dependencies:
   - python
   - pip
   - pip:

@@ -134,7 +134,7 @@ def main(args):
     in_feats = node_features.shape[1]
     if config["gnn"] == "GraphSage" or config["gnn"] == "SAGE":
         model = SAGE(in_feats, config["num_hidden"], n_classes, 
-            n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"], aggregator_type=config["aggregator_type"])
+            n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
     elif config["gnn"] == "SGC":
         g = dgl.add_self_loop(g)
         model  = SGC(in_feats, config["num_hidden"], n_classes,
@@ -211,8 +211,8 @@ if __name__ == '__main__':
                            help="Inductive learning setting")
     argparser.add_argument("--weight-decay", type=float, default=5e-4,
                         help="Weight for L2 loss")
-    argparser.add_argument("--aggregator-type", type=str, default="pool",
-                        help="Aggregator type: mean/gcn/pool/lstm")
+    # argparser.add_argument("--aggregator-type", type=str, default="pool",
+    #                     help="Aggregator type: mean/gcn/pool/lstm")
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
                                 "on GPU when using it to save time for data copy. This may "
