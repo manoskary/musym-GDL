@@ -94,7 +94,7 @@ def main(args):
     
 
     # Pass parameters to create experiment
-    wandb.run.name(str(config["gnn"]) + "-" + str(config["num_layers"]) + "x" + str(config["num_hidden"]))
+    wandb.run.name = str(config["gnn"]) + "-" + str(config["num_layers"]) + "x" + str(config["num_hidden"])
 
     train_mask = g.ndata['train_mask']
     test_mask = g.ndata['test_mask']
