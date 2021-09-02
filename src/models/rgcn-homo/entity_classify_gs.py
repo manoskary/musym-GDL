@@ -18,6 +18,7 @@ from dgl.data.utils import load_info
 from models import SGC
 from models import GraphSAGE as SAGE
 import itertools
+from ray import tune
 
 from ray.tune.integration.wandb import wandb_mixin
 
