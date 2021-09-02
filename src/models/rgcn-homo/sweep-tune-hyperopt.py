@@ -1,4 +1,4 @@
-from entity_classify import main
+from entity_classify_gs import main
 import argparse
 from ray import tune
 from ray.tune.integration.wandb import WandbLogger

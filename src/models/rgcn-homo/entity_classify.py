@@ -19,7 +19,6 @@ from models import SGC
 from models import GraphSAGE as SAGE
 import itertools
 
-from ray.tune.integration.wandb import wandb_mixin
 
 
 PACKAGE_PARENT = '..'
@@ -28,8 +27,6 @@ sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_P
 
 from utils import MPGD_homo_onset, toy_homo_onset, toy_01_homo
 from entity_classify_mp import load_reddit
-
-import wandb
 
 
 def str_to_class(classname):
@@ -57,7 +54,7 @@ def load_and_save(name, classname=None):
         else:
             dataset = str_to_class(name)(save_path=data_dir)
         
-        
+
         dataset.save_data()
         # Load the Homogeneous Graph
         g = dataset[0]
@@ -65,7 +62,6 @@ def load_and_save(name, classname=None):
         return g, n_classes
 
 
-@wandb_mixin
 def main(args):
     """
     Main Call for Node Classification with GraphSage.
@@ -95,7 +91,7 @@ def main(args):
 
     # Pass parameters to create experiment
     # wandb.init(config=defaults)
-    wandb.name(str(config["gnn"]) + "-" + str(config["num_layers"]) + "x" + str(config["num_hidden"]))
+    # wandb.name(str(config["gnn"]) + "-" + str(config["num_layers"]) + "x" + str(config["num_hidden"]))
 
     train_mask = g.ndata['train_mask']
     test_mask = g.ndata['test_mask']
@@ -159,7 +155,6 @@ def main(args):
     # training loop
     print("start training...")
     dur = []
-    wandb.watch(model, criterion, log="all", log_freq=10)
     model.train()
     for epoch in range(config["num_epochs"]):
         model.train()
@@ -181,8 +176,7 @@ def main(args):
             val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
 
             # Log the Experiment
-            tune.report(mean_accuracy=train_acc)
-            wandb.log({"train_accuracy" : train_acc, "train_loss" : loss, "val_accuracy" : val_acc, "val_loss":val_loss})            
+            # wandb.log({"train_accuracy" : train_acc, "train_loss" : loss, "val_accuracy" : val_acc, "val_loss":val_loss})            
 
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
               format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
@@ -197,7 +191,7 @@ def main(args):
         test_loss = criterion(logits[test_idx], labels[test_idx])
         test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
         # Log the Results
-        wandb.log({"test_accuracy" : test_acc, "test_loss" : test_loss})
+        # wandb.log({"test_accuracy" : test_acc, "test_loss" : test_loss})
     print("Test Acc: {:.4f} | Test loss: {:.4f}| " .format(test_acc, test_loss.item()))
     print()
 
@@ -226,9 +220,6 @@ if __name__ == '__main__':
                                 "This flag disables that.")
     # argparser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
     args = argparser.parse_args()
-    
-    wandb.login()
-
-    
+ 
     print(args)
     main(args)
