@@ -39,6 +39,8 @@ if __name__ == '__main__':
     config["num_layers"] = tune.grid_search([1, 2, 3])
     config["gnn"] = tune.grid_search(["SAGE", "GAT", "SGC"])
 
+    os.environ["CUDA_VISIBLE_DEVICES"]=args["gpu"]
+
     analysis = tune.run(
         main,
         loggers=[WandbLogger],  # WandbLogger logs experiment configurations and metrics reported via tune.report() to W&B Dashboard

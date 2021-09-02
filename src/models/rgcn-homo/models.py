@@ -18,23 +18,33 @@ class mySAGEConv(nn.Module):
         # Call max pooling init
         self.pool = nn.Linear(self.in_feats, self.in_feats, bias=False)
         self.pool_bias = nn.Parameter(th.zeros(in_feats))
-        gain = nn.init.calculate_gain('relu')
-        nn.init.xavier_uniform_(self.pool.weight, gain=gain)
+        # Trainable weights for Linear Transformation
         self.linear = nn.Linear(in_feats, out_feats)
         self.bias = nn.Parameter(th.zeros(out_feats))
 
-    def forward(self, g, node_feats, e_weight=None):
-        # Check if graph has weights        
+        gain = nn.init.calculate_gain('relu')
+        # Init glorot transform to pool layer and linear layer
+        nn.init.xavier_uniform_(self.pool.weight, gain=gain)        
+        nn.init.xavier_uniform_(self.linear.weight, gain=gain)
+        
+    def aggregate(self, g, node_feats, e_weight):
         with g.local_scope():    
             g.srcdata['h'] = F.relu(self.pool(node_feats) + self.pool_bias)
             if e_weight != None:
                 g.update_all(fn.u_mul_e('h', 'w', 'm'), fn.max('m', 'h_new'))
             else:
                 g.update_all(fn.copy_src('h', 'm'), fn.max('m', 'h_new'))
-            out = self.linear(g.dstdata['h_new'])
+            aggregated = g.dstdata['h_new']
+            return aggregated
+
+    def forward(self, g, node_feats, e_weight=None):
+        # Check if graph has weights        
+        h = self.aggregate(g, node_feats, e_weight)
+        h = self.linear(h)
         # bias term
-        out = out + self.bias
-        return out
+        h = h + self.bias
+        return h
+
 
 class GraphSAGE(nn.Module):
     def __init__(self,
