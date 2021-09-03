@@ -33,11 +33,11 @@ if __name__ == '__main__':
     wandb.login()
 
     config = vars(args)
-    config["wandb"] = {"project" : "Toy-00-Grid-Search"}
-    config["lr"] = tune.grid_search([0.0001, 0.001, 0.1])
+    config["wandb"] = {"project" : "Toy-01-Grid-Search"}
+    config["lr"] = tune.grid_search([0.1])
     config["num_hidden"] = tune.grid_search([16, 32, 64, 128])
     config["num_layers"] = tune.grid_search([1, 2, 3])
-    config["gnn"] = tune.grid_search(["SAGE", "GAT", "SGC"])
+    config["gnn"] = tune.grid_search(["SAGE"])
 
     analysis = tune.run(
         main,

@@ -27,7 +27,7 @@ PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
-from utils import MPGD_homo_onset, toy_homo_onset, toy_01_homo
+from utils import MPGD_homo_onset, toy_homo_onset, toy_01_homo, toy_02_homo
 from entity_classify_mp import load_reddit
 
 import wandb
@@ -83,6 +83,8 @@ def main(args):
         g, n_classes = load_and_save("toy_homo_onset")
     elif config["dataset"] == "toy01":
         g, n_classes = load_and_save("toy_01_homo")
+    elif config["dataset"] == "toy02":
+        g, n_classes = load_and_save("toy_02_homo")
     elif config["dataset"] == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g= dataset[0]

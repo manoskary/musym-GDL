@@ -62,3 +62,36 @@ python entity_classify_mp.py --dataset reddit --num-epochs 30 --gpu -1
 
 
 The Mini-Batch Uses a Neighhbor Sampling with a Stratified Sampler on top for unbalanced classes. If you want to try a different number of layers, i.e. `--num-layers`, for the network you will have to adapt the `--fan-out` accordingly.
+
+
+### Entity Classification with Grid Searching
+
+We use ray for hyperparameter optimization and wandb for experiment logging.
+Please use `pip install ray -U` to install ray  and `pip install wandb` to Install Weights and Biases.
+
+
+Run with `--inductive` argument creates an inductive split in the dataset otherwise the entire dataset graph is used for training, validation and testing. Use `--gpu >= 0` for GPU usage otherwise use `--gpu -1` for a CPU run.
+
+MPGD_onset
+
+```sh
+python sweep-tune-hyperopt.py --dataset mps_onset --inductive --gpu 0
+```
+
+Toy Dataset
+
+```sh
+python sweep-tune-hyperopt.py --dataset toy --inductive --gpu 0
+```
+
+Cora Dataset
+
+```sh
+python sweep-tune-hyperopt.py --dataset cora --inductive --gpu 0
+```
+
+Reddit Dataset
+
+```sh
+python sweep-tune-hyperopt.py --dataset reddit --inductive --gpu 0
+```
