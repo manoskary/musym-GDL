@@ -16,6 +16,7 @@ if __name__ == '__main__':
     argparser.add_argument('--num-layers', type=int, default=2)
     argparser.add_argument('--lr', type=float, default=1e-2)
     argparser.add_argument('--dropout', type=float, default=0.5)
+    argparser.add_argument('--num-gpu', type=int, default=1)
     argparser.add_argument('--inductive', action='store_true',
                            help="Inductive learning setting")
     argparser.add_argument("--weight-decay", type=float, default=5e-4,
@@ -29,7 +30,7 @@ if __name__ == '__main__':
                                 "This flag disables that.")
     # argparser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
     args = argparser.parse_args()
-    
+
     wandb.login()
 
     config = vars(args)
@@ -50,6 +51,6 @@ if __name__ == '__main__':
     analysis = tune.run(
         main,
         loggers=[WandbLogger],  # WandbLogger logs experiment configurations and metrics reported via tune.report() to W&B Dashboard
-        resources_per_trial={'gpu': 1},
+        resources_per_trial={'gpu': args.num_gpu},
         config=config)
 
