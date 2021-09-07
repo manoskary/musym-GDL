@@ -41,9 +41,10 @@ if __name__ == '__main__':
         config["wandb"] = {"project" : "Toy-"+dnum+"-Grid-Search"}
     else :
         raise ValueError("The Dataset is not Set for Optimization")
-    config["lr"] = tune.grid_search([0.1])
+    config["lr"] = tune.grid_search([0.1, 0.01])
     config["num_hidden"] = tune.grid_search([16, 32, 64, 128])
     config["num_layers"] = tune.grid_search([1, 2, 3])
+    config["dropout"] = tune.grid_search([0.1, 0.2, 0.3, 0.4, 0.5])
     config["gnn"] = tune.grid_search(["SAGE", "SGC"])
 
     analysis = tune.run(

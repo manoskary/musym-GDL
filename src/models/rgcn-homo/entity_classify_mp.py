@@ -99,17 +99,27 @@ def run(args, device, data):
         dataloader_device = device
 
     # Create PyTorch DataLoader for constructing blocks
-    sampler = dgl.dataloading.MultiLayerNeighborSampler(
-        [int(fanout) for fanout in args.fan_out.split(',')])   
+    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler([int(fanout) for fanout in args.fan_out.split(',')])   
+    if n_classes == 2:
+        # For Imbalanced Binary Labels
+        weights = torch.ones(train_g.ndata['feat'].shape[0])
+        true_idx = torch.nonzero(train_g.ndata['label'])
+        false_idx = (train_g.ndata['label'] == 0).nonzero()
+        weights[true_idx] = true_idx.shape[0]/train_g.ndata['label'].shape[0] 
+        weights[false_idx] = false.shape[0]/train_g.ndata['label'].shape[0] 
+        sampler = torch.utils.data.WeightedRandomSampler(weights, args.batch_size, replacement=True, generator=None)
+    else :
+        sampler = None
     dataloader = dgl.dataloading.NodeDataLoader(
         train_g,
         train_nid,
-        sampler,
+        graph_sampler,
         device=dataloader_device,
         batch_size=args.batch_size,
         # shuffle=True,
         drop_last=False,
-        num_workers=args.num_workers)
+        num_workers=args.num_workers,
+        sampler=sampler)
 
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)

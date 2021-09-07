@@ -11,35 +11,69 @@ import dgl.function as fn
 
 class mySAGEConv(nn.Module):
 
-    def __init__(self, in_feats, out_feats):
+    def __init__(self, in_feats, out_feats, aggretype="maxpool"):
         super(mySAGEConv, self).__init__()
         self.in_feats = in_feats 
         self.out_feats = out_feats
-        # Call max pooling init
-        self.pool = nn.Linear(self.in_feats, self.in_feats, bias=False)
-        self.pool_bias = nn.Parameter(th.zeros(in_feats))
+        self.aggretype = aggretype
         # Trainable weights for Linear Transformation
         self.linear = nn.Linear(in_feats, out_feats)
         self.bias = nn.Parameter(th.zeros(out_feats))
 
         gain = nn.init.calculate_gain('relu')
-        # Init glorot transform to pool layer and linear layer
-        nn.init.xavier_uniform_(self.pool.weight, gain=gain)        
+        
+        if self.aggretype == "maxpool":
+            # Call max pooling init
+            self.pool = nn.Linear(self.in_feats, self.in_feats, bias=False)
+            self.pool_bias = nn.Parameter(th.zeros(in_feats))
+            # Init glorot transform to aggre layer and linear layer
+            nn.init.xavier_uniform_(self.pool.weight, gain=gain)        
+        elif self.aggretype == "lstm":
+            self.lstm = nn.LSTM(self.in_feats, self.in_feats)
+            self.lstm.reset_parameters()
         nn.init.xavier_uniform_(self.linear.weight, gain=gain)
+
         
     def aggregate(self, g, node_feats, e_weight):
+
+        # Search for edge weights
+        msg_fn = fn.u_mul_e('h', 'w', 'm') if e_weight != None else fn.copy_src('h', 'm')
+
+        # Update message functions
         with g.local_scope():    
-            g.srcdata['h'] = F.relu(self.pool(node_feats) + self.pool_bias)
-            if e_weight != None:
-                g.update_all(fn.u_mul_e('h', 'w', 'm'), fn.max('m', 'h_new'))
-            else:
-                g.update_all(fn.copy_src('h', 'm'), fn.max('m', 'h_new'))
+            if self.aggretype == "maxpool":
+                g.srcdata['h'] = F.relu(self.pool(node_feats) + self.pool_bias)
+                g.update_all(msg_fn, fn.max('m', 'h_new'))
+            elif self.aggretype == "lstm":
+                g.srcdata['h'] = node_feats
+                lstm_fn = lambda x : {"h_new" : self.lstm(x.mailbox["m"])[1][0].squeeze(0)}
+                g.update_all(msg_fn, lstm_fn)
             aggregated = g.dstdata['h_new']
             return aggregated
 
     def forward(self, g, node_feats, e_weight=None):
-        # Check if graph has weights        
+        """
+        Forward Layer.
+
+        In the literature after forward opetation a activation and a normalization should follow.
+
+        Parameters
+        ----------
+        g : graph
+            For the moment only considers homo graphs.
+        node_feats : tensor
+            The node features if hetero then dict of tensors
+        e_weights : tensor
+            The weight features if hetero then dict of tensors
+
+        Returns
+        -------
+        h : tensor
+            A learned representation for every node of the graph.
+        """
+        # Aggregate
         h = self.aggregate(g, node_feats, e_weight)
+        # Apply Learnable Weight
         h = self.linear(h)
         # bias term
         h = h + self.bias
