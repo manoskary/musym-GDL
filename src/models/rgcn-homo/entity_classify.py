@@ -15,8 +15,7 @@ import dgl
 import dgl.nn as dglnn
 from dgl import load_graphs
 from dgl.data.utils import load_info
-from models import SGC
-from models import GraphSAGE as SAGE
+from models import *
 import itertools
 
 
@@ -135,7 +134,7 @@ def main(args):
     # create model
     in_feats = node_features.shape[1]
     if config["gnn"] == "GraphSage" or config["gnn"] == "SAGE":
-        model = SAGE(in_feats, config["num_hidden"], n_classes, 
+        model = GraphSAGE(in_feats, config["num_hidden"], n_classes, 
             n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
     elif config["gnn"] == "SGC":
         g = dgl.add_self_loop(g)
@@ -145,6 +144,10 @@ def main(args):
         g = dgl.add_self_loop(g)
         model  = SGC(in_feats, config["num_hidden"], n_classes,
              n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
+    elif config["gnn"] == "LSTMSAGE":
+        g = dgl.add_self_loop(g)
+        model  = LSTMGraphSAGE(in_feats, config["num_hidden"], n_classes,
+             n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])    
     else :
         raise AttributeError("The specified Graph Network is not implemented.")
     if use_cuda:

@@ -16,7 +16,8 @@ from dgl.multiprocessing import Queue
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader
 import dgl
-from dgl import DGLGraph
+from dgl import DGLGraph, load_graphs
+from dgl.data.utils import load_info
 from functools import partial
 import pandas as pd
 
@@ -24,12 +25,36 @@ from models import SAGE
 import tqdm
 import os, sys
 
+
 PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
 from utils import MPGD_homo_onset, toy_homo_onset
 
+
+def load_and_save(name, classname=None):
+    data_dir = os.path.abspath("./data/")
+    if os.path.exists(os.path.join(data_dir, name)):
+        # load processed data from directory `self.save_path`
+        graph_path = os.path.join(data_dir, name, name + '_graph.bin')
+        # Load the Homogeneous Graph
+        g = load_graphs(graph_path)[0][0]
+        info_path = os.path.join(data_dir, name, name + '_info.pkl')
+        n_classes = load_info(info_path)['num_classes']
+        return g, n_classes
+    else:
+        if classname:
+            dataset = str_to_class(classname)(save_path=data_dir)
+        else:
+            dataset = str_to_class(name)(save_path=data_dir)
+        
+
+        dataset.save_data()
+        # Load the Homogeneous Graph
+        g = dataset[0]
+        n_classes = dataset.num_classes 
+        return g, n_classes
 
 
 def load_reddit():
@@ -102,12 +127,12 @@ def run(args, device, data):
     graph_sampler = dgl.dataloading.MultiLayerNeighborSampler([int(fanout) for fanout in args.fan_out.split(',')])   
     if n_classes == 2:
         # For Imbalanced Binary Labels
-        weights = torch.ones(train_g.ndata['feat'].shape[0])
-        true_idx = torch.nonzero(train_g.ndata['label'])
-        false_idx = (train_g.ndata['label'] == 0).nonzero()
-        weights[true_idx] = true_idx.shape[0]/train_g.ndata['label'].shape[0] 
-        weights[false_idx] = false.shape[0]/train_g.ndata['label'].shape[0] 
-        sampler = torch.utils.data.WeightedRandomSampler(weights, args.batch_size, replacement=True, generator=None)
+        weights = th.ones(train_nfeat.shape[0])
+        true_idx = th.nonzero(train_labels)
+        false_idx = (train_labels == 0).nonzero()
+        weights[true_idx] = true_idx.shape[0]/train_labels.shape[0] 
+        weights[false_idx] = false_idx.shape[0]/train_labels.shape[0] 
+        sampler = th.utils.data.WeightedRandomSampler(weights)
     else :
         sampler = None
     dataloader = dgl.dataloading.NodeDataLoader(
@@ -118,8 +143,8 @@ def run(args, device, data):
         batch_size=args.batch_size,
         # shuffle=True,
         drop_last=False,
-        num_workers=args.num_workers,
-        sampler=sampler)
+        num_workers=args.num_workers
+        )
 
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)
@@ -181,16 +206,17 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='GraphSAGE')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
-    argparser.add_argument('--dataset', type=str, default='reddit')
+    argparser.add_argument('-d', '--dataset', type=str, default='reddit')
     argparser.add_argument('--num-epochs', type=int, default=20)
-    argparser.add_argument('--num-hidden', type=int, default=16)
-    argparser.add_argument('--num-layers', type=int, default=3)
-    argparser.add_argument('--fan-out', type=str, default='5, 10, 25')
-    argparser.add_argument('--batch-size', type=int, default=512)
+    argparser.add_argument('--num-hidden', type=int, default=32)
+    argparser.add_argument('--num-layers', type=int, default=2)
+    argparser.add_argument('--fan-out', type=str, default='5, 10')
+    argparser.add_argument('--batch-size', type=int, default=128)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
-    argparser.add_argument('--lr', type=float, default=0.003)
+    argparser.add_argument('--lr', type=float, default=0.01)
     argparser.add_argument('--dropout', type=float, default=0.5)
+    argparser.add_argument('--add-self-loop', action='store_true', help="Add a self loop to every node of the graph.")
     argparser.add_argument('--num-workers', type=int, default=4,
                            help="Number of sampling processes. Use 0 for no extra process.")
     argparser.add_argument('--sample-gpu', action='store_true',
@@ -204,33 +230,20 @@ if __name__ == '__main__':
                                 "This flag disables that.")
     args = argparser.parse_args()
 
-    if args.gpu >= 0:
+    if args.gpu >= 0 and th.cuda.is_available():
         device = th.device('cuda:%d' % args.gpu)
     else:
         device = th.device('cpu')
 
     # load graph data
     if args.dataset == 'mps_onset':
-        print("Loading Mozart Sonatas For Cadence Detection")
-        data_dir = os.path.abspath("./data")
-        if os.path.exists(data_dir):
-            name = "mpgd_homo_onset"
-            # load processed data from directory `self.save_path`
-            graph_path = os.path.join(data_dir, name, name + '_graph.bin')
-            # Load the Homogeneous Graph
-            g = load_graphs(graph_path)[0][0]
-            info_path = os.path.join(data_dir, name, name + '_info.pkl')
-            n_classes = load_info(info_path)['num_classes']
-        else:
-            dataset =  MPGD_homo_onset(save_path = data_dir) # select_piece = "K533-1"
-            # Load the Homogeneous Graph
-            g= dataset[0]
-            n_classes = dataset.num_classes
-    elif args.dataset == "toy":
-        dataset =  toy_homo_onset()
-        # Load the Homogeneous Graph
-        g= dataset[0]
-        n_classes = dataset.num_classes   
+        g, n_classes = load_and_save("mpgd_homo_onset", "MPGD_homo_onset")
+    elif args.dataset =="toy":
+        g, n_classes = load_and_save("toy_homo_onset")
+    elif args.dataset == "toy01":
+        g, n_classes = load_and_save("toy_01_homo")
+    elif args.dataset == "toy02":
+        g, n_classes = load_and_save("toy_02_homo")
     elif args.dataset == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g= dataset[0]
@@ -239,6 +252,10 @@ if __name__ == '__main__':
         g, n_classes = load_reddit()
     else:
         raise ValueError()
+
+    if args.add_self_loop:
+        g = dgl.add_self_loop(g)
+
 
     if args.inductive:
         train_g, val_g, test_g = inductive_split(g)

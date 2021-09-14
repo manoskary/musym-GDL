@@ -19,7 +19,6 @@ class mySAGEConv(nn.Module):
         # Trainable weights for Linear Transformation
         self.linear = nn.Linear(in_feats, out_feats)
         self.bias = nn.Parameter(th.zeros(out_feats))
-
         gain = nn.init.calculate_gain('relu')
         
         if self.aggretype == "maxpool":
@@ -35,10 +34,8 @@ class mySAGEConv(nn.Module):
 
         
     def aggregate(self, g, node_feats, e_weight):
-
         # Search for edge weights
         msg_fn = fn.u_mul_e('h', 'w', 'm') if e_weight != None else fn.copy_src('h', 'm')
-
         # Update message functions
         with g.local_scope():    
             if self.aggretype == "maxpool":
@@ -80,6 +77,53 @@ class mySAGEConv(nn.Module):
         return h
 
 
+class mylstmSAGEConv(nn.Module):
+
+    def __init__(self, in_feats, out_feats):
+        super(mylstmSAGEConv, self).__init__()
+        self.in_feats = in_feats 
+        self.out_feats = out_feats
+        # Trainable weights for Linear Transformation
+        self.layer = nn.LSTM(in_feats, out_feats)
+        self.bias = nn.Parameter(th.zeros(out_feats))
+        self.lstm = nn.LSTM(self.in_feats, self.in_feats, batch_first=True)
+        self.layer.reset_parameters()
+        self.lstm.reset_parameters()
+
+
+    def _lstm_reducer(self, nodes):
+        """LSTM reducer
+        NOTE(zihao): lstm reducer with default schedule (degree bucketing)
+        is slow, we could accelerate this with degree padding in the future.
+        """
+        m = nodes.mailbox['m'] # (B, L, D)
+        batch_size = m.shape[0]
+        h = (m.new_zeros((1, batch_size, self.in_feats)),
+             m.new_zeros((1, batch_size, self.in_feats)))
+        _, (rst, _) = self.lstm(m, h)
+        return {'h_new': rst.squeeze(0)}
+
+
+    def aggregate(self, g, node_feats, e_weight):
+        # Search for edge weights
+        msg_fn = fn.u_mul_e('h', 'w', 'm') if e_weight != None else fn.copy_src('h', 'm')
+        # Update message functions
+        with g.local_scope():    
+            g.srcdata['h'] = node_feats
+            g.update_all(msg_fn, self._lstm_reducer)
+            aggregated = g.dstdata['h_new']
+            return aggregated
+
+    def forward(self, g, node_feats, e_weight=None):
+        # Aggregate
+        h = self.aggregate(g, node_feats, e_weight)
+        # Apply Learnable Weight
+        h = self.layer(h)[1][0]
+        # bias term
+        h = h + self.bias
+        return h
+
+
 class GraphSAGE(nn.Module):
     def __init__(self,
                  in_feats,
@@ -100,6 +144,38 @@ class GraphSAGE(nn.Module):
             self.layers.append(mySAGEConv(n_hidden, n_hidden))
         # output layer
         self.layers.append(mySAGEConv(n_hidden, n_classes)) # activation None
+
+    def forward(self, graph, inputs):
+        h = self.dropout(inputs)
+        # h = F.normalize(h)
+        for l, layer in enumerate(self.layers):
+            h = layer(graph, h)
+            if l != len(self.layers) - 1:
+                h = self.activation(h)
+                h = F.normalize(h)
+                h = self.dropout(h)
+        return h
+
+class LSTMGraphSAGE(nn.Module):
+    def __init__(self,
+                 in_feats,
+                 n_hidden,
+                 n_classes,
+                 n_layers,
+                 activation,
+                 dropout):
+        super(LSTMGraphSAGE, self).__init__()
+        self.layers = nn.ModuleList()
+        self.dropout = nn.Dropout(dropout)
+        self.activation = activation
+
+        # input layer
+        self.layers.append(mylstmSAGEConv(in_feats, n_hidden))
+        # hidden layers
+        for i in range(n_layers - 1):
+            self.layers.append(mylstmSAGEConv(n_hidden, n_hidden))
+        # output layer
+        self.layers.append(mylstmSAGEConv(n_hidden, n_classes)) # activation None
 
     def forward(self, graph, inputs):
         h = self.dropout(inputs)
@@ -241,7 +317,7 @@ class SAGE(nn.Module):
 
     def init(self, in_feats, n_hidden, n_classes, n_layers, activation, dropout):
         self.n_layers = n_layers
-        self.n_hidden = n_hidden
+        self.n_hidden = n_hiddeninput
         self.n_classes = n_classes
         self.layers = nn.ModuleList()
         if n_layers > 1:
@@ -260,6 +336,7 @@ class SAGE(nn.Module):
             h = layer(block, h)
             if l != len(self.layers) - 1:
                 h = self.activation(h)
+                h = F.normalize(h)
                 h = self.dropout(h)
         return h
 
