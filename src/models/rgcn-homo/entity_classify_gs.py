@@ -27,7 +27,7 @@ PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
-from utils import MPGD_homo_onset, toy_homo_onset, toy_01_homo, toy_02_homo
+from utils import *
 from entity_classify_mp import load_reddit
 
 import wandb
@@ -131,10 +131,10 @@ def main(args):
     node_features = g.ndata['feat']
     
 
-    # if config["init_eweights"]:
-    #     w = th.empty(g.num_edges())
-    #     nn.init.uniform_(w)
-    #     g.edata["w"] = w.to('cuda:%d' % config["gpu"]) if use_cuda else w
+    if config["init_eweights"]:
+        w = th.empty(g.num_edges())
+        nn.init.uniform_(w)
+        g.edata["w"] = w.to('cuda:%d' % config["gpu"]) if use_cuda else w
     
     # create model
     in_feats = node_features.shape[1]
@@ -223,6 +223,8 @@ if __name__ == '__main__':
                            help="Inductive learning setting")
     argparser.add_argument("--weight-decay", type=float, default=5e-4,
                         help="Weight for L2 loss")
+    argparser.add_argument("--init-eweights", type=int, default=0,
+                           help="Initialize learnable graph weights. Use 1 for True and 0 for false")
     # argparser.add_argument("--aggregator-type", type=str, default="pool",
     #                     help="Aggregator type: mean/gcn/pool/lstm")
     argparser.add_argument('--data-cpu', action='store_true',
@@ -230,7 +232,6 @@ if __name__ == '__main__':
                                 "on GPU when using it to save time for data copy. This may "
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
-    # argparser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
     args = argparser.parse_args()
     
     wandb.login()

@@ -124,7 +124,8 @@ def run(args, device, data):
         dataloader_device = device
 
     # Create PyTorch DataLoader for constructing blocks
-    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler([int(fanout) for fanout in args.fan_out.split(',')])   
+    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler([int(fanout) for fanout in args.fan_out.split(',')])
+    # TODO fix correct sampler formulation
     if n_classes == 2:
         # For Imbalanced Binary Labels
         weights = th.ones(train_nfeat.shape[0])
@@ -135,6 +136,8 @@ def run(args, device, data):
         # sampler = th.utils.data.WeightedRandomSampler(weights)
     else :
         sampler = None
+
+    # TODO create a new dataloader with weighted sampling or review random walk DRNE
     dataloader = dgl.dataloading.NodeDataLoader(
         train_g,
         train_nid,
@@ -255,6 +258,11 @@ if __name__ == '__main__':
 
     if args.add_self_loop:
         g = dgl.add_self_loop(g)
+
+    if args.init_eweights:
+        w = th.empty(g.num_edges())
+        nn.init.uniform_(w)
+        g.edata["w"] = w.to('cuda:%d' % config["gpu"]) if use_cuda else w
 
 
     if args.inductive:
