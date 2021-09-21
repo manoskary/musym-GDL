@@ -489,7 +489,7 @@ class toy_homo_onset(MozartPianoHomoGraphDataset):
 class toy_01_homo(MozartPianoHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
-		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/toy_01_homo/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy-01-homo/"
 		super().__init__(
 				name='toy_01_homo', url=url, 
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, 
@@ -500,7 +500,7 @@ class toy_01_homo(MozartPianoHomoGraphDataset):
 class toy_02_homo(MozartPianoHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
-		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/toy-02-homo/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy-02-homo/"
 		super().__init__(
 				name='toy_02_homo', url=url, 
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, 

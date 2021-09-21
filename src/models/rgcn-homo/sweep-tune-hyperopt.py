@@ -19,6 +19,8 @@ if __name__ == '__main__':
     argparser.add_argument('--num-gpu', type=int, default=1)
     argparser.add_argument('--inductive', action='store_true',
                            help="Inductive learning setting")
+    argparser.add_argument("--init-eweights", type=int, default=0, 
+        help="Initialize learnable graph weights. Use 1 for True and 0 for false")
     argparser.add_argument("--weight-decay", type=float, default=5e-4,
                         help="Weight for L2 loss")
     argparser.add_argument("--aggregator-type", type=str, default="pool",
@@ -43,10 +45,11 @@ if __name__ == '__main__':
     else :
         raise ValueError("The Dataset is not Set for Optimization")
     config["lr"] = tune.grid_search([0.1, 0.01])
-    config["num_hidden"] = tune.grid_search([16, 32, 64, 128])
-    config["num_layers"] = tune.grid_search([1, 2, 3])
-    config["dropout"] = tune.grid_search([0.1, 0.2, 0.3, 0.4, 0.5])
-    config["gnn"] = tune.grid_search(["SAGE", "SGC"])
+    config["num_hidden"] = tune.grid_search([8, 16, 32])
+    config["num_layers"] = tune.grid_search(list(range(6)))
+    config["dropout"] = tune.grid_search([0.5])
+    config["gnn"] = tune.grid_search(["SAGE"])
+    config["init_eweights"] = tune.grid_search([0, 1])
 
     analysis = tune.run(
         main,

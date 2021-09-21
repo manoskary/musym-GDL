@@ -97,7 +97,7 @@ def main(args):
     
 
     # Pass parameters to create experiment
-    wandb.run.name = str(config["gnn"]) + "-" + str(config["num_layers"]) + "x" + str(config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"])
+    wandb.run.name = str(config["gnn"]) + "-" + str(config["num_layers"]) + "x" + str(config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"]) + "-lr_scheduler"
 
     train_mask = g.ndata['train_mask']
     test_mask = g.ndata['test_mask']
@@ -139,6 +139,7 @@ def main(args):
     # create model
     in_feats = node_features.shape[1]
     if config["gnn"] == "GraphSage" or config["gnn"] == "SAGE":
+        g = dgl.add_self_loop(g)
         model = SAGE(in_feats, config["num_hidden"], n_classes, 
             n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
     elif config["gnn"] == "SGC":
@@ -157,7 +158,9 @@ def main(args):
 
     # optimizer
     optimizer = th.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+    scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     criterion = nn.CrossEntropyLoss()
+
     # training loop
     print("start training...")
     dur = []
@@ -182,6 +185,7 @@ def main(args):
             val_loss = criterion(logits[val_idx], labels[val_idx])
             val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
 
+            scheduler.step(val_loss)
             # Log the Experiment
             tune.report(mean_accuracy=train_acc)
             wandb.log({"train_accuracy" : train_acc, "train_loss" : loss, "val_accuracy" : val_acc, "val_loss":val_loss})            

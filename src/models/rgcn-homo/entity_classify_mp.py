@@ -132,7 +132,7 @@ def run(args, device, data):
         false_idx = (train_labels == 0).nonzero()
         weights[true_idx] = true_idx.shape[0]/train_labels.shape[0] 
         weights[false_idx] = false_idx.shape[0]/train_labels.shape[0] 
-        sampler = th.utils.data.WeightedRandomSampler(weights)
+        # sampler = th.utils.data.WeightedRandomSampler(weights)
     else :
         sampler = None
     dataloader = dgl.dataloading.NodeDataLoader(

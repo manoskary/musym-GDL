@@ -28,9 +28,22 @@ class mySAGEConv(nn.Module):
             # Init glorot transform to aggre layer and linear layer
             nn.init.xavier_uniform_(self.pool.weight, gain=gain)        
         elif self.aggretype == "lstm":
-            self.lstm = nn.LSTM(self.in_feats, self.in_feats)
+            self.lstm = nn.LSTM(self.in_feats, self.in_feats, batch_first=True)
             self.lstm.reset_parameters()
         nn.init.xavier_uniform_(self.linear.weight, gain=gain)
+
+
+    def _lstm_reducer(self, nodes):
+        """LSTM reducer
+        NOTE(zihao): lstm reducer with default schedule (degree bucketing)
+        is slow, we could accelerate this with degree padding in the future.
+        """
+        m = nodes.mailbox['m'] # (B, L, D)
+        batch_size = m.shape[0]
+        h = (m.new_zeros((1, batch_size, self.in_feats)),
+             m.new_zeros((1, batch_size, self.in_feats)))
+        _, (rst, _) = self.lstm(m, h)
+        return {'h_new': rst.squeeze(0)}
 
         
     def aggregate(self, g, node_feats, e_weight):
@@ -43,8 +56,7 @@ class mySAGEConv(nn.Module):
                 g.update_all(msg_fn, fn.max('m', 'h_new'))
             elif self.aggretype == "lstm":
                 g.srcdata['h'] = node_feats
-                lstm_fn = lambda x : {"h_new" : self.lstm(x.mailbox["m"])[1][0].squeeze(0)}
-                g.update_all(msg_fn, lstm_fn)
+                g.update_all(msg_fn, self._lstm_reducer)
             aggregated = g.dstdata['h_new']
             return aggregated
 
@@ -84,11 +96,14 @@ class mylstmSAGEConv(nn.Module):
         self.in_feats = in_feats 
         self.out_feats = out_feats
         # Trainable weights for Linear Transformation
-        self.layer = nn.LSTM(in_feats, out_feats)
+        self.layer = nn.LSTM(input_size=in_feats, hidden_size=out_feats)
+        self.linear = nn.Linear(out_feats, out_feats)
+
         self.bias = nn.Parameter(th.zeros(out_feats))
         self.lstm = nn.LSTM(self.in_feats, self.in_feats, batch_first=True)
         self.layer.reset_parameters()
         self.lstm.reset_parameters()
+        nn.init.xavier_uniform_(self.linear.weight, gain=nn.init.calculate_gain('relu'))
 
 
     def _lstm_reducer(self, nodes):
@@ -118,7 +133,8 @@ class mylstmSAGEConv(nn.Module):
         # Aggregate
         h = self.aggregate(g, node_feats, e_weight)
         # Apply Learnable Weight
-        h = self.layer(h)[1][0]
+        h = torch.squeeze(self.layer(h)[0])
+        h = self.linear(h)
         # bias term
         h = h + self.bias
         return h
@@ -317,16 +333,16 @@ class SAGE(nn.Module):
 
     def init(self, in_feats, n_hidden, n_classes, n_layers, activation, dropout):
         self.n_layers = n_layers
-        self.n_hidden = n_hiddeninput
+        self.n_hidden = n_hidden
         self.n_classes = n_classes
         self.layers = nn.ModuleList()
         if n_layers > 1:
-            self.layers.append(dglnn.SAGEConv(in_feats, n_hidden, 'mean'))
+            self.layers.append(dglnn.SAGEConv(in_feats, n_hidden, 'pool'))
             for i in range(1, n_layers - 1):
-                self.layers.append(dglnn.SAGEConv(n_hidden, n_hidden, 'mean'))
-            self.layers.append(dglnn.SAGEConv(n_hidden, n_classes, 'mean'))
+                self.layers.append(dglnn.SAGEConv(n_hidden, n_hidden, 'pool'))
+            self.layers.append(dglnn.SAGEConv(n_hidden, n_classes, 'pool'))
         else:
-            self.layers.append(dglnn.SAGEConv(in_feats, n_classes, 'mean'))
+            self.layers.append(dglnn.SAGEConv(in_feats, n_classes, 'pool'))
         self.dropout = nn.Dropout(dropout)
         self.activation = activation
 

@@ -134,6 +134,7 @@ def main(args):
     # create model
     in_feats = node_features.shape[1]
     if config["gnn"] == "GraphSage" or config["gnn"] == "SAGE":
+        g = dgl.add_self_loop(g)
         model = GraphSAGE(in_feats, config["num_hidden"], n_classes, 
             n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
     elif config["gnn"] == "SGC":
@@ -142,7 +143,7 @@ def main(args):
              n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
     elif config["gnn"] == "GAT":
         g = dgl.add_self_loop(g)
-        model  = SGC(in_feats, config["num_hidden"], n_classes,
+        model  = GAT(in_feats, config["num_hidden"], n_classes,
              n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
     elif config["gnn"] == "LSTMSAGE":
         g = dgl.add_self_loop(g)
@@ -151,12 +152,13 @@ def main(args):
     else :
         raise AttributeError("The specified Graph Network is not implemented.")
     if use_cuda:
-        model.cuda()
+        m = model.cuda()
 
 
     # optimizer
     optimizer = th.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     criterion = nn.CrossEntropyLoss()
+    scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     # training loop
     print("start training...")
     dur = []
@@ -180,11 +182,12 @@ def main(args):
             val_loss = criterion(logits[val_idx], labels[val_idx])
             val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
 
-            # Log the Experiment
-            # wandb.log({"train_accuracy" : train_acc, "train_loss" : loss, "val_accuracy" : val_acc, "val_loss":val_loss})            
 
+        scheduler.step(val_loss)
+            
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
               format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
+
     print()
     # Saving Model for later
     # if config["model_path"] is not None:
@@ -216,6 +219,8 @@ if __name__ == '__main__':
                            help="Inductive learning setting")
     argparser.add_argument("--weight-decay", type=float, default=5e-4,
                         help="Weight for L2 loss")
+    argparser.add_argument("--init-eweights", type=int, default=0, 
+        help="Initialize learnable graph weights. Use 1 for True and 0 for false")
     # argparser.add_argument("--aggregator-type", type=str, default="pool",
     #                     help="Aggregator type: mean/gcn/pool/lstm")
     argparser.add_argument('--data-cpu', action='store_true',
