@@ -74,7 +74,7 @@ def evaluate(model, g, nfeat, labels, val_nid, device):
     """
     model.eval()
     with th.no_grad():
-        pred = model.inference(g, nfeat, device, args.batch_size, args.num_workers)
+        pred = model.inference(g, nfeat, device, config["batch_size"], config["num_workers"])
     model.train()
     return compute_acc(pred[val_nid], labels[val_nid].to(pred.device))
 
@@ -97,7 +97,7 @@ def run(args, device, data):
     test_nid = th.nonzero(~(test_g.ndata['train_mask'] | test_g.ndata['val_mask']), as_tuple=True)[0]
 
     dataloader_device = th.device('cpu')
-    if args.sample_gpu:
+    if config["sample_gpu"]:
         train_nid = train_nid.to(device)
         # copy only the csc to the GPU
         train_g = train_g.formats(['csc'])
@@ -105,10 +105,10 @@ def run(args, device, data):
         dataloader_device = device
 
     # Create PyTorch DataLoader for constructing blocks
-    if isinstance(args.fan_out, str):
-        fanouts = [int(fanout) for fanout in args.fan_out.split(',')]
+    if isinstance(config["fan_out"], str):
+        fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
     else :
-        fanouts = args.fan_out
+        fanouts = config["fan_out"]
     graph_sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
     # TODO fix correct sampler formulation
     if n_classes == 2:
@@ -128,23 +128,23 @@ def run(args, device, data):
         train_nid,
         graph_sampler,
         device=dataloader_device,
-        batch_size=args.batch_size,
+        batch_size=config["batch_size"],
         shuffle=True,
         drop_last=False,
-        num_workers=args.num_workers
+        num_workers=config["num_workers"]
         )
 
     # Define model and optimizer
-    model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)
+    model = SAGE(in_feats, config["num_hidden"], n_classes, config["num_layers"], F.relu, config["dropout"])
     model = model.to(device)
     loss_fcn = nn.CrossEntropyLoss()
-    optimizer = th.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = th.optim.Adam(model.parameters(), lr=config["lr"])
     scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
 
     # Training loop
     avg = 0
     iter_tput = []
-    for epoch in range(args.num_epochs):
+    for epoch in range(config["num_epochs"]):
         tic = time.time()
 
         # Loop over the dataloader to sample the computation dependency graph as a list of
@@ -164,13 +164,13 @@ def run(args, device, data):
             optimizer.step()
             if epoch>3:
                 iter_tput.append(len(seeds) / (time.time() - tic_step + 1e-8))
-            if step % args.log_every == 0:
+            if step % config["log_every"] == 0:
                 acc = compute_acc(batch_pred, batch_labels)
                 gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
                 print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
                     epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
             tic_step = time.time()
-            if epoch == args.num_epochs-1 :
+            if epoch == config["num_epochs"]-1 :
                 path = os.path.join(os.path.dirname(__file__), "artifacts", "last_epoch_results_block_"+str(step) + ".csv")
                 if not os.path.exists(os.path.join(os.path.dirname(__file__), "artifacts")):
                     os.makedirs(os.path.join(os.path.dirname(__file__), "artifacts"))
@@ -187,7 +187,7 @@ def run(args, device, data):
         eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device)
         print('Eval Acc {:.4f}'.format(eval_acc))
         scheduler.step(eval_acc)
-        if epoch % args.eval_every == 0 and epoch != 0:
+        if epoch % config["eval_every"] == 0 and epoch != 0:
             test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
             print('Test Acc: {:.4f}'.format(test_acc))
 
@@ -206,7 +206,7 @@ if __name__ == '__main__':
     argparser.add_argument('--num-epochs', type=int, default=20)
     argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
-    argparser.add_argument('--fan-out', type=str, default='5, 10')
+    argparser.add_argument('--fan-out', type=str, default='5, 5')
     argparser.add_argument('--batch-size', type=int, default=128)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
@@ -227,42 +227,43 @@ if __name__ == '__main__':
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
     args = argparser.parse_args()
+    config = vars(args)
 
-    use_cuda = args.gpu >= 0 and th.cuda.is_available()
+    use_cuda = config["gpu"] >= 0 and th.cuda.is_available()
 
     if use_cuda:
-        device = th.device('cuda:%d' % args.gpu)
+        device = th.device('cuda:%d' % config["gpu"])
     else:
         device = th.device('cpu')
     # load graph data
-    if args.dataset == 'mps_onset':
+    if config["dataset"] == 'mps_onset':
         g, n_classes = load_and_save("mpgd_homo_onset", "MPGD_homo_onset")
-    elif args.dataset =="toy":
+    elif config["dataset"] =="toy":
         g, n_classes = load_and_save("toy_homo_onset")
-    elif args.dataset == "toy01":
+    elif config["dataset"] == "toy01":
         g, n_classes = load_and_save("toy_01_homo")
-    elif args.dataset == "toy02":
+    elif config["dataset"] == "toy02":
         g, n_classes = load_and_save("toy_02_homo")
-    elif args.dataset == "cora":
+    elif config["dataset"] == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g= dataset[0]
         n_classes = dataset.num_classes
-    elif args.dataset == "reddit":
+    elif config["dataset"] == "reddit":
         g, n_classes = load_reddit()
     else:
         raise ValueError()
 
-    if args.add_self_loop:
+    if config["add_self_loop"]:
         g = dgl.add_self_loop(g)
 
-    if args.init_eweights:
+    if config["init_eweights"]:
         w = th.empty(g.num_edges())
         nn.init.uniform_(w)
         g.edata["w"] = w
 
 
 
-    if args.inductive:
+    if config["inductive"]:
         train_g, val_g, test_g = inductive_split(g)
         train_nfeat = train_g.ndata.pop('feat')
         val_nfeat = val_g.ndata.pop('feat')
@@ -277,7 +278,7 @@ if __name__ == '__main__':
 
     print("Number of total graph nodes : {} ".format(train_labels.shape[0]))
 
-    if not args.data_cpu:
+    if not config["data_cpu"]:
         train_nfeat = train_nfeat.to(device)
         train_labels = train_labels.to(device)
 
