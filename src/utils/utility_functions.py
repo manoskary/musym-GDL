@@ -2,6 +2,8 @@ import sys, os
 from dgl import load_graphs
 from dgl.data.utils import load_info
 
+from .nc_dataset_class import *
+
 
 def str_to_class(classname):
     return getattr(sys.modules[__name__], classname)

@@ -1,7 +1,7 @@
 """Entity Classification with Mini Batch sampling for Music with Graph Convolutional Networks
 
 Author : Emmanouil Karystinaios
-
+edited Mini Baching hyparams and added schedule lr
 Reference repo : https://github.com/melkisedeath/musym-GDL
 """
 
