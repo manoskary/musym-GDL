@@ -8,6 +8,8 @@ Reference repo : https://github.com/melkisedeath/musym-GDL
 import argparse, gc
 import numpy as np
 import time
+
+import torch
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
@@ -32,28 +34,7 @@ sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_P
 
 from utils import *
 
-def load_and_save(name, classname=None):
-    data_dir = os.path.abspath("./data/")
-    if os.path.exists(os.path.join(data_dir, name)):
-        # load processed data from directory `self.save_path`
-        graph_path = os.path.join(data_dir, name, name + '_graph.bin')
-        # Load the Homogeneous Graph
-        g = load_graphs(graph_path)[0][0]
-        info_path = os.path.join(data_dir, name, name + '_info.pkl')
-        n_classes = load_info(info_path)['num_classes']
-        return g, n_classes
-    else:
-        if classname:
-            dataset = str_to_class(classname)(save_path=data_dir)
-        else:
-            dataset = str_to_class(name)(save_path=data_dir)
-        
 
-        dataset.save_data()
-        # Load the Homogeneous Graph
-        g = dataset[0]
-        n_classes = dataset.num_classes 
-        return g, n_classes
 
 
 def load_reddit():
@@ -69,9 +50,9 @@ def load_reddit():
 def inductive_split(g):
     """Split the graph into training graph, validation graph, and test graph by training
     and validation masks.  Suitable for inductive models."""
-    train_g = g.subgraph(g.ndata['train_mask'])
-    val_g = g.subgraph(g.ndata['val_mask'] | g.ndata['train_mask'])
-    test_g = g
+    train_g = g.subgraph(g.ndata['train_mask'].type(torch.int64))
+    val_g = g.subgraph(g.ndata['val_mask'].type(torch.int64))
+    test_g = g.subgraph(g.ndata['train_mask'].type(torch.int64))
     return train_g, val_g, test_g
 
 def compute_acc(pred, labels):
@@ -80,6 +61,7 @@ def compute_acc(pred, labels):
     """
     labels = labels.long()
     return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
+
 
 def evaluate(model, g, nfeat, labels, val_nid, device):
     """
@@ -123,7 +105,11 @@ def run(args, device, data):
         dataloader_device = device
 
     # Create PyTorch DataLoader for constructing blocks
-    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler([int(fanout) for fanout in args.fan_out.split(',')])
+    if isinstance(args.fan_out, str):
+        fanouts = [int(fanout) for fanout in args.fan_out.split(',')]
+    else :
+        fanouts = args.fan_out
+    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
     # TODO fix correct sampler formulation
     if n_classes == 2:
         # For Imbalanced Binary Labels
@@ -143,7 +129,7 @@ def run(args, device, data):
         graph_sampler,
         device=dataloader_device,
         batch_size=args.batch_size,
-        # shuffle=True,
+        shuffle=True,
         drop_last=False,
         num_workers=args.num_workers
         )
@@ -153,6 +139,7 @@ def run(args, device, data):
     model = model.to(device)
     loss_fcn = nn.CrossEntropyLoss()
     optimizer = th.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
 
     # Training loop
     avg = 0
@@ -187,22 +174,29 @@ def run(args, device, data):
                 path = os.path.join(os.path.dirname(__file__), "artifacts", "last_epoch_results_block_"+str(step) + ".csv")
                 if not os.path.exists(os.path.join(os.path.dirname(__file__), "artifacts")):
                     os.makedirs(os.path.join(os.path.dirname(__file__), "artifacts"))
-                df = pd.DataFrame({"labels" : batch_labels.detach().numpy(), "predictions" : batch_pred.argmax(dim=1).detach().numpy()}).to_csv(path)
+                df = pd.DataFrame({"labels" : batch_labels.detach().cpu().numpy(), "predictions" : batch_pred.argmax(dim=1).detach().cpu().numpy()}).to_csv(path)
                 
 
         toc = time.time()
         print('Epoch Time(s): {:.4f}'.format(toc - tic))
+
+
         if epoch >= 5:
             avg += toc - tic
+
+        eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device)
+        print('Eval Acc {:.4f}'.format(eval_acc))
+        scheduler.step(eval_acc)
         if epoch % args.eval_every == 0 and epoch != 0:
-            eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device)
-            print('Eval Acc {:.4f}'.format(eval_acc))
             test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
             print('Test Acc: {:.4f}'.format(test_acc))
 
 
 
+
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
+    est_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
+    print('Test Acc: {:.4f}'.format(test_acc))
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='GraphSAGE')
@@ -221,6 +215,8 @@ if __name__ == '__main__':
     argparser.add_argument('--add-self-loop', action='store_true', help="Add a self loop to every node of the graph.")
     argparser.add_argument('--num-workers', type=int, default=4,
                            help="Number of sampling processes. Use 0 for no extra process.")
+    argparser.add_argument("--init-eweights", type=int, default=0,
+                           help="Initialize learnable graph weights. Use 1 for True and 0 for false")
     argparser.add_argument('--sample-gpu', action='store_true',
                            help="Perform the sampling process on the GPU. Must have 0 workers.")
     argparser.add_argument('--inductive', action='store_true',
@@ -232,11 +228,12 @@ if __name__ == '__main__':
                                 "This flag disables that.")
     args = argparser.parse_args()
 
-    if args.gpu >= 0 and th.cuda.is_available():
+    use_cuda = args.gpu >= 0 and th.cuda.is_available()
+
+    if use_cuda:
         device = th.device('cuda:%d' % args.gpu)
     else:
         device = th.device('cpu')
-
     # load graph data
     if args.dataset == 'mps_onset':
         g, n_classes = load_and_save("mpgd_homo_onset", "MPGD_homo_onset")
@@ -261,7 +258,8 @@ if __name__ == '__main__':
     if args.init_eweights:
         w = th.empty(g.num_edges())
         nn.init.uniform_(w)
-        g.edata["w"] = w.to('cuda:%d' % config["gpu"]) if use_cuda else w
+        g.edata["w"] = w
+
 
 
     if args.inductive:
@@ -276,6 +274,8 @@ if __name__ == '__main__':
         train_g = val_g = test_g = g
         train_nfeat = val_nfeat = test_nfeat = g.ndata.pop('feat')
         train_labels = val_labels = test_labels = g.ndata.pop('label')
+
+    print("Number of total graph nodes : {} ".format(train_labels.shape[0]))
 
     if not args.data_cpu:
         train_nfeat = train_nfeat.to(device)
