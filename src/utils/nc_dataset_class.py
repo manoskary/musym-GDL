@@ -36,6 +36,8 @@ MOZART_STRING_QUARTETS = [
 	'k589-01', 'k590-01'
 	]
 
+MIX = MOZART_STRING_QUARTETS + MOZART_PIANO_SONATAS
+
 FILE_LIST = [
 	'note-during-note.csv', 'note-follows-note.csv', 
 	'note-follows-rest.csv', 'note-onset-note.csv', 
@@ -495,7 +497,7 @@ class toy_01_homo(MozartPianoHomoGraphDataset):
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, 
 				select_piece=select_piece, normalize=True, 
 				features=None, save_path=save_path, 
-				piece_list = MOZART_STRING_QUARTETS)
+				piece_list = MIX)
 
 class toy_02_homo(MozartPianoHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
@@ -506,7 +508,7 @@ class toy_02_homo(MozartPianoHomoGraphDataset):
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, 
 				select_piece=select_piece, normalize=True, 
 				features=None, save_path=save_path, 
-				piece_list = MOZART_STRING_QUARTETS)
+				piece_list = MIX)
 		
 
 
