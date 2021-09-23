@@ -264,7 +264,7 @@ def main(config):
     data = n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
            val_nfeat, val_labels, test_nfeat, test_labels
 
-    run(args, device, data)
+    run(config, device, data)
 
 
 if __name__ == '__main__':
