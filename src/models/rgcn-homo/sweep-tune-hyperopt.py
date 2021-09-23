@@ -38,6 +38,8 @@ if __name__ == '__main__':
                                 "on GPU when using it to save time for data copy. This may "
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
+    argparser.add_argument('--log-every', type=int, default=20)
+    argparser.add_argument('--eval-every', type=int, default=5)
     argparser.add_argument('--fan-out', type=str, default='5, 10')
     argparser.add_argument("--quick-test", action="store_true", help="Finish quickly for testing")
     # argparser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")

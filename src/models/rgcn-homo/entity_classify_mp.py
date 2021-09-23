@@ -63,7 +63,7 @@ def compute_acc(pred, labels):
     return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
 
 
-def evaluate(model, g, nfeat, labels, val_nid, device):
+def evaluate(model, g, nfeat, labels, val_nid, device, config):
     """
     Evaluate the model on the validation set specified by ``val_nid``.
     g : The entire graph.
@@ -186,14 +186,14 @@ def run(config, device, data):
         if epoch >= 5:
             avg += toc - tic
 
-        eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device)
+        eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device, config)
         print('Eval Acc {:.4f}'.format(eval_acc))
         tune.report(mean_accuracy=acc, mean_loss=loss)
         wandb.log({"train_accuracy": acc, "train_loss": loss, "val_accuracy": eval_acc})
 
         scheduler.step(eval_acc)
         if epoch % config["eval_every"] == 0 and epoch != 0:
-            test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
+            test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
             wandb.log({"test_accuracy": test_acc})
             print('Test Acc: {:.4f}'.format(test_acc))
 
@@ -201,7 +201,7 @@ def run(config, device, data):
 
 
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
-    est_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
+    est_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
     print('Test Acc: {:.4f}'.format(test_acc))
 
 @wandb_mixin
