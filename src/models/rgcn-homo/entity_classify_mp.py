@@ -87,6 +87,7 @@ def load_subtensor(nfeat, labels, seeds, input_nodes, device):
     return batch_inputs, batch_labels
 
 #### Entry point
+@wandb_mixin
 def run(config, device, data):
     # Unpack data
     n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
