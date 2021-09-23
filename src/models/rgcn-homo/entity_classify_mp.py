@@ -5,27 +5,27 @@ edited Mini Baching hyparams and added schedule lr
 Reference repo : https://github.com/melkisedeath/musym-GDL
 """
 
-import argparse, gc
+import argparse
 import numpy as np
 import time
-
+import os, sys
 import torch
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
-import dgl.multiprocessing as mp
-from dgl.multiprocessing import Queue
-from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader
 import dgl
-from dgl import DGLGraph, load_graphs
 from dgl.data.utils import load_info
-from functools import partial
+
 import pandas as pd
 
 from models import SAGE
-import tqdm
-import os, sys
+
+
+# Hyperparam Tuning and Logging
+from ray import tune
+from ray.tune.integration.wandb import wandb_mixin
+import wandb
+
 
 
 PACKAGE_PARENT = '..'
@@ -87,7 +87,7 @@ def load_subtensor(nfeat, labels, seeds, input_nodes, device):
     return batch_inputs, batch_labels
 
 #### Entry point
-def run(args, device, data):
+def run(config, device, data):
     # Unpack data
     n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
     val_nfeat, val_labels, test_nfeat, test_labels = data
@@ -137,13 +137,14 @@ def run(args, device, data):
     # Define model and optimizer
     model = SAGE(in_feats, config["num_hidden"], n_classes, config["num_layers"], F.relu, config["dropout"])
     model = model.to(device)
-    loss_fcn = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()
     optimizer = th.optim.Adam(model.parameters(), lr=config["lr"])
     scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
 
     # Training loop
     avg = 0
     iter_tput = []
+    wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(config["num_epochs"]):
         tic = time.time()
 
@@ -158,7 +159,7 @@ def run(args, device, data):
 
             # Compute loss and prediction
             batch_pred = model(blocks, batch_inputs)
-            loss = loss_fcn(batch_pred, batch_labels)
+            loss = criterion(batch_pred, batch_labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -175,7 +176,7 @@ def run(args, device, data):
                 if not os.path.exists(os.path.join(os.path.dirname(__file__), "artifacts")):
                     os.makedirs(os.path.join(os.path.dirname(__file__), "artifacts"))
                 df = pd.DataFrame({"labels" : batch_labels.detach().cpu().numpy(), "predictions" : batch_pred.argmax(dim=1).detach().cpu().numpy()}).to_csv(path)
-                
+
 
         toc = time.time()
         print('Epoch Time(s): {:.4f}'.format(toc - tic))
@@ -186,9 +187,13 @@ def run(args, device, data):
 
         eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device)
         print('Eval Acc {:.4f}'.format(eval_acc))
+        tune.report(mean_accuracy=acc, mean_loss=loss)
+        wandb.log({"train_accuracy": acc, "train_loss": loss, "val_accuracy": eval_acc})
+
         scheduler.step(eval_acc)
         if epoch % config["eval_every"] == 0 and epoch != 0:
             test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
+            wandb.log({"test_accuracy": test_acc})
             print('Test Acc: {:.4f}'.format(test_acc))
 
 
@@ -197,6 +202,70 @@ def run(args, device, data):
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
     est_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
     print('Test Acc: {:.4f}'.format(test_acc))
+
+@wandb_mixin
+def main(config):
+    # Pass parameters to create experiment
+    wandb.run.name = str("SAGE-" + str(config["num_layers"]) + "x" + str(
+        config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"]) + "-lr_scheduler")
+
+    use_cuda = config["gpu"] >= 0 and th.cuda.is_available()
+
+    if use_cuda:
+        device = th.device('cuda:%d' % config["gpu"])
+    else:
+        device = th.device('cpu')
+    # load graph data
+    if config["dataset"] == 'mps_onset':
+        g, n_classes = load_and_save("mpgd_homo_onset", "MPGD_homo_onset")
+    elif config["dataset"] == "toy":
+        g, n_classes = load_and_save("toy_homo_onset")
+    elif config["dataset"] == "toy01":
+        g, n_classes = load_and_save("toy_01_homo")
+    elif config["dataset"] == "toy02":
+        g, n_classes = load_and_save("toy_02_homo")
+    elif config["dataset"] == "cora":
+        dataset = dgl.data.CoraGraphDataset()
+        g = dataset[0]
+        n_classes = dataset.num_classes
+    elif config["dataset"] == "reddit":
+        g, n_classes = load_reddit()
+    else:
+        raise ValueError()
+
+    if config["add_self_loop"]:
+        g = dgl.add_self_loop(g)
+
+    if config["init_eweights"]:
+        w = th.empty(g.num_edges())
+        nn.init.uniform_(w)
+        g.edata["w"] = w
+
+    if config["inductive"]:
+        train_g, val_g, test_g = inductive_split(g)
+        train_nfeat = train_g.ndata.pop('feat')
+        val_nfeat = val_g.ndata.pop('feat')
+        test_nfeat = test_g.ndata.pop('feat')
+        train_labels = train_g.ndata.pop('label')
+        val_labels = val_g.ndata.pop('label')
+        test_labels = test_g.ndata.pop('label')
+    else:
+        train_g = val_g = test_g = g
+        train_nfeat = val_nfeat = test_nfeat = g.ndata.pop('feat')
+        train_labels = val_labels = test_labels = g.ndata.pop('label')
+
+    print("Number of total graph nodes : {} ".format(train_labels.shape[0]))
+
+    if not config["data_cpu"]:
+        train_nfeat = train_nfeat.to(device)
+        train_labels = train_labels.to(device)
+
+    # Pack data
+    data = n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
+           val_nfeat, val_labels, test_nfeat, test_labels
+
+    run(args, device, data)
+
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='GraphSAGE')
@@ -286,4 +355,4 @@ if __name__ == '__main__':
     data = n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
            val_nfeat, val_labels, test_nfeat, test_labels
 
-    run(args, device, data)
+    run(config, device, data)

@@ -1,6 +1,7 @@
-from entity_classify_gs import main
+from entity_classify_mp import main
 import argparse
 from ray import tune
+from ray.tune.schedulers import AsyncHyperBandScheduler
 from ray.tune.integration.wandb import WandbLogger
 import wandb
 
@@ -14,11 +15,14 @@ if __name__ == '__main__':
     argparser.add_argument('--num-epochs', type=int, default=100)
     argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
+    argparser.add_argument('--batch-size', type=int, default=1024)
     argparser.add_argument('--lr', type=float, default=1e-2)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--num-gpu', type=int, default=1)
     argparser.add_argument('--inductive', action='store_true',
                            help="Inductive learning setting")
+    argparser.add_argument('--add-self-loop', action='store_true',
+                           help="Adding a sef loop to each node.")
     argparser.add_argument("--init-eweights", type=int, default=0, 
         help="Initialize learnable graph weights. Use 1 for True and 0 for false")
     argparser.add_argument('--sample-gpu', action='store_true',
@@ -35,6 +39,7 @@ if __name__ == '__main__':
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
     argparser.add_argument('--fan-out', type=str, default='5, 10')
+    argparser.add_argument("--quick-test", action="store_true", help="Finish quickly for testing")
     # argparser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
     args = argparser.parse_args()
 
@@ -53,17 +58,30 @@ if __name__ == '__main__':
     config["num_hidden"] = tune.grid_search([8, 16, 32])
     config["num_layers"] = tune.grid_search([2])
     config["dropout"] = tune.grid_search([0.5])
-    config["gnn"] = tune.grid_search(["SAGE"])
     config["init_eweights"] = tune.grid_search([0, 1])
+    config["add_self_loop"] = tune.grid_search([True, False])
 
+    # AsyncHyperBand enables aggressive early stopping of bad trials.
+    scheduler = AsyncHyperBandScheduler(grace_period=10, max_t=100)
+    stopping_criteria = {"training_iteration": 1 if args.quick_test else 9999}
+    # WandbLogger logs experiment configurations and metrics reported via tune.report() to W&B Dashboard
+    logger = WandbLogger if not config["quick_test"] else None # For testing.
     analysis = tune.run(
         # your main function or script.py
         main,
-        # WandbLogger logs experiment configurations and metrics reported via tune.report() to W&B Dashboard
-        loggers=[WandbLogger],
+        name="asynchyperband_test",
+        metric="mean_loss",
+        mode="min",
+        # The logging methods
+        loggers=[logger],
+        verbose=1,
         # This resources per trial is a bit confusing to work with gpu nodes
         # but usually just keeping it at 1 works in combination with : CUDA_AVAILABLE_DEVICES=0, 1, etc python scirpt.py.
         resources_per_trial={'gpu': args.num_gpu},
         # Config is a dict with some tune.grid_Searchs or other tune hyparam opt.
-        config=config)
+        config=config,
+        # Early Stopping Scheduler
+        scheduler=scheduler,
+        stop= stopping_criteria
+    )
 
