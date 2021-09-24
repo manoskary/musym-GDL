@@ -14,7 +14,6 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 import dgl
-from dgl.data.utils import load_info
 
 import pandas as pd
 
@@ -188,8 +187,8 @@ def run(config, device, data):
 
         eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device, config)
         print('Eval Acc {:.4f}'.format(eval_acc))
-        tune.report(mean_accuracy=acc, mean_loss=loss)
-        wandb.log({"train_accuracy": acc, "train_loss": loss, "val_accuracy": eval_acc})
+        tune.report(mean_loss=loss.item())
+        wandb.log({"train_accuracy": acc.item(), "train_loss": loss.item(), "val_accuracy": eval_acc})
 
         scheduler.step(eval_acc)
         if epoch % config["eval_every"] == 0 and epoch != 0:
@@ -207,6 +206,9 @@ def run(config, device, data):
 @wandb_mixin
 def main(config):
     # Pass parameters to create experiment
+
+    config["num_layers"] = len(config["fan_out"])
+
     wandb.run.name = str("SAGE-" + str(config["num_layers"]) + "x" + str(
         config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"]) + "-lr_scheduler")
 
@@ -218,13 +220,13 @@ def main(config):
         device = th.device('cpu')
     # load graph data
     if config["dataset"] == 'mps_onset':
-        g, n_classes = load_and_save("mpgd_homo_onset", "MPGD_homo_onset")
+        g, n_classes = load_and_save("mpgd_homo_onset", config["data_dir"], "MPGD_homo_onset")
     elif config["dataset"] == "toy":
-        g, n_classes = load_and_save("toy_homo_onset")
+        g, n_classes = load_and_save("toy_homo_onset", config["data_dir"])
     elif config["dataset"] == "toy01":
-        g, n_classes = load_and_save("toy_01_homo")
+        g, n_classes = load_and_save("toy_01_homo", config["data_dir"])
     elif config["dataset"] == "toy02":
-        g, n_classes = load_and_save("toy_02_homo")
+        g, n_classes = load_and_save("toy_02_homo", config["data_dir"])
     elif config["dataset"] == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g = dataset[0]

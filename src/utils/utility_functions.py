@@ -1,6 +1,6 @@
-import sys, os
-from dgl import load_graphs
-from dgl.data.utils import load_info
+import sys
+import os
+from dgl.data.utils import load_info, load_graphs
 
 from .nc_dataset_class import *
 
@@ -9,8 +9,9 @@ def str_to_class(classname):
     return getattr(sys.modules[__name__], classname)
 
 
-def load_and_save(name, classname=None):
-    data_dir = os.path.abspath("./data/")
+def load_and_save(name, data_dir=None, classname=None):
+    if not data_dir:
+        data_dir = os.path.abspath("./data/")
     if os.path.exists(os.path.join(data_dir, name)):
         # load processed data from directory `self.save_path`
         graph_path = os.path.join(data_dir, name, name + '_graph.bin')
