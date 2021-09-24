@@ -59,8 +59,9 @@ if __name__ == '__main__':
     else :
         raise ValueError("The Dataset is not Set for Optimization")
     config["lr"] = tune.grid_search([0.1, 0.01])
-    config["num_hidden"] = tune.grid_search([8, 16, 32])
+    config["num_hidden"] = tune.grid_search([8, 16, 32, 64])
     config["fan_out"] = tune.grid_search([[3, 3], [5, 5], [5, 10], [3, 6, 9], [5, 5, 5], [5, 10, 10], [5, 10, 15]])
+    config["batch_size"] = tune.grid_search([256, 512, 1024])
     config["dropout"] = tune.grid_search([0.5])
     config["init_eweights"] = tune.grid_search([0, 1])
     config["add_self_loop"] = tune.grid_search([True, False])
