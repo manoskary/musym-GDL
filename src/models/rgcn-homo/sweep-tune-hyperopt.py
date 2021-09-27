@@ -83,7 +83,7 @@ if __name__ == '__main__':
         verbose=1,
         # This resources per trial is a bit confusing to work with gpu nodes
         # but usually just keeping it at 1 works in combination with : CUDA_AVAILABLE_DEVICES=0, 1, etc python scirpt.py.
-        resources_per_trial={'gpu': args.num_gpu},
+        resources_per_trial={'gpu': 0.25},
         # Config is a dict with some tune.grid_Searchs or other tune hyparam opt.
         config=config,
         # Early Stopping Scheduler
