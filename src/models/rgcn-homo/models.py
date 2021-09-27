@@ -8,6 +8,9 @@ import tqdm
 from dgl.nn.pytorch.conv import SAGEConv
 from dgl.utils import check_eq_shape
 import dgl.function as fn
+import pyro
+import scipy.sparse as sp
+import networkx as nx
 
 class mySAGEConv(nn.Module):
 
@@ -473,32 +476,131 @@ class InnerProductDecoder(nn.Module):
 
 
 class GAE(nn.Module):
-    def __init__(self, in_dim, hidden_dims):
+    def __init__(self, in_dim, n_hidden, n_layers, activation, dropout):
         super(GAE, self).__init__()
-        layers = [GCN(in_dim, hidden_dims[0], F.relu)]
-        if len(hidden_dims)>=2:
-            layers = [GCN(in_dim, hidden_dims[0], F.relu)]
-            for i in range(1,len(hidden_dims)):
-                if i != len(hidden_dims)-1:
-                    layers.append(GCN(hidden_dims[i-1], hidden_dims[i], F.relu))
-                else:
-                    layers.append(GCN(hidden_dims[i-1], hidden_dims[i], lambda x:x))
-        else:
-            layers = [GCN(in_dim, hidden_dims[0], lambda x:x)]
-        self.layers = nn.ModuleList(layers)
+        self.activation = activation
+        self.dropout = nn.Dropout(dropout)
+        self.layers = nn.ModuleList()
+        self.layers.append(GCN(in_dim, n_hidden, activation))
+        for i in range(n_layers - 1):
+            self.layers.append(GCN(n_hidden, n_hidden, self.activation))
         self.decoder = InnerProductDecoder(activation=lambda x:x)
+
     
-    def forward(self, g):
-        h = g.ndata['h']
+    def forward(self, g, inputs):
+        h = self.dropout(inputs)
         for conv in self.layers:
             h = conv(g, h)
         g.ndata['h'] = h
         adj_rec = self.decoder(h)
         return adj_rec
 
-    def encode(self, g):
-        h = g.ndata['h']
+    def encode(self, g, inputs):
+        h = self.dropout(inputs)
         for conv in self.layers:
             h = conv(g, h)
         return h
 
+
+def numpy_to_graph(A, type_graph='dgl', node_features=None):
+    '''Convert numpy arrays to graph
+
+    Parameters
+    ----------
+    A : mxm array
+        Adjacency matrix
+    type_graph : str
+        'dgl' or 'nx'
+    node_features : dict
+        Optional, dictionary with key=feature name, value=list of size m
+        Allows user to specify node features
+
+    Returns
+
+    -------
+    Graph of 'type_graph' specification
+    '''
+
+    G = nx.from_numpy_array(A)
+
+    if node_features != None:
+        for n in G.nodes():
+            for k, v in node_features.items():
+                G.nodes[n][k] = v[n]
+
+    if type_graph == 'nx':
+        return G
+
+    G = G.to_directed()
+
+    if node_features != None:
+        node_attrs = list(node_features.keys())
+    else:
+        node_attrs = []
+
+    g = dgl.from_networkx(G, node_attrs=node_attrs, edge_attrs=['weight'])
+    return g
+
+class GaugLoss(nn.Module):
+    def __init__(self, beta):
+        super(GaugLoss, self).__init__()
+        self.beta = beta
+        self.ce = nn.CrossEntropyLoss()
+        self.bce = nn.BCELoss()
+
+    def forward(self, output, target, adj_true, adj_pred):
+        ce_loss = self.ce(output, target)
+        bce_loss = self.bce(nn.Sigmoid()(adj_pred), adj_true)
+        return ce_loss + self.beta * bce_loss
+
+
+class Gaug(nn.Module):
+    def __init__(self, in_feats, n_hidden, n_classes,
+                 n_layers, activation=F.relu, dropout=0.5, alpha=1, temperature=0.2, use_cuda=False):
+        super(Gaug, self).__init__()
+        self.in_feats = in_feats
+        self.n_hidden = n_hidden
+        self.n_classes = n_classes
+        self.n_layers = n_layers
+        self.activation = activation
+        self.dropout = dropout
+        self.use_cuda = use_cuda
+        self.gae = GAE(in_feats, n_hidden, n_layers, activation=activation, dropout=dropout)
+        self.sage = GraphSAGE(
+            in_feats=in_feats,
+            n_hidden=n_hidden,
+            n_classes=n_classes,
+            n_layers=n_layers,
+            activation=activation,
+            dropout=dropout)
+        self.alpha = alpha
+        self.temperature = temperature
+
+    def forward(self, g, inputs):
+        self.adj = g.adj().to_dense().to(device='cuda') if self.use_cuda else g.adj().to_dense()
+        self.edge_pred = self.gae(g, inputs)
+        P = self.interpolate(self.adj, self.edge_pred)
+        A_new = self.sampling(P)
+        A_new = sp.coo_matrix(self.normalize_adj(A_new).detach().cpu())
+        g_new = numpy_to_graph(A_new.toarray()).to(device='cuda') if self.use_cuda else numpy_to_graph(A_new.toarray())
+        h = self.sage(g_new, inputs)
+        return h
+
+    def interpolate(self, A, M):
+        """Interpolate the original adjacency with the predicted from GAE"""
+        M = M / th.max(M)
+        P = self.alpha * M + (1 - self.alpha) * A
+        return P
+
+    def sampling(self, P):
+        # sampling
+        adj_sampled = pyro.distributions.RelaxedBernoulliStraightThrough(temperature=self.temperature,                                                                         probs=P).rsample()
+        # making adj_sampled symmetric
+        adj_sampled = adj_sampled.triu(1)
+        adj_sampled = adj_sampled + adj_sampled.T
+        return adj_sampled
+
+    def normalize_adj(self, adj):
+        adj.fill_diagonal_(1)
+        adj = F.normalize(adj, p=1, dim=1)
+        return adj
