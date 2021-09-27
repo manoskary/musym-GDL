@@ -4,6 +4,11 @@ import time
 import os, sys
 from models import *
 
+PACKAGE_PARENT = '..'
+SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
+sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
+
+from utils import *
 
 def main(args):
     """
@@ -13,9 +18,7 @@ def main(args):
 
     config = args if isinstance(args, dict) else vars(args)
 
-    dataset = dgl.data.CoraGraphDataset()
-    g = dataset[0]
-    n_classes = dataset.num_classes
+    g, n_classes = load_and_save("toy_homo_onset")
 
 
     train_mask = g.ndata['train_mask']
@@ -25,6 +28,7 @@ def main(args):
     test_idx = th.nonzero(test_mask, as_tuple=False).squeeze()
     val_idx = th.nonzero(val_mask, as_tuple=False).squeeze()
     labels = g.ndata['label']
+    g.ndata['idx'] = th.tensor(range(g.number_of_nodes()))
 
 
     # check cuda
@@ -35,6 +39,9 @@ def main(args):
         labels = labels.cuda()
         train_idx = train_idx.cuda()
         test_idx = test_idx.cuda()
+        device = th.device('cuda:%d' % config["gpu"])
+    else:
+        device = th.device('cpu')
 
     node_features = g.ndata['feat']
 
@@ -53,6 +60,17 @@ def main(args):
     if use_cuda:
         m = model.cuda()
 
+    # dataloader
+    sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts=[5, 10])
+    train_dataloader = dgl.dataloading.EdgeDataLoader(
+        g,
+        th.arange(g.number_of_edges()),
+        sampler,
+        batch_size = config["batch_size"],
+        shuffle=True,
+        drop_last=False,
+        pin_memory=True,
+        num_workers=config["num_workers"])
     # optimizer
     optimizer = th.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     criterion = GaugLoss(config["beta"])
@@ -63,21 +81,29 @@ def main(args):
     model.train()
     for epoch in range(config["num_epochs"]):
         model.train()
-        optimizer.zero_grad()
-        if epoch > 5:
-            t0 = time.time()
-        logits = model(g, node_features)
-        loss = criterion(logits[train_idx], labels[train_idx], model.adj, model.edge_pred)
-        loss.backward()
-        optimizer.step()
-        t1 = time.time()
+        t0 = time.time()
+        for step, (input_nodes, sub_g, blocks) in enumerate(train_dataloader):
+            batch_inputs = node_features[input_nodes].to(device)
+            batch_labels = labels[sub_g.ndata['idx']].to(device)
+            blocks = [block.int().to(device) for block in blocks]
+            feat_inputs = sub_g.ndata["feat"].to(device)
+            adj = sub_g.adjacency_matrix().to_dense().to(device)
+            logits = model(adj, blocks, batch_inputs, feat_inputs)
+            loss = criterion(logits, batch_labels, adj.view(-1), model.ep.view(-1))
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            if step % 5 == 0:
+                train_acc = th.sum(logits.argmax(dim=1) == batch_labels).item() / batch_labels.shape[0]
+                print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f}".format(epoch, train_acc, loss.item()))
 
+            t1 = time.time()
         if epoch > 5:
             dur.append(t1 - t0)
         with th.no_grad():
             model.eval()
             train_acc = th.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
-            val_loss = criterion(logits[val_idx], labels[val_idx], model.adj, model.edge_pred)
+            val_loss = criterion(logits[val_idx], labels[val_idx], model.adj, model.ep)
             val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
         print(
             "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
@@ -103,6 +129,8 @@ if __name__ == '__main__':
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument("--weight-decay", type=float, default=5e-4,
                            help="Weight for L2 loss")
+    argparser.add_argument("--batch-size", type=int, default=512)
+    argparser.add_argument("--num-workers", type=int, default=0)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
                                 "on GPU when using it to save time for data copy. This may "

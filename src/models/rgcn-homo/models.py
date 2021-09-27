@@ -446,7 +446,6 @@ class NodeApplyModule(nn.Module):
         return {'h': h}
 
 
-
 class GCN(nn.Module):
     def __init__(self, in_feats, out_feats, activation):
         super(GCN, self).__init__()
@@ -455,51 +454,47 @@ class GCN(nn.Module):
         self.gcn_reduce = fn.sum(msg='m', out='h')  
 
     def forward(self, g, feature):
-        # sum aggregation
-        g.ndata['h'] = feature
-        g.update_all(self.gcn_msg, self.gcn_reduce)
-        g.apply_nodes(func=self.apply_mod)
-        h =  g.ndata.pop('h')
-        return h
-
-
-class InnerProductDecoder(nn.Module):
-    def __init__(self, activation=th.sigmoid, dropout=0.1):
-        super(InnerProductDecoder, self).__init__()
-        self.dropout = dropout
-        self.activation = activation
-
-    def forward(self, z):
-        z = F.dropout(z, self.dropout)
-        adj = self.activation(th.mm(z, z.t()))
-        return adj
+        with g.local_scope():
+            # sum aggregation
+            g.ndata['h'] = feature
+            g.update_all(self.gcn_msg, self.gcn_reduce)
+            g.apply_nodes(func=self.apply_mod)
+            h = g.ndata.pop('h')
+            return h
 
 
 class GAE(nn.Module):
-    def __init__(self, in_dim, n_hidden, n_layers, activation, dropout):
+    def __init__(self, in_feats, n_hidden, n_layers, activation, dropout):
         super(GAE, self).__init__()
+        self.in_feats = in_feats
+        self.n_hidden = n_hidden
         self.activation = activation
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList()
-        self.layers.append(GCN(in_dim, n_hidden, activation))
+        # Probably should change nework to GraphSAGE
+        self.layers.append(dglnn.GraphConv(self.in_feats, self.n_hidden, allow_zero_in_degree=True))
         for i in range(n_layers - 1):
-            self.layers.append(GCN(n_hidden, n_hidden, self.activation))
-        self.decoder = InnerProductDecoder(activation=lambda x:x)
+            self.layers.append(dglnn.GraphConv(self.n_hidden, self.n_hidden, allow_zero_in_degree=True))
 
-    
-    def forward(self, g, inputs):
-        h = self.dropout(inputs)
-        for conv in self.layers:
-            h = conv(g, h)
-        g.ndata['h'] = h
-        adj_rec = self.decoder(h)
+    def forward(self, blocks, inputs):
+        h = self.encode(blocks, inputs)
+        adj_rec = self.decode(h)
         return adj_rec
 
-    def encode(self, g, inputs):
-        h = self.dropout(inputs)
-        for conv in self.layers:
-            h = conv(g, h)
+    def encode(self, blocks, inputs):
+        h = inputs
+        for l, (conv, block) in enumerate(zip(self.layers, blocks)):
+            h = conv(block, h)
+            if l != len(self.layers) - 1:
+                h = self.activation(h)
+                h = self.dropout(h)
         return h
+
+    def decode(self, h):
+        h = self.dropout(h)
+        adj = th.sigmoid(th.mm(h, h.t()))
+        return adj
+
 
 
 def numpy_to_graph(A, type_graph='dgl', node_features=None):
@@ -550,7 +545,7 @@ class GaugLoss(nn.Module):
 
     def forward(self, output, target, adj_true, adj_pred):
         ce_loss = self.ce(output, target)
-        bce_loss = self.bce(nn.Sigmoid()(adj_pred), adj_true)
+        bce_loss = self.bce(adj_pred, adj_true)
         return ce_loss + self.beta * bce_loss
 
 
@@ -576,14 +571,13 @@ class Gaug(nn.Module):
         self.alpha = alpha
         self.temperature = temperature
 
-    def forward(self, g, inputs):
-        self.adj = g.adj().to_dense().to(device='cuda') if self.use_cuda else g.adj().to_dense()
-        self.edge_pred = self.gae(g, inputs)
-        P = self.interpolate(self.adj, self.edge_pred)
+    def forward(self, adj, blocks, inputs, feat_inputs):
+        self.ep = self.gae(blocks, inputs)
+        P = self.interpolate(adj, self.ep)
         A_new = self.sampling(P)
         A_new = sp.coo_matrix(self.normalize_adj(A_new).detach().cpu())
         g_new = numpy_to_graph(A_new.toarray()).to(device='cuda') if self.use_cuda else numpy_to_graph(A_new.toarray())
-        h = self.sage(g_new, inputs)
+        h = self.sage(g_new, feat_inputs)
         return h
 
     def interpolate(self, A, M):
@@ -594,7 +588,7 @@ class Gaug(nn.Module):
 
     def sampling(self, P):
         # sampling
-        adj_sampled = pyro.distributions.RelaxedBernoulliStraightThrough(temperature=self.temperature,                                                                         probs=P).rsample()
+        adj_sampled = pyro.distributions.RelaxedBernoulliStraightThrough(temperature=self.temperature, probs=P).rsample()
         # making adj_sampled symmetric
         adj_sampled = adj_sampled.triu(1)
         adj_sampled = adj_sampled + adj_sampled.T
@@ -604,3 +598,5 @@ class Gaug(nn.Module):
         adj.fill_diagonal_(1)
         adj = F.normalize(adj, p=1, dim=1)
         return adj
+
+
