@@ -1,6 +1,7 @@
 import sys
 import os
 from dgl.data.utils import load_info, load_graphs
+import torch
 
 from .nc_dataset_class import *
 
@@ -19,6 +20,13 @@ def load_and_save(name, data_dir=None, classname=None):
         g = load_graphs(graph_path)[0][0]
         info_path = os.path.join(data_dir, name, name + '_info.pkl')
         n_classes = load_info(info_path)['num_classes']
+        print("NumNodes: ", g.num_nodes())
+        print("NumEdges: ", g.num_edges())
+        print("NumFeats: ", g.ndata["feat"].shape[1])
+        print("NumClasses: ", n_classes)
+        print("NumTrainingSamples: ", torch.count_nonzero(g.ndata["train_mask"]).item())
+        print("NumValidationSamples: ", torch.count_nonzero(g.ndata["val_mask"]).item())
+        print("NumTestSamples: ", torch.count_nonzero(g.ndata["test_mask"]).item())
         return g, n_classes
     else:
         if classname:

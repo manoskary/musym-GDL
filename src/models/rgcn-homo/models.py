@@ -37,10 +37,6 @@ class mySAGEConv(nn.Module):
 
 
     def _lstm_reducer(self, nodes):
-        """LSTM reducer
-        NOTE(zihao): lstm reducer with default schedule (degree bucketing)
-        is slow, we could accelerate this with degree padding in the future.
-        """
         m = nodes.mailbox['m'] # (B, L, D)
         batch_size = m.shape[0]
         h = (m.new_zeros((1, batch_size, self.in_feats)),
@@ -166,7 +162,6 @@ class GraphSAGE(nn.Module):
 
     def forward(self, graph, inputs):
         h = self.dropout(inputs)
-        # h = F.normalize(h)
         for l, layer in enumerate(self.layers):
             h = layer(graph, h)
             if l != len(self.layers) - 1:
@@ -492,7 +487,7 @@ class GAE(nn.Module):
 
     def decode(self, h):
         h = self.dropout(h)
-        adj = th.sigmoid(th.mm(h, h.t()))
+        adj = th.matmul(h, h.t())
         return adj
 
 
@@ -541,13 +536,14 @@ class GaugLoss(nn.Module):
         super(GaugLoss, self).__init__()
         self.beta = beta
         self.ce = nn.CrossEntropyLoss()
-        self.bce = nn.BCELoss()
+        # self.bce = nn.BCELoss()
 
-    def forward(self, output, target, adj_true, adj_pred):
+    def forward(self, output, target, adj_true, adj_pred, weight):
+        norm_w = adj_true.shape[0] ** 2 / float((adj_true.shape[0] ** 2 - adj_true.sum()) * 2)
         ce_loss = self.ce(output, target)
-        bce_loss = self.bce(adj_pred, adj_true)
+        # bce_loss = self.bce(adj_pred, adj_true)
+        bce_loss = norm_w * F.binary_cross_entropy_with_logits(th.sigmoid(adj_pred), adj_true, pos_weight=weight)
         return ce_loss + self.beta * bce_loss
-
 
 class Gaug(nn.Module):
     def __init__(self, in_feats, n_hidden, n_classes,
@@ -575,6 +571,7 @@ class Gaug(nn.Module):
         self.ep = self.gae(blocks, inputs)
         P = self.interpolate(adj, self.ep)
         A_new = self.sampling(P)
+        # The next two lines are computationally redundant. Maybe should compute sage directly from adjacency.
         A_new = sp.coo_matrix(self.normalize_adj(A_new).detach().cpu())
         g_new = numpy_to_graph(A_new.toarray()).to(device='cuda') if self.use_cuda else numpy_to_graph(A_new.toarray())
         h = self.sage(g_new, feat_inputs)
@@ -588,7 +585,7 @@ class Gaug(nn.Module):
 
     def sampling(self, P):
         # sampling
-        adj_sampled = pyro.distributions.RelaxedBernoulliStraightThrough(temperature=self.temperature, probs=P).rsample()
+        adj_sampled = pyro.distributions.RelaxedBernoulliStraightThrough(temperature=self.temperature, logits=P).rsample()
         # making adj_sampled symmetric
         adj_sampled = adj_sampled.triu(1)
         adj_sampled = adj_sampled + adj_sampled.T
