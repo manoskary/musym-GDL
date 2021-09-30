@@ -159,7 +159,7 @@ def main(args):
             val_acc = (th.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
             scheduler.step(val_acc)
             tune.report(mean_loss=loss.item())
-            wandb.log({"train_accuracy": train_acc.item(), "train_loss": loss.item(), "val_accuracy": val_acc, "val_loss": val_loss})
+            wandb.log({"train_accuracy": train_acc, "train_loss": loss.item(), "val_accuracy": val_acc, "val_loss": val_loss})
         print(
             "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
             format(epoch, train_acc, loss.item(), val_acc, val_loss, np.average(dur)))
