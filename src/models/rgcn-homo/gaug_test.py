@@ -170,7 +170,7 @@ def main(args):
         pred = model.inference(test_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
         test_loss = F.cross_entropy(pred, test_labels)
         test_acc = (th.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
-        wandb.log({"test_accuracy": test_acc, test_loss})
+        wandb.log({"test_accuracy": test_acc, "test_loss": test_loss})
     print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
     print()
 
