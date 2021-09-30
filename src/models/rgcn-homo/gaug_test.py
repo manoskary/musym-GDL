@@ -1,8 +1,12 @@
-import argparse
 import numpy as np
 import time
 import os, sys
 from models import *
+
+# Hyperparam Tuning and Logging
+from ray import tune
+from ray.tune.integration.wandb import wandb_mixin
+import wandb
 
 PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
@@ -10,14 +14,19 @@ sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_P
 
 from utils import *
 
-# TODO performance is very slow, try different implementation.
+@wandb_mixin
 def main(args):
     """
     Main Call for Node Classification with Gaug.
 
     """
-
+    #--------------- Standarize Configuration ---------------------
     config = args if isinstance(args, dict) else vars(args)
+
+    config["num_layers"] = len(config["fan_out"])
+
+    wandb.run.name = str("SAGE-" + str(config["num_layers"]) + "x" + str(
+        config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"]) + "-lr_scheduler")
 
     # --------------- Dataset Loading -------------------------
     if config["dataset"] == 'mps_onset':
@@ -82,8 +91,13 @@ def main(args):
     if use_cuda:
         model = model.cuda()
 
+    if isinstance(config["fan_out"], str):
+        fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
+    else :
+        fanouts = config["fan_out"]
+
     # dataloader
-    sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts=[5, 10])
+    sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts=fanouts)
     # The edge dataloader returns a subgraph but iterates on the number of edges.
     train_dataloader = dgl.dataloading.EdgeDataLoader(
         train_g,
@@ -103,6 +117,7 @@ def main(args):
     # training loop
     print("start training...")
     dur = []
+    wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(config["num_epochs"]):
         model.train()
         t0 = time.time()
@@ -143,7 +158,8 @@ def main(args):
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (th.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
             scheduler.step(val_acc)
-
+            tune.report(mean_loss=loss.item())
+            wandb.log({"train_accuracy": train_acc.item(), "train_loss": loss.item(), "val_accuracy": val_acc, "val_loss": val_loss})
         print(
             "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
             format(epoch, train_acc, loss.item(), val_acc, val_loss, np.average(dur)))
@@ -154,10 +170,12 @@ def main(args):
         pred = model.inference(test_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
         test_loss = F.cross_entropy(pred, test_labels)
         test_acc = (th.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
+        wandb.log({"test_accuracy": test_acc, test_loss})
     print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
     print()
 
 if __name__ == '__main__':
+    import argparse
     argparser = argparse.ArgumentParser(description='GraphSAGE')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
