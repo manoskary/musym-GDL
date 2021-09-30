@@ -25,7 +25,7 @@ def main(args):
 
     config["num_layers"] = len(config["fan_out"])
 
-    wandb.run.name = str("SAGE-" + str(config["num_layers"]) + "x" + str(
+    wandb.run.name = str("Gaug-" + str(config["num_layers"]) + "x" + str(
         config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"]) + "-lr_scheduler")
 
     # --------------- Dataset Loading -------------------------

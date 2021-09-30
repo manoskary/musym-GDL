@@ -1,6 +1,6 @@
 import os.path
 
-from entity_classify_mp import main
+from gaug_test import main
 import argparse
 from ray import tune
 from ray.tune.schedulers import AsyncHyperBandScheduler
@@ -13,7 +13,6 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", '--dataset', type=str, default='reddit')
-    argparser.add_argument("-a", '--gnn', type=str, default='GraphSage')
     argparser.add_argument('--num-epochs', type=int, default=100)
     argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
@@ -40,11 +39,11 @@ if __name__ == '__main__':
                                 "on GPU when using it to save time for data copy. This may "
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
-    argparser.add_argument('--log-every', type=int, default=20)
-    argparser.add_argument('--eval-every', type=int, default=5)
     argparser.add_argument('--fan-out', type=str, default='5, 10')
     argparser.add_argument("--quick-test", action="store_true", help="Finish quickly for testing")
-    # argparser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
+    argparser.add_argument("--alpha", type=float, default=1)
+    argparser.add_argument("--beta", type=float, default=0.5)
+    argparser.add_argument("--temperature", type=float, default=0.2)
     args = argparser.parse_args()
 
     wandb.login()
@@ -55,16 +54,18 @@ if __name__ == '__main__':
             dnum = "00"
         else:
             dnum = args.dataset[-2:]
-        config["wandb"] = {"project" : "Toy-"+dnum+"-Grid-Search-MB"}
+        config["wandb"] = {"project" : "Toy-"+dnum+"-GAug-MB"}
     else :
         raise ValueError("The Dataset is not Set for Optimization")
-    config["lr"] = tune.grid_search([0.1, 0.01])
-    config["num_hidden"] = tune.grid_search([8, 16, 32, 64])
-    config["fan_out"] = tune.grid_search([[3, 3], [5, 5], [5, 10], [3, 6, 9], [5, 5, 5], [5, 10, 10], [5, 10, 15]])
+    config["lr"] = tune.grid_search([0.1])
+    config["num_hidden"] = tune.grid_search([8, 16, 32])
+    config["fan_out"] = tune.grid_search([[3, 6], [5, 10], [5, 10, 15]])
     config["batch_size"] = tune.grid_search([256, 512, 1024])
     config["dropout"] = tune.grid_search([0.5])
     config["init_eweights"] = tune.grid_search([0, 1])
-    config["add_self_loop"] = tune.grid_search([True, False])
+    config["alpha"] = tune.uniform(0, 1)
+    config["beta"] = tune.uniform(0, 1)
+    config["temperature"] = tune.uniform(0, 1)
     config["data_dir"] = os.path.abspath("./data/")
 
     # AsyncHyperBand enables aggressive early stopping of bad trials.
