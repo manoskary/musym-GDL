@@ -19,38 +19,54 @@ def main(args):
 
     config = args if isinstance(args, dict) else vars(args)
 
-    g, n_classes = load_and_save("toy_01_homo")
-
+    # --------------- Dataset Loading -------------------------
+    if config["dataset"] == 'mps_onset':
+        g, n_classes = load_and_save("mpgd_homo_onset", config["data_dir"], "MPGD_homo_onset")
+    elif config["dataset"] == "toy":
+        g, n_classes = load_and_save("toy_homo_onset", config["data_dir"])
+    elif config["dataset"] == "toy01":
+        g, n_classes = load_and_save("toy_01_homo", config["data_dir"])
+    elif config["dataset"] == "toy02":
+        g, n_classes = load_and_save("toy_02_homo", config["data_dir"])
+    elif config["dataset"] == "cora":
+        dataset = dgl.data.CoraGraphDataset()
+        g = dataset[0]
+        n_classes = dataset.num_classes
+    elif config["dataset"] == "reddit":
+        g, n_classes = load_reddit()
+    else:
+        raise ValueError()
 
     train_mask = g.ndata['train_mask']
     test_mask = g.ndata['test_mask']
     val_mask = g.ndata['val_mask']
-    train_idx = th.nonzero(train_mask, as_tuple=False).squeeze()
-    test_idx = th.nonzero(test_mask, as_tuple=False).squeeze()
-    val_idx = th.nonzero(val_mask, as_tuple=False).squeeze()
-    labels = g.ndata['label']
+
     # Hack to track node idx in dataloader's subgraphs.
-    g.ndata['idx'] = th.tensor(range(g.number_of_nodes()))
-    eids = th.arange(g.number_of_edges())
+    train_g = g.subgraph(th.nonzero(train_mask)[:, 0])
+    train_g.ndata['idx'] = th.tensor(range(train_g.number_of_nodes()))
+    labels = train_g.ndata['label']
+    eids = th.arange(train_g.number_of_edges())
+    node_features = train_g.ndata['feat']
+
+    # Validation and Testing
+    val_g = g.subgraph(th.nonzero(val_mask)[:, 0])
+    val_labels = val_g.ndata['label']
+    test_g = g.subgraph(th.nonzero(test_mask)[:, 0])
+    test_labels = test_g.ndata['label']
 
     if config["init_eweights"]:
-        w = th.empty(g.num_edges())
+        w = th.empty(train_g.num_edges())
         nn.init.uniform_(w)
-        g.edata["w"] = w
+        train_g.edata["w"] = w
 
 
     # check cuda
     use_cuda = config["gpu"] >= 0 and th.cuda.is_available()
     if use_cuda:
         th.cuda.set_device(config["gpu"])
-        train_idx = train_idx.cuda()
-        test_idx = test_idx.cuda()
         device = th.device('cuda:%d' % config["gpu"])
     else:
         device = th.device('cpu')
-
-    node_features = g.ndata['feat']
-
 
     # create model
     in_feats = node_features.shape[1]
@@ -70,22 +86,23 @@ def main(args):
     sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts=[5, 10])
     # The edge dataloader returns a subgraph but iterates on the number of edges.
     train_dataloader = dgl.dataloading.EdgeDataLoader(
-        g,
+        train_g,
         eids,
         sampler,
         batch_size = config["batch_size"],
-        shuffle=True,
-        drop_last=False,
+        shuffle=False,
+        drop_last=True,
         pin_memory=True,
-        num_workers=config["num_workers"])
+        num_workers=config["num_workers"],
+        persistent_workers=config["num_workers"]>0)
     # optimizer
     optimizer = th.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+    scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
     criterion = GaugLoss(config["beta"])
 
     # training loop
     print("start training...")
     dur = []
-    model.train()
     for epoch in range(config["num_epochs"]):
         model.train()
         t0 = time.time()
@@ -119,21 +136,24 @@ def main(args):
             t1 = time.time()
         if epoch > 5:
             dur.append(t1 - t0)
+        model.eval()
         with th.no_grad():
-            model.eval()
-            train_acc = th.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
-            val_loss = criterion(logits[val_idx], labels[val_idx], model.adj, model.ep)
-            val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
+            train_acc = th.sum(logits.argmax(dim=1) == batch_labels).item() / batch_labels.shape[0]
+            pred = model.inference(val_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
+            val_loss = F.cross_entropy(pred, val_labels)
+            val_acc = (th.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
+            scheduler.step(val_acc)
+
         print(
-            "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
-            format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
+            "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
+            format(epoch, train_acc, loss.item(), val_acc, val_loss, np.average(dur)))
     print()
 
     model.eval()
     with th.no_grad():
-        logits = model.forward(g, node_features)
-        test_loss = criterion(logits[test_idx], labels[test_idx])
-        test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
+        pred = model.inference(test_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
+        test_loss = F.cross_entropy(pred, test_labels)
+        test_acc = (th.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
     print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
     print()
 
@@ -141,6 +161,7 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='GraphSAGE')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
+    argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
     argparser.add_argument('--num-epochs', type=int, default=100)
     argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
@@ -160,6 +181,7 @@ if __name__ == '__main__':
     argparser.add_argument("--alpha", type=float, default=1)
     argparser.add_argument("--beta", type=float, default=0.5)
     argparser.add_argument("--temperature", type=float, default=0.2)
+    argparser.add_argument("--data-dir", type=str, default=os.path.abspath("./data/"))
 
     args = argparser.parse_args()
 
