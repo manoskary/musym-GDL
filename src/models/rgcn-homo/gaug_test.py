@@ -1,6 +1,9 @@
 import numpy as np
 import time
 import os, sys
+
+import tqdm
+
 from models import *
 
 # Hyperparam Tuning and Logging
@@ -24,6 +27,24 @@ def main(args):
     config = args if isinstance(args, dict) else vars(args)
 
     config["num_layers"] = len(config["fan_out"])
+
+    # -------------- Check if Run is already performed ------------------
+    entity = "melkisedeath"
+    project = config["wandb"]["project"]
+    api = wandb.Api()
+    runs = api.runs(path=entity + "/" + project)
+    glob_conf = [run.__dict__['_attrs']['rawconfig'] for run in runs]
+    glob_attrs = [k for k in config.keys() if k not in ["data_dir", "_wandb", "wandb", "framework", "start_time", "cli_version", "is_kaggle_kernel"]]
+    glob_conf = [{k:d[k] for k in glob_attrs} for d in glob_conf]
+    if {k:config[k] for k in glob_attrs} in glob_conf:
+        run_id = wandb.run.id
+        run = api.run(entity + "/" + project + "/" + run_id)
+        run.delete()
+        print("========================================")
+        print("       This run already Exists")
+        print("    skipping run : {}".format(run_id))
+        print("========================================")
+        return
 
     wandb.run.name = str("Gaug-" + str(config["num_layers"]) + "x" + str(
         config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"]) + "-lr_scheduler")
@@ -104,7 +125,7 @@ def main(args):
         eids,
         sampler,
         batch_size = config["batch_size"],
-        shuffle=False,
+        shuffle=config["shuffle"],
         drop_last=True,
         pin_memory=True,
         num_workers=config["num_workers"],
@@ -121,7 +142,7 @@ def main(args):
     for epoch in range(config["num_epochs"]):
         model.train()
         t0 = time.time()
-        for step, (input_nodes, sub_g, blocks) in enumerate(train_dataloader):
+        for step, (input_nodes, sub_g, blocks) in enumerate(tqdm.tqdm(train_dataloader)):
             batch_inputs = node_features[input_nodes].to(device)
             # Hack to track the node idx for NodePred layer (SAGE) not the same as block or input nodes
             batch_labels = labels[sub_g.ndata['idx']].to(device)
@@ -144,10 +165,6 @@ def main(args):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if step % 5 == 0:
-                train_acc = th.sum(logits.argmax(dim=1) == batch_labels).item() / batch_labels.shape[0]
-                print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f}".format(epoch, train_acc, loss.item()))
-
             t1 = time.time()
         if epoch > 5:
             dur.append(t1 - t0)
@@ -163,15 +180,18 @@ def main(args):
         print(
             "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
             format(epoch, train_acc, loss.item(), val_acc, val_loss, np.average(dur)))
+        if epoch%5==0:
+            model.eval()
+            with th.no_grad():
+                pred = model.inference(test_g, device=device, batch_size=config["batch_size"],
+                                       num_workers=config["num_workers"])
+                test_loss = F.cross_entropy(pred, test_labels)
+                test_acc = (th.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
+                wandb.log({"test_accuracy": test_acc, "test_loss": test_loss})
+            print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
     print()
 
-    model.eval()
-    with th.no_grad():
-        pred = model.inference(test_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
-        test_loss = F.cross_entropy(pred, test_labels)
-        test_acc = (th.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
-        wandb.log({"test_accuracy": test_acc, "test_loss": test_loss})
-    print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
+
     print()
 
 if __name__ == '__main__':
