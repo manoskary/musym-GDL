@@ -550,6 +550,10 @@ class GaugLoss(nn.Module):
         return ce_loss + self.beta * bce_loss
 
 class Gaug(nn.Module):
+    """
+    Gaug end-to-end trainable edge augmentation and Node Classification model.
+
+    """
     def __init__(self, in_feats, n_hidden, n_classes,
                  n_layers, activation=F.relu, dropout=0.5, alpha=1, temperature=0.2, use_cuda=False):
         super(Gaug, self).__init__()
