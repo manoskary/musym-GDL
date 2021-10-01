@@ -553,9 +553,20 @@ class Gaug(nn.Module):
     """
     Gaug end-to-end trainable edge augmentation and Node Classification model.
 
+    Parameters
+    ---------
+    in_feats: int
+    n_hidden : int
+    n_classes : int
+    n_layers : int
+    activation : nn.Module
+    dropout : float
+    alpha : float
+    beta : float
+    temperature : float
     """
     def __init__(self, in_feats, n_hidden, n_classes,
-                 n_layers, activation=F.relu, dropout=0.5, alpha=1, temperature=0.2, use_cuda=False):
+                 n_layers, activation=F.relu, dropout=0.5, alpha=1, temperature=0.2):
         super(Gaug, self).__init__()
         self.in_feats = in_feats
         self.n_hidden = n_hidden
@@ -563,7 +574,6 @@ class Gaug(nn.Module):
         self.n_layers = n_layers
         self.activation = activation
         self.dropout = dropout
-        self.use_cuda = use_cuda
         self.gae = GAE(in_feats, n_hidden, n_layers, activation=activation, dropout=dropout)
         self.sage = NonDglSAGE(
             in_feats=in_feats,
@@ -593,6 +603,7 @@ class Gaug(nn.Module):
         return P
 
     def sampling(self, P):
+        """Sample from a Bernoulli"""
         # sampling
         adj_sampled = pyro.distributions.RelaxedBernoulliStraightThrough(temperature=self.temperature, logits=P).rsample()
         # making adj_sampled symmetric
@@ -601,12 +612,14 @@ class Gaug(nn.Module):
         return adj_sampled
 
     def normalize_adj(self, adj):
+        """Normalize an Adjacency matrix"""
         adj.fill_diagonal_(1)
         adj = F.normalize(adj, p=1, dim=1)
         return adj
 
     def inference(self, g, device, batch_size, num_workers=0):
         """
+        Perform Evaluation using Mini-Batching.
 
         Parameters
         ----------
