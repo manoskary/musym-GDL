@@ -28,7 +28,7 @@ def main(args):
 
     config["num_layers"] = len(config["fan_out"])
 
-    # -------------- Check if Run is already performed ------------------
+   # -------------- Check if Run is already performed ------------------
     entity = "melkisedeath"
     project = config["wandb"]["project"]
     api = wandb.Api()
