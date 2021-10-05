@@ -1,16 +1,11 @@
 import dgl.nn as dglnn
-from dgl import add_self_loop
 import torch.nn as nn
 import torch.nn.functional as F
 import torch as th
 import dgl
 import tqdm
-from dgl.nn.pytorch.conv import SAGEConv
-from dgl.utils import check_eq_shape
 import dgl.function as fn
 import pyro
-import scipy.sparse as sp
-import networkx as nx
 
 class mySAGEConv(nn.Module):
 

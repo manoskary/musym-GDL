@@ -9,7 +9,7 @@ import wandb
 
 if __name__ == '__main__':
 
-    argparser = argparse.ArgumentParser(description='GraphSAGE')
+    argparser = argparse.ArgumentParser(description='Gaug_sweep')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", '--dataset', type=str, default='reddit')
@@ -59,7 +59,7 @@ if __name__ == '__main__':
             dnum = args.dataset[-2:]+"-"
     else :
         raise ValueError("The Dataset is not Set for Optimization")
-    config["project_name"] = "Toy-" + dnum + " BenchMark Frameworks"
+    config["project_name"] = "Toy-" + dnum + "BenchMark-Frameworks"
     config["lr"] = tune.grid_search([0.1])
     config["num_hidden"] = tune.grid_search([8, 16, 32])
     config["fan_out"] = tune.grid_search([[3, 6], [5, 10], [5, 10, 15]])
@@ -89,7 +89,7 @@ if __name__ == '__main__':
         verbose=1,
         # This resources per trial is a bit confusing to work with gpu nodes
         # but usually just keeping it at 1 works in combination with : CUDA_AVAILABLE_DEVICES=0, 1, etc python scirpt.py.
-        resources_per_trial={'gpu': 1},
+        resources_per_trial={'gpu': 0.25},
         # Config is a dict with some tune.grid_Searchs or other tune hyparam opt.
         config=config,
         # Early Stopping Scheduler

@@ -39,7 +39,7 @@ def main(args):
     if {k:config[k] for k in glob_attrs} in glob_conf:
         run_id = wandb.run.id
         run = api.run(entity + "/" + project + "/" + run_id)
-        run.delete()
+        # run.delete()
         print("========================================")
         print("       This run already Exists")
         print("    skipping run : {}".format(run_id))

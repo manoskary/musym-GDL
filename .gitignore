@@ -138,4 +138,5 @@ artifacts/
 # Logging Platforms
 
 .neptune/
+.idea/
 wandb/
