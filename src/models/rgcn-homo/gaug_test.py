@@ -107,8 +107,8 @@ def main(args):
                  activation=F.relu,
                  dropout=config["dropout"],
                  alpha = config["alpha"],
-                 temperature=config["temperature"],
-                 use_cuda=use_cuda)
+                 temperature=config["temperature"]
+                 )
     if use_cuda:
         model = model.cuda()
 
