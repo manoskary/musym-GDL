@@ -1,20 +1,20 @@
-import numpy as np
+import os
+import sys
 import time
-import os, sys
-import tqdm
-
-from models import *
+import numpy as np
 
 # Hyperparam Tuning and Logging
 from ray import tune
 from ray.tune.integration.wandb import wandb_mixin
+
 import wandb
+from models import *
 
 PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
-from utils import *
+from utils import load_and_save, load_reddit
 
 @wandb_mixin
 def main(args):
