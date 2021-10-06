@@ -4,6 +4,7 @@ from gaug_test import main
 import argparse
 from ray import tune
 from ray.tune.schedulers import AsyncHyperBandScheduler
+from ray.tune.suggest.hyperopt import HyperOptSearch
 from ray.tune.integration.wandb import WandbLoggerCallback
 import wandb
 
@@ -67,7 +68,7 @@ if __name__ == '__main__':
     config["dropout"] = tune.grid_search([0.5])
     config["init_eweights"] = tune.grid_search([0, 1])
     config["shuffle"] = tune.grid_search([True, False])
-    config["alpha"] = tune.uniform(0, 1)
+    config["alpha"] = tune.uniform(0, 1), 0.5
     config["beta"] = tune.uniform(0, 1)
     config["temperature"] = tune.uniform(0, 1)
     config["data_dir"] = os.path.abspath("./data/")
@@ -76,24 +77,26 @@ if __name__ == '__main__':
         "job_type": args.job_type}
 
     # AsyncHyperBand enables aggressive early stopping of bad trials.
-    scheduler = AsyncHyperBandScheduler(grace_period=10, max_t=100)
+    scheduler = AsyncHyperBandScheduler(grace_period=5, metric="mean_loss", mode="min", reduction_factor=4)
+    search_alg = HyperOptSearch(metric="mean_loss", mode="min")
     stopping_criteria = {"training_iteration": 1 if args.quick_test else 9999}
     # WandbLogger logs experiment configurations and metrics reported via tune.report() to W&B Dashboard
     # callback = WandbLoggerCallback if not config["quick_test"] else None # For testing.
     analysis = tune.run(
         # your main function or script.py
         main,
-        name="asynchyperband_test",
+        name="GNN-Benchmark-Frameworks",
         metric="mean_loss",
         mode="min",
         verbose=1,
-        # This resources per trial is a bit confusing to work with gpu nodes
-        # but usually just keeping it at 1 works in combination with : CUDA_AVAILABLE_DEVICES=0, 1, etc python scirpt.py.
         resources_per_trial={'gpu': 0.25},
         # Config is a dict with some tune.grid_Searchs or other tune hyparam opt.
         config=config,
+        search_alg=search_alg,
         # Early Stopping Scheduler
         scheduler=scheduler,
         stop= stopping_criteria
+        # Conditional Search Spaces.
     )
 
+    print("best config: ", analysis.get_best_config(metric="mean_loss", mode="min"))

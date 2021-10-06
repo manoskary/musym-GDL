@@ -1,7 +1,6 @@
 import numpy as np
 import time
 import os, sys
-
 import tqdm
 
 from models import *
@@ -39,7 +38,7 @@ def main(args):
     if {k:config[k] for k in glob_attrs} in glob_conf:
         run_id = wandb.run.id
         run = api.run(entity + "/" + project + "/" + run_id)
-        # run.delete()
+        run.delete()
         print("========================================")
         print("       This run already Exists")
         print("    skipping run : {}".format(run_id))
@@ -71,6 +70,11 @@ def main(args):
     test_mask = g.ndata['test_mask']
     val_mask = g.ndata['val_mask']
 
+    if config["init_eweights"]:
+        w = th.empty(g.num_edges())
+        nn.init.uniform_(w)
+        g.edata["w"] = w
+
     # Hack to track node idx in dataloader's subgraphs.
     train_g = g.subgraph(th.nonzero(train_mask)[:, 0])
     train_g.ndata['idx'] = th.tensor(range(train_g.number_of_nodes()))
@@ -84,10 +88,7 @@ def main(args):
     test_g = g.subgraph(th.nonzero(test_mask)[:, 0])
     test_labels = test_g.ndata['label']
 
-    if config["init_eweights"]:
-        w = th.empty(train_g.num_edges())
-        nn.init.uniform_(w)
-        train_g.edata["w"] = w
+
 
 
     # check cuda
@@ -142,8 +143,9 @@ def main(args):
     for epoch in range(config["num_epochs"]):
         model.train()
         t0 = time.time()
-        for step, (input_nodes, sub_g, blocks) in enumerate(tqdm.tqdm(train_dataloader)):
+        for step, (input_nodes, sub_g, blocks) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True)):
             batch_inputs = node_features[input_nodes].to(device)
+            batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"])
             # Hack to track the node idx for NodePred layer (SAGE) not the same as block or input nodes
             batch_labels = labels[sub_g.ndata['idx']].to(device)
             blocks = [block.int().to(device) for block in blocks]

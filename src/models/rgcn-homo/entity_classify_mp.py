@@ -14,8 +14,10 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 import dgl
+import tqdm
 
 import pandas as pd
+import tqdm
 
 from models import SAGE
 
@@ -86,7 +88,7 @@ def load_subtensor(nfeat, labels, seeds, input_nodes, device):
     return batch_inputs, batch_labels
 
 #### Entry point
-@wandb_mixin
+# @wandb_mixin
 def run(config, device, data):
     # Unpack data
     n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
@@ -144,14 +146,14 @@ def run(config, device, data):
     # Training loop
     avg = 0
     iter_tput = []
-    wandb.watch(model, criterion, log="all", log_freq=10)
+    # wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(config["num_epochs"]):
         tic = time.time()
 
         # Loop over the dataloader to sample the computation dependency graph as a list of
         # blocks.
         tic_step = time.time()
-        for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
+        for step, (input_nodes, seeds, blocks) in enumerate(tqdm.tqdm(dataloader, position=0, leave=True)):
             # Load the input features as well as output labels
             batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
                                                         seeds, input_nodes, device)
@@ -163,21 +165,13 @@ def run(config, device, data):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if epoch>3:
-                iter_tput.append(len(seeds) / (time.time() - tic_step + 1e-8))
-            if step % config["log_every"] == 0:
-                acc = compute_acc(batch_pred, batch_labels)
-                gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
-                print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
-                    epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
-            tic_step = time.time()
-            if epoch == config["num_epochs"]-1 :
-                path = os.path.join(os.path.dirname(__file__), "artifacts", "last_epoch_results_block_"+str(step) + ".csv")
-                if not os.path.exists(os.path.join(os.path.dirname(__file__), "artifacts")):
-                    os.makedirs(os.path.join(os.path.dirname(__file__), "artifacts"))
-                df = pd.DataFrame({"labels" : batch_labels.detach().cpu().numpy(), "predictions" : batch_pred.argmax(dim=1).detach().cpu().numpy()}).to_csv(path)
 
+            iter_tput.append(len(seeds) / (time.time() - tic_step + 1e-8))
 
+        acc = compute_acc(batch_pred, batch_labels)
+        gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
+        print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
+                epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
         toc = time.time()
         print('Epoch Time(s): {:.4f}'.format(toc - tic))
 
@@ -188,19 +182,15 @@ def run(config, device, data):
         eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device, config)
         print('Eval Acc {:.4f}'.format(eval_acc))
         tune.report(mean_loss=loss.item())
-        wandb.log({"train_accuracy": acc.item(), "train_loss": loss.item(), "val_accuracy": eval_acc})
+        # wandb.log({"train_accuracy": acc.item(), "train_loss": loss.item(), "val_accuracy": eval_acc})
 
         scheduler.step(eval_acc)
         if epoch % config["eval_every"] == 0 and epoch != 0:
             test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
-            wandb.log({"test_accuracy": test_acc})
+            # wandb.log({"test_accuracy": test_acc})
             print('Test Acc: {:.4f}'.format(test_acc))
-
-
-
-
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
-    est_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
+    test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
     print('Test Acc: {:.4f}'.format(test_acc))
 
 @wandb_mixin

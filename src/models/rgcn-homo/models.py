@@ -462,19 +462,19 @@ class GAE(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList()
         # Probably should change nework to GraphSAGE
-        self.layers.append(dglnn.GraphConv(self.in_feats, self.n_hidden, allow_zero_in_degree=True))
+        self.layers.append(dglnn.GraphConv(self.in_feats, self.n_hidden, allow_zero_in_degree=True, weight=True))
         for i in range(n_layers - 1):
-            self.layers.append(dglnn.GraphConv(self.n_hidden, self.n_hidden, allow_zero_in_degree=True))
+            self.layers.append(dglnn.GraphConv(self.n_hidden, self.n_hidden, allow_zero_in_degree=True, weight=True))
 
-    def forward(self, blocks, inputs):
-        h = self.encode(blocks, inputs)
+    def forward(self, blocks, inputs, edge_weight=None):
+        h = self.encode(blocks, inputs, edge_weight)
         adj_rec = self.decode(h)
         return adj_rec
 
-    def encode(self, blocks, inputs):
+    def encode(self, blocks, inputs, edge_weight=None):
         h = inputs
         for l, (conv, block) in enumerate(zip(self.layers, blocks)):
-            h = conv(block, h)
+            h = conv(block, h, edge_weight)
             if l != len(self.layers) - 1:
                 h = self.activation(h)
                 h = self.dropout(h)
@@ -580,8 +580,8 @@ class Gaug(nn.Module):
         self.alpha = alpha
         self.temperature = temperature
 
-    def forward(self, adj, blocks, inputs, feat_inputs):
-        self.ep = self.gae(blocks, inputs)
+    def forward(self, adj, blocks, inputs, feat_inputs, edge_weight=None):
+        self.ep = self.gae(blocks, inputs, edge_weight)
         P = self.interpolate(adj, self.ep)
         A_new = self.sampling(P)
         # The next two lines are computationally redundant. Maybe should compute sage directly from adjacency.
@@ -645,7 +645,7 @@ class Gaug(nn.Module):
             drop_last=False,
             num_workers=num_workers)
         y = th.zeros(g.num_nodes(), self.n_classes)
-        for input_nodes, sub_g, blocks in tqdm.tqdm(dataloader):
+        for input_nodes, sub_g, blocks in tqdm.tqdm(dataloader, position=0, leave=True):
             blocks = [block.int().to(device) for block in blocks]
             batch_inputs = node_features[input_nodes].to(device)
             feat_inputs = sub_g.ndata["feat"].to(device)
