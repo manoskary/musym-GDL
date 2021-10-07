@@ -29,22 +29,22 @@ def main(args):
     config["shuffle"] = bool(config["shuffle"])
 
    # -------------- Check if Run is already performed ------------------
-    entity = "melkisedeath"
-    project = config["wandb"]["project"]
-    api = wandb.Api()
-    runs = api.runs(path=entity + "/" + project)
-    glob_conf = [run.__dict__['_attrs']['rawconfig'] for run in runs]
-    glob_attrs = [k for k in config.keys() if k not in ["data_dir", "_wandb", "wandb", "framework", "start_time", "cli_version", "is_kaggle_kernel"]]
-    glob_conf = [{k:d[k] for k in glob_attrs} for d in glob_conf]
-    if {k:config[k] for k in glob_attrs} in glob_conf:
-        run_id = wandb.run.id
-        run = api.run(entity + "/" + project + "/" + run_id)
-        # run.delete()
-        print("========================================")
-        print("       This run already Exists")
-        print("    skipping run : {}".format(run_id))
-        print("========================================")
-        return
+   #  entity = "melkisedeath"
+   #  project = config["wandb"]["project"]
+   #  api = wandb.Api()
+   #  runs = api.runs(path=entity + "/" + project)
+   #  glob_conf = [run.__dict__['_attrs']['rawconfig'] for run in runs]
+   #  glob_attrs = [k for k in config.keys() if k not in ["data_dir", "_wandb", "wandb", "framework", "start_time", "cli_version", "is_kaggle_kernel"]]
+   #  glob_conf = [{k:d[k] for k in glob_attrs} for d in glob_conf]
+   #  if {k:config[k] for k in glob_attrs} in glob_conf:
+   #      run_id = wandb.run.id
+   #      run = api.run(entity + "/" + project + "/" + run_id)
+   #      # run.delete()
+   #      print("========================================")
+   #      print("       This run already Exists")
+   #      print("    skipping run : {}".format(run_id))
+   #      print("========================================")
+   #      return
 
     wandb.run.name = str("Gaug-{}x{}-bs={}-alpha={:.3f}-beta={:.3f}".format(config["num_layers"], config["num_hidden"], config["batch_size"], config["alpha"], config["beta"]))
 
