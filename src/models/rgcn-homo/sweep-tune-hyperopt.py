@@ -89,7 +89,7 @@ if __name__ == '__main__':
         metric="mean_loss",
         mode="min",
         verbose=1,
-        resources_per_trial={'gpu': 0.5},
+        # resources_per_trial={'gpu': 0.5},
         config=config,
         search_alg=search_alg,
         # Early Stopping Scheduler
