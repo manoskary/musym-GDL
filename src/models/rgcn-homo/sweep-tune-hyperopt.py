@@ -61,14 +61,14 @@ if __name__ == '__main__':
     else :
         raise ValueError("The Dataset is not Set for Optimization")
     config["project_name"] = "Toy-" + dnum + "BenchMark-Frameworks"
-    config["lr"] = tune.grid_search([0.1])
-    config["num_hidden"] = tune.grid_search([8, 16, 32])
-    config["fan_out"] = tune.grid_search([[5], [5, 10]])
-    config["batch_size"] = tune.grid_search([512, 1024])
-    config["dropout"] = tune.grid_search([0.5])
-    config["init_eweights"] = tune.grid_search([0, 1])
-    config["shuffle"] = tune.grid_search([0, 1])
-    config["alpha"] = tune.uniform(0, 1), 0.5
+    config["lr"] = 0.1
+    config["num_hidden"] = tune.choice([8, 16, 32])
+    config["fan_out"] = tune.choice([[5], [5, 10]])
+    config["batch_size"] = tune.choice([512, 1024])
+    config["dropout"] = 0.5
+    config["init_eweights"] = 1
+    config["shuffle"] = 0
+    config["alpha"] = tune.uniform(0, 1)
     config["beta"] = tune.uniform(0, 1)
     config["temperature"] = tune.uniform(0, 1)
     config["data_dir"] = os.path.abspath("./data/")
