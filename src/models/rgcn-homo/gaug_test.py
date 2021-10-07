@@ -46,7 +46,7 @@ def main(args):
         print("========================================")
         return
 
-    wandb.run.name = str("Gaug-{}x{}-bs={}-alpha={:.3f}-beta={:.3f}".format(config["num_layers"], config["num_hidden"], config["batch_size"], config["alpha"], config["beta"])
+    wandb.run.name = str("Gaug-{}x{}-bs={}-alpha={:.3f}-beta={:.3f}".format(config["num_layers"], config["num_hidden"], config["batch_size"], config["alpha"], config["beta"]))
 
     # --------------- Dataset Loading -------------------------
     if config["dataset"] == 'mps_onset':
