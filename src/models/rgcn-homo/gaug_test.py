@@ -143,7 +143,7 @@ def main(args):
         t0 = time.time()
         for step, (input_nodes, sub_g, blocks) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True)):
             batch_inputs = node_features[input_nodes].to(device)
-            batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"])
+            batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"]).to(device)
             # Hack to track the node idx for NodePred layer (SAGE) not the same as block or input nodes
             batch_labels = labels[sub_g.ndata['idx']].to(device)
             blocks = [block.int().to(device) for block in blocks]
@@ -159,7 +159,7 @@ def main(args):
 
             bce_weight = th.FloatTensor([float(adj.shape[0] ** 2 - adj.sum()) / adj.sum()]).to(device)
             # Prediction of the Gaug model
-            logits = model(adj, blocks, batch_inputs, feat_inputs)
+            logits = model(adj, blocks, batch_inputs, feat_inputs, edge_weight=batch_edge_weights)
             # Combined loss
             loss = criterion(logits, batch_labels, adj.view(-1), model.ep.view(-1), bce_weight)
             optimizer.zero_grad()
