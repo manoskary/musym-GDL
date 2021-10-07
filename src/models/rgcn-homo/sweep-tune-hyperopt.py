@@ -22,11 +22,12 @@ if __name__ == '__main__':
     argparser.add_argument('--lr', type=float, default=1e-2)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--num-gpu', type=int, default=1)
+    argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument('--inductive', action='store_true',
                            help="Inductive learning setting")
     argparser.add_argument('--add-self-loop', action='store_true',
                            help="Adding a sef loop to each node.")
-    argparser.add_argument("--init-eweights", type=int, default=0, 
+    argparser.add_argument("--init-eweights", type=int, default=1,
         help="Initialize learnable graph weights. Use 1 for True and 0 for false")
     argparser.add_argument('--sample-gpu', action='store_true',
                            help="Perform the sampling process on the GPU. Must have 0 workers.")
@@ -61,13 +62,9 @@ if __name__ == '__main__':
     else :
         raise ValueError("The Dataset is not Set for Optimization")
     config["project_name"] = "Toy-" + dnum + "BenchMark-Frameworks"
-    config["lr"] = 0.1
     config["num_hidden"] = tune.choice([8, 16, 32])
     config["fan_out"] = tune.choice([[5], [5, 10]])
     config["batch_size"] = tune.choice([512, 1024])
-    config["dropout"] = 0.5
-    config["init_eweights"] = 1
-    config["shuffle"] = 0
     config["alpha"] = tune.uniform(0, 1)
     config["beta"] = tune.uniform(0, 1)
     config["temperature"] = tune.uniform(0, 1)
