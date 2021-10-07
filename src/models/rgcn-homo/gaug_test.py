@@ -123,11 +123,11 @@ def main(args):
         train_g,
         eids,
         sampler,
-        batch_size = config["batch_size"],
         shuffle=config["shuffle"],
+        batch_size = config["batch_size"],
         drop_last=True,
-        pin_memory=True,
         num_workers=config["num_workers"],
+        pin_memory=True,
         persistent_workers=config["num_workers"]>0)
     # optimizer
     optimizer = th.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])

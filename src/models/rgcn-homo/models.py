@@ -462,9 +462,9 @@ class GAE(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList()
         # Probably should change nework to GraphSAGE
-        self.layers.append(dglnn.GraphConv(self.in_feats, self.n_hidden, allow_zero_in_degree=True, weight=True))
+        self.layers.append(dglnn.GraphConv(self.in_feats, self.n_hidden, allow_zero_in_degree=True))
         for i in range(n_layers - 1):
-            self.layers.append(dglnn.GraphConv(self.n_hidden, self.n_hidden, allow_zero_in_degree=True, weight=True))
+            self.layers.append(dglnn.GraphConv(self.n_hidden, self.n_hidden, allow_zero_in_degree=True))
 
     def forward(self, blocks, inputs, edge_weight=None):
         h = self.encode(blocks, inputs, edge_weight)
