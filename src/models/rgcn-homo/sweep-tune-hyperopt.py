@@ -88,7 +88,7 @@ if __name__ == '__main__':
         verbose=1,
         resources_per_trial={'gpu': 0.5, "cpu":2},
         config=config,
-        search_alg=search_alg,
+        # search_alg=search_alg,
         # Early Stopping Scheduler
         scheduler=scheduler,
         stop= stopping_criteria
