@@ -26,6 +26,7 @@ def main(args):
     config = args if isinstance(args, dict) else vars(args)
 
     config["num_layers"] = len(config["fan_out"])
+    config["shuffle"] = bool(config["shuffle"])
 
    # -------------- Check if Run is already performed ------------------
     entity = "melkisedeath"
@@ -45,8 +46,7 @@ def main(args):
         print("========================================")
         return
 
-    wandb.run.name = str("Gaug-" + str(config["num_layers"]) + "x" + str(
-        config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"]) + "-lr_scheduler")
+    wandb.run.name = str("Gaug-{}x{}-bs={}-alpha={:.3f}-beta={:.3f}".format(config["num_layers"], config["num_hidden"], config["batch_size"], config["alpha"], config["beta"])
 
     # --------------- Dataset Loading -------------------------
     if config["dataset"] == 'mps_onset':

@@ -63,11 +63,11 @@ if __name__ == '__main__':
     config["project_name"] = "Toy-" + dnum + "BenchMark-Frameworks"
     config["lr"] = tune.grid_search([0.1])
     config["num_hidden"] = tune.grid_search([8, 16, 32])
-    config["fan_out"] = tune.grid_search([[3, 6], [5, 10], [5, 10, 15]])
-    config["batch_size"] = tune.grid_search([256, 512, 1024])
+    config["fan_out"] = tune.grid_search([[5], [5, 10]])
+    config["batch_size"] = tune.grid_search([512, 1024])
     config["dropout"] = tune.grid_search([0.5])
     config["init_eweights"] = tune.grid_search([0, 1])
-    config["shuffle"] = tune.grid_search([True, False])
+    config["shuffle"] = tune.grid_search([0, 1])
     config["alpha"] = tune.uniform(0, 1), 0.5
     config["beta"] = tune.uniform(0, 1)
     config["temperature"] = tune.uniform(0, 1)
