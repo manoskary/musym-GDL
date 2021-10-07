@@ -14,7 +14,7 @@ PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
-from utils import load_and_save, load_reddit
+from utils import load_and_save
 
 @wandb_mixin
 def main(args):
@@ -61,8 +61,6 @@ def main(args):
         dataset = dgl.data.CoraGraphDataset()
         g = dataset[0]
         n_classes = dataset.num_classes
-    elif config["dataset"] == "reddit":
-        g, n_classes = load_reddit()
     else:
         raise ValueError()
 

@@ -13,7 +13,7 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Gaug_sweep')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
-    argparser.add_argument("-d", '--dataset', type=str, default='reddit')
+    argparser.add_argument("-d", '--dataset', type=str, default='cora')
     argparser.add_argument('--model', type=str, default="GraphSAGE")
     argparser.add_argument('--num-epochs', type=int, default=100)
     argparser.add_argument('--num-hidden', type=int, default=32)
