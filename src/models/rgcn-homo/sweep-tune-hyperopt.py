@@ -75,7 +75,7 @@ if __name__ == '__main__':
 
     # AsyncHyperBand enables aggressive early stopping of bad trials.
     scheduler = AsyncHyperBandScheduler(grace_period=5, reduction_factor=4)
-    search_alg = HyperOptSearch()
+    # search_alg = HyperOptSearch()
     stopping_criteria = {"training_iteration": 1 if args.quick_test else 9999}
     # WandbLogger logs experiment configurations and metrics reported via tune.report() to W&B Dashboard
     # callback = WandbLoggerCallback if not config["quick_test"] else None # For testing.
@@ -88,7 +88,7 @@ if __name__ == '__main__':
         verbose=1,
         resources_per_trial={'gpu': 0.25, "cpu":2},
         config=config,
-        search_alg=search_alg,
+        # search_alg=search_alg,
         # Early Stopping Scheduler
         scheduler=scheduler,
         stop= stopping_criteria
