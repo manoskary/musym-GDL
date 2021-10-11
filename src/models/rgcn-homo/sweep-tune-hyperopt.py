@@ -86,11 +86,12 @@ if __name__ == '__main__':
         metric="mean_loss",
         mode="min",
         verbose=1,
-        resources_per_trial={'gpu': config["num_gpu"]},
+        num_samples=100,
+        resources_per_trial={'gpu': 0.2},
         config=config,
         search_alg=HyperOptSearch(),
         scheduler=AsyncHyperBandScheduler(grace_period=5, reduction_factor=4),
-        stop= stopping_criteria
+        stop=stopping_criteria
     )
 
     print("best config: ", analysis.get_best_config(metric="mean_loss", mode="min"))

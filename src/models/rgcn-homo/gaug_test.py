@@ -46,7 +46,7 @@ def main(args):
             print("       This run already Exists")
             print("    skipping run : {}".format(run_id))
             print("========================================")
-            # return
+
 
         wandb.run.name = str("Gaug-{}x{}-bs={}-alpha={:.3f}-beta={:.3f}".format(config["num_layers"], config["num_hidden"], config["batch_size"], config["alpha"], config["beta"]))
 
@@ -92,7 +92,7 @@ def main(args):
 
 
     # check cuda
-    use_cuda = config["gpu"] > 0 and th.cuda.is_available()
+    use_cuda = config["gpu"] >= 0 and th.cuda.is_available()
     device = th.device('cuda:%d' % th.cuda.current_device() if use_cuda else 'cpu')
 
     # create model
