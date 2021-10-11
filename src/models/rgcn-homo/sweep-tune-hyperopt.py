@@ -5,14 +5,14 @@ import argparse
 from ray import tune
 from ray.tune.schedulers import AsyncHyperBandScheduler
 from ray.tune.suggest.hyperopt import HyperOptSearch
-from ray.tune.integration.wandb import WandbLoggerCallback
 import wandb
 
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser(description='Gaug_sweep')
-    argparser.add_argument('--gpu', type=int, default=0,
-                           help="GPU device ID. Use -1 for CPU training")
+    argparser.add_argument('--gpu', type=float, default=0)
+    argparser.add_argument('--cpu', type=float, default=2,
+                           help="How many cpus per trial to use")
     argparser.add_argument("-d", '--dataset', type=str, default='cora')
     argparser.add_argument('--model', type=str, default="GraphSAGE")
     argparser.add_argument('--num-epochs', type=int, default=100)
@@ -21,7 +21,7 @@ if __name__ == '__main__':
     argparser.add_argument('--batch-size', type=int, default=1024)
     argparser.add_argument('--lr', type=float, default=1e-2)
     argparser.add_argument('--dropout', type=float, default=0.5)
-    argparser.add_argument('--num-gpu', type=int, default=1)
+    argparser.add_argument('--num-gpu', type=int, default=1, help="How many gpus per trial to use")
     argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument('--inductive', action='store_true',
                            help="Inductive learning setting")
@@ -49,6 +49,7 @@ if __name__ == '__main__':
     argparser.add_argument("--temperature", type=float, default=0.2)
     argparser.add_argument("--group", type=str, required=True)
     argparser.add_argument("--job-type", type=str, default="Node-Classification")
+    argparser.add_argument("--unlog", action="store_true", help="Unbinds wandb.")
     args = argparser.parse_args()
 
     wandb.login()
@@ -62,20 +63,19 @@ if __name__ == '__main__':
     else :
         raise ValueError("The Dataset is not Set for Optimization")
     config["project_name"] = "Toy-" + dnum + "BenchMark-Frameworks"
-    config["num_hidden"] = tune.choice([8, 16, 32])
-    config["fan_out"] = tune.choice([[5], [5, 10]])
+    config["num_hidden"] = 16
+    config["fan_out"] = [5, 10]
     config["batch_size"] = tune.choice([512, 1024])
-    config["alpha"] = tune.uniform(0, 1)
-    config["beta"] = tune.uniform(0, 1)
-    config["temperature"] = tune.uniform(0, 1)
+    config["alpha"] = tune.loguniform(0.1, 1.)
+    config["beta"] = tune.loguniform(0.1, 1.)
+    config["temperature"] = tune.loguniform(0.1, 1.)
     config["data_dir"] = os.path.abspath("./data/")
-    config["wandb"] = {"project": config["project_name"],
+    config["wandb"] = {
+        "project": config["project_name"],
         "group": args.group,
-        "job_type": args.job_type}
+        "job_type": args.job_type
+    }
 
-    # AsyncHyperBand enables aggressive early stopping of bad trials.
-    scheduler = AsyncHyperBandScheduler(grace_period=5, reduction_factor=4)
-    search_alg = HyperOptSearch()
     stopping_criteria = {"training_iteration": 1 if args.quick_test else 9999}
     # WandbLogger logs experiment configurations and metrics reported via tune.report() to W&B Dashboard
     # callback = WandbLoggerCallback if not config["quick_test"] else None # For testing.
@@ -86,11 +86,10 @@ if __name__ == '__main__':
         metric="mean_loss",
         mode="min",
         verbose=1,
-        resources_per_trial={'gpu': 0.25, "cpu":2},
+        resources_per_trial={'gpu': config["num_gpu"]},
         config=config,
-        search_alg=search_alg,
-        # Early Stopping Scheduler
-        scheduler=scheduler,
+        search_alg=HyperOptSearch(),
+        scheduler=AsyncHyperBandScheduler(grace_period=5, reduction_factor=4),
         stop= stopping_criteria
     )
 

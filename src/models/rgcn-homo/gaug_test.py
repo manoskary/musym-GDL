@@ -27,26 +27,28 @@ def main(args):
 
     config["num_layers"] = len(config["fan_out"])
     config["shuffle"] = bool(config["shuffle"])
+    config["log"] = False if config["unlog"] else True
 
    # -------------- Check if Run is already performed ------------------
-   #  entity = "melkisedeath"
-   #  project = config["wandb"]["project"]
-   #  api = wandb.Api()
-   #  runs = api.runs(path=entity + "/" + project)
-   #  glob_conf = [run.__dict__['_attrs']['rawconfig'] for run in runs]
-   #  glob_attrs = [k for k in config.keys() if k not in ["data_dir", "_wandb", "wandb", "framework", "start_time", "cli_version", "is_kaggle_kernel"]]
-   #  glob_conf = [{k:d[k] for k in glob_attrs} for d in glob_conf]
-   #  if {k:config[k] for k in glob_attrs} in glob_conf:
-   #      run_id = wandb.run.id
-   #      run = api.run(entity + "/" + project + "/" + run_id)
-   #      # run.delete()
-   #      print("========================================")
-   #      print("       This run already Exists")
-   #      print("    skipping run : {}".format(run_id))
-   #      print("========================================")
-   #      return
+    if config["log"]:
+        entity = "melkisedeath"
+        project = config["wandb"]["project"]
+        api = wandb.Api()
+        runs = api.runs(path=entity + "/" + project)
+        glob_conf = [run.__dict__['_attrs']['rawconfig'] for run in runs]
+        glob_attrs = [k for k in config.keys() if k not in ["data_dir", "_wandb", "wandb", "framework", "start_time", "cli_version", "is_kaggle_kernel", "log", "unlog", "gpu", "cpu"]]
+        glob_conf = [{k:d[k] for k in glob_attrs} for d in glob_conf]
+        if {k:config[k] for k in glob_attrs} in glob_conf:
+            run_id = wandb.run.id
+            run = api.run(entity + "/" + project + "/" + run_id)
+            # run.delete()
+            print("========================================")
+            print("       This run already Exists")
+            print("    skipping run : {}".format(run_id))
+            print("========================================")
+            # return
 
-    wandb.run.name = str("Gaug-{}x{}-bs={}-alpha={:.3f}-beta={:.3f}".format(config["num_layers"], config["num_hidden"], config["batch_size"], config["alpha"], config["beta"]))
+        wandb.run.name = str("Gaug-{}x{}-bs={}-alpha={:.3f}-beta={:.3f}".format(config["num_layers"], config["num_hidden"], config["batch_size"], config["alpha"], config["beta"]))
 
     # --------------- Dataset Loading -------------------------
     if config["dataset"] == 'mps_onset':
@@ -90,12 +92,8 @@ def main(args):
 
 
     # check cuda
-    use_cuda = config["gpu"] >= 0 and th.cuda.is_available()
-    if use_cuda:
-        th.cuda.set_device(config["gpu"])
-        device = th.device('cuda:%d' % config["gpu"])
-    else:
-        device = th.device('cpu')
+    use_cuda = config["gpu"] > 0 and th.cuda.is_available()
+    device = th.device('cuda:%d' % th.cuda.current_device() if use_cuda else 'cpu')
 
     # create model
     in_feats = node_features.shape[1]
@@ -128,7 +126,9 @@ def main(args):
         drop_last=True,
         num_workers=config["num_workers"],
         pin_memory=True,
-        persistent_workers=config["num_workers"]>0)
+        persistent_workers=config["num_workers"]>0,
+        # use_ddp=True
+    )
     # optimizer
     optimizer = th.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
@@ -137,7 +137,8 @@ def main(args):
     # training loop
     print("start training...")
     dur = []
-    wandb.watch(model, criterion, log="all", log_freq=10)
+    if config["log"]:
+        wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(config["num_epochs"]):
         model.train()
         t0 = time.time()
@@ -159,7 +160,7 @@ def main(args):
 
             bce_weight = th.FloatTensor([float(adj.shape[0] ** 2 - adj.sum()) / adj.sum()]).to(device)
             # Prediction of the Gaug model
-            logits = model(adj, blocks, batch_inputs, feat_inputs, edge_weight=batch_edge_weights)
+            logits = model(adj, blocks, batch_inputs, feat_inputs)
             # Combined loss
             loss = criterion(logits, batch_labels, adj.view(-1), model.ep.view(-1), bce_weight)
             optimizer.zero_grad()
@@ -175,8 +176,9 @@ def main(args):
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (th.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
             scheduler.step(val_acc)
-            tune.report(mean_loss=loss.item())
-            wandb.log({"train_accuracy": train_acc, "train_loss": loss.item(), "val_accuracy": val_acc, "val_loss": val_loss})
+            if config["log"]:
+                tune.report(mean_loss=loss.item())
+                wandb.log({"train_accuracy": train_acc, "train_loss": loss.item(), "val_accuracy": val_acc, "val_loss": val_loss})
         print(
             "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
             format(epoch, train_acc, loss.item(), val_acc, val_loss, np.average(dur)))
@@ -187,7 +189,8 @@ def main(args):
                                        num_workers=config["num_workers"])
                 test_loss = F.cross_entropy(pred, test_labels)
                 test_acc = (th.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
-                wandb.log({"test_accuracy": test_acc, "test_loss": test_loss})
+                if config["log"]:
+                    wandb.log({"test_accuracy": test_acc, "test_loss": test_loss})
             print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
     print()
 
@@ -207,6 +210,8 @@ if __name__ == '__main__':
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument("--weight-decay", type=float, default=5e-4,
                            help="Weight for L2 loss")
+    argparser.add_argument("--fan-out", default=[5, 10])
+    argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument("--batch-size", type=int, default=512)
     argparser.add_argument("--num-workers", type=int, default=0)
     argparser.add_argument('--data-cpu', action='store_true',
@@ -220,7 +225,7 @@ if __name__ == '__main__':
     argparser.add_argument("--beta", type=float, default=0.5)
     argparser.add_argument("--temperature", type=float, default=0.2)
     argparser.add_argument("--data-dir", type=str, default=os.path.abspath("./data/"))
-
+    argparser.add_argument("--unlog", action="store_true", help="Unbinds wandb.")
     args = argparser.parse_args()
 
     print(args)
