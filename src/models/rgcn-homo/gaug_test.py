@@ -127,12 +127,13 @@ def main(args):
         num_workers=config["num_workers"],
         pin_memory=True,
         persistent_workers=config["num_workers"]>0,
-        # use_ddp=True
     )
-    # optimizer
+
+
     optimizer = th.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
-    criterion = GaugLoss(config["beta"])
+    class_weight = th.tensor([th.count_nonzero(labels == u)/labels.shape[0] for u in th.sort(th.unique(labels))[0]])
+    criterion = GaugLoss(config["beta"], weight=class_weight)
 
     # training loop
     print("start training...")

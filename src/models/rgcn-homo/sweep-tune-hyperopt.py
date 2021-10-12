@@ -22,7 +22,7 @@ if __name__ == '__main__':
     argparser.add_argument('--lr', type=float, default=1e-2)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--num-gpu', type=int, default=1, help="How many gpus per trial to use")
-    argparser.add_argument('--shuffle', type=int, default=True)
+    argparser.add_argument('--shuffle', type=int, default=1)
     argparser.add_argument('--inductive', action='store_true',
                            help="Inductive learning setting")
     argparser.add_argument('--add-self-loop', action='store_true',
@@ -63,7 +63,7 @@ if __name__ == '__main__':
     else :
         raise ValueError("The Dataset is not Set for Optimization")
     config["project_name"] = "Toy-" + dnum + "BenchMark-Frameworks"
-    config["num_hidden"] = 16
+    config["num_hidden"] = tune.choice([16, 32])
     config["fan_out"] = [5, 10]
     config["batch_size"] = tune.choice([512, 1024])
     config["alpha"] = tune.loguniform(0.1, 1.)

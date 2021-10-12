@@ -531,10 +531,10 @@ class NonDglSAGE(nn.Module):
         return h
 
 class GaugLoss(nn.Module):
-    def __init__(self, beta):
+    def __init__(self, beta, weight=None):
         super(GaugLoss, self).__init__()
         self.beta = beta
-        self.ce = nn.CrossEntropyLoss()
+        self.ce = nn.CrossEntropyLoss(weight=weight)
         # self.bce = nn.BCELoss()
 
     def forward(self, output, target, adj_true, adj_pred, weight):
