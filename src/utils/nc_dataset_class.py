@@ -534,7 +534,16 @@ class toy_02_homo(MozartPianoHomoGraphDataset):
 				select_piece=select_piece, normalize=True, 
 				features=None, save_path=save_path, 
 				piece_list = MIX)
-		
+
+class cad_basis_homo(MozartPianoHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-homo/"
+		super().__init__(
+				name='cad_basis_homo', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=True,
+				features=None, save_path=save_path,
+				piece_list = MIX)
 
 
 if __name__ == "__main__":
