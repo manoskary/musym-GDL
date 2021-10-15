@@ -60,15 +60,18 @@ if __name__ == '__main__':
             dnum = "00-"
         else:
             dnum = args.dataset[-2:]+"-"
-    else :
-        raise ValueError("The Dataset is not Set for Optimization")
-    config["project_name"] = "Toy-" + dnum + "BenchMark-Frameworks"
-    config["num_hidden"] = tune.choice([16, 32])
-    config["fan_out"] = [5, 10]
-    config["batch_size"] = tune.choice([512, 1024])
-    config["alpha"] = tune.loguniform(0.1, 1.)
-    config["beta"] = tune.loguniform(0.1, 1.)
-    config["temperature"] = tune.loguniform(0.1, 1.)
+        config["project_name"] = "Toy-" + dnum + "BenchMark-Frameworks"
+    elif "cad" == args.dataset :
+        config["project_name"] = "Cadence Detection Homogeneous"
+    else:
+        raise ValueError("This dataset is not set for optimization")
+
+    config["num_hidden"] = tune.grid_search([8, 16, 32])
+    config["fan_out"] = [5]
+    config["batch_size"] = tune.grid_search([256, 512, 1024])
+    config["alpha"] = tune.grid_search([0.3, 0.5])
+    config["beta"] = 0.15
+    config["temperature"] = 0.5
     config["data_dir"] = os.path.abspath("./data/")
     config["wandb"] = {
         "project": config["project_name"],
@@ -86,11 +89,11 @@ if __name__ == '__main__':
         metric="mean_loss",
         mode="min",
         verbose=1,
-        num_samples=100,
+        # num_samples=100,
         resources_per_trial={'gpu': 0.2},
         config=config,
-        search_alg=HyperOptSearch(),
-        scheduler=AsyncHyperBandScheduler(grace_period=5, reduction_factor=4),
+        # search_alg=HyperOptSearch(),
+        # scheduler=AsyncHyperBandScheduler(grace_period=5, reduction_factor=4),
         stop=stopping_criteria
     )
 

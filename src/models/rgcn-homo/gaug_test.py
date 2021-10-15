@@ -59,6 +59,8 @@ def main(args):
         g, n_classes = load_and_save("toy_01_homo", config["data_dir"])
     elif config["dataset"] == "toy02":
         g, n_classes = load_and_save("toy_02_homo", config["data_dir"])
+    elif config["dataset"] == "cad":
+        g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
     elif config["dataset"] == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g = dataset[0]
@@ -133,7 +135,7 @@ def main(args):
     optimizer = th.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
     class_weight = th.tensor([th.count_nonzero(labels == u)/labels.shape[0] for u in th.sort(th.unique(labels))[0]])
-    criterion = GaugLoss(config["beta"], weight=class_weight)
+    criterion = GaugLoss(config["beta"], weight=class_weight.to(device))
 
     # training loop
     print("start training...")

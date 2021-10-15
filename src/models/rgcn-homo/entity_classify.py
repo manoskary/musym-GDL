@@ -46,6 +46,8 @@ def main(args):
         g, n_classes = load_and_save("toy_01_homo")
     elif config["dataset"] == "toy02":
         g, n_classes = load_and_save("toy_02_homo")
+    elif config["dataset"] == "cad":
+        g, n_classes = load_and_save("cad_basis_homo")
     elif config["dataset"] == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g= dataset[0]
