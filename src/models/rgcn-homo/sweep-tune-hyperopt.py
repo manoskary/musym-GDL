@@ -1,6 +1,8 @@
 import os.path
 
-from gaug_test import main
+from gaug_test import main as main_gaug
+from entity_classify_mp import main as main_mp
+from entity_classify import main as main_simple
 import argparse
 from ray import tune
 from ray.tune.schedulers import AsyncHyperBandScheduler
@@ -69,7 +71,7 @@ if __name__ == '__main__':
     config["num_hidden"] = tune.grid_search([8, 16, 32])
     config["fan_out"] = [5]
     config["batch_size"] = tune.grid_search([256, 512, 1024])
-    config["alpha"] = tune.grid_search([0.3, 0.5])
+    # config["alpha"] = tune.grid_search([0.3, 0.5])
     config["beta"] = 0.15
     config["temperature"] = 0.5
     config["data_dir"] = os.path.abspath("./data/")
@@ -78,6 +80,13 @@ if __name__ == '__main__':
         "group": args.group,
         "job_type": args.job_type
     }
+
+    if args.model == "sage-mp":
+        main = main_mp
+    elif args.model == "sage":
+        main = main_simple
+    else:
+        main = main_gaug
 
     stopping_criteria = {"training_iteration": 1 if args.quick_test else 9999}
     # WandbLogger logs experiment configurations and metrics reported via tune.report() to W&B Dashboard
@@ -90,7 +99,7 @@ if __name__ == '__main__':
         mode="min",
         verbose=1,
         # num_samples=100,
-        resources_per_trial={'gpu': 0.2},
+        resources_per_trial={'gpu': 1},
         config=config,
         # search_alg=HyperOptSearch(),
         # scheduler=AsyncHyperBandScheduler(grace_period=5, reduction_factor=4),
