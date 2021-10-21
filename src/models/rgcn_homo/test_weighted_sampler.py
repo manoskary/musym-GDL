@@ -5,13 +5,21 @@ edited Mini Baching hyparams and added schedule lr
 Reference repo : https://github.com/melkisedeath/musym-GDL
 """
 
+import torch
+torch.manual_seed(0)
+import random
+random.seed(0)
+import numpy as np
+np.random.seed(0)
+
 import argparse
 
 import dgl.dataloading
-import torch
+
 import torch.nn as nn
-import tqdm
+from tqdm import tqdm
 from dgl.nn import SAGEConv, GraphConv
+
 
 
 class MyModel(nn.Module):
@@ -24,15 +32,16 @@ class MyModel(nn.Module):
         h = self.conv(mfgs[0], x)  # <---  # <---
         return h
 
+
 def get_sample_weights(labels):
     class_sample_count = torch.tensor([(labels == t).sum() for t in torch.unique(labels, sorted=True)])
     weight = 1. / class_sample_count.float()
     sample_weights = torch.tensor([weight[t] for t in labels])
     return sample_weights
 
+
 def main(config):
     """Pass parameters to create experiment"""
-
 
     # --------------- Dataset Loading -------------------------
     dataset = dgl.data.CoraGraphDataset()
@@ -59,8 +68,7 @@ def main(config):
     # Balance Label Sampler
     label_weights = get_sample_weights(g.ndata["label"])
     # Torch Sampler
-    # sampler = torch.utils.data.sampler.WeightedRandomSampler(label_weights, len(label_weights))
-
+    sampler = torch.utils.data.sampler.WeightedRandomSampler(label_weights, len(label_weights))
 
     dataloader = dgl.dataloading.NodeDataLoader(
         g,
@@ -70,8 +78,8 @@ def main(config):
         batch_size=config["batch_size"],
         drop_last=False,
         num_workers=0,
-        # sampler=sampler
-        )
+        sampler=sampler
+    )
 
     # Define model and optimizer
     model = MyModel(in_feats, n_classes)
@@ -80,9 +88,9 @@ def main(config):
     optimizer = torch.optim.Adam(model.parameters())
 
     # Training loop
-    for epoch in range(config["num_epochs"]):
+    for epoch in tqdm(range(config["num_epochs"]), desc='epoch'):
         # Loop over the dataloader to sample the computation dependency graph as a list of blocks.
-        for step, (input_nodes, seeds, blocks) in enumerate(tqdm.tqdm(dataloader, position=0, leave=True)):
+        for step, (input_nodes, seeds, blocks) in enumerate(tqdm(dataloader, position=0, leave=True, desc='data')):
             # Load the input features as well as output labels
             batch_inputs = (blocks[0].srcdata["feat"], blocks[0].dstdata["feat"])
             batch_labels = blocks[-1].dstdata['label']
@@ -93,8 +101,6 @@ def main(config):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
-
 
 
 if __name__ == '__main__':
