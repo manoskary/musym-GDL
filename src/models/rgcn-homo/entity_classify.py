@@ -18,7 +18,6 @@ from dgl.data.utils import load_info
 from models import SGC
 from models import GraphSAGE as SAGE
 
-
 PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
@@ -28,8 +27,9 @@ from entity_classify_mp import load_reddit
 
 
 def normalize(x, eps=1e-8):
-    normed = (x - x.mean(axis=0) ) / (x.std(axis=0) + eps)
+    normed = (x - x.mean(axis=0)) / (x.std(axis=0) + eps)
     return normed
+
 
 def main(args):
     """
@@ -50,24 +50,23 @@ def main(args):
             info_path = os.path.join(data_dir, name, name + '_info.pkl')
             n_classes = load_info(info_path)['num_classes']
         else:
-            dataset =  MPGD_homo_onset(save_path = data_dir) # select_piece = "K533-1"
+            dataset = MPGD_homo_onset(save_path=data_dir)  # select_piece = "K533-1"
             # Load the Homogeneous Graph
-            g= dataset[0]
+            g = dataset[0]
             n_classes = dataset.num_classes
     elif args.dataset == "toy":
-        dataset =  toy_homo_onset()
+        dataset = toy_homo_onset()
         # Load the Homogeneous Graph
-        g= dataset[0]
-        n_classes = dataset.num_classes   
+        g = dataset[0]
+        n_classes = dataset.num_classes
     elif args.dataset == "cora":
         dataset = dgl.data.CoraGraphDataset()
-        g= dataset[0]
+        g = dataset[0]
         n_classes = dataset.num_classes
     elif args.dataset == "reddit":
         g, n_classes = load_reddit()
     else:
         raise ValueError()
-
 
     # category = dataset.predict_category
     # num_classes = dataset.num_classes
@@ -77,7 +76,7 @@ def main(args):
     test_idx = th.nonzero(test_mask, as_tuple=False).squeeze()
     labels = g.ndata['label']
     # Informative label balance to choose loss (if balance is relevantly balanced change to cross_entropy loss)
-    label_balance = {u : th.count_nonzero(labels == u)/labels.shape[0] for u in th.unique(labels)}
+    label_balance = {u: th.count_nonzero(labels == u) / labels.shape[0] for u in th.unique(labels)}
     print("The label balance is :", label_balance)
 
     # split dataset into train, validate, test
@@ -97,7 +96,6 @@ def main(args):
         train_idx = train_idx.cuda()
         test_idx = test_idx.cuda()
 
-    
     # Load the node features as a Dictionary to feed to the forward layer.
     if args.normalize:
         node_features = normalize(g.ndata['feat'])
@@ -108,11 +106,11 @@ def main(args):
         w = th.empty(g.num_edges())
         nn.init.uniform_(w)
         g.edata["w"] = w.to('cuda:%d' % args.gpu)
-    
+
     # create model
     in_feats = node_features.shape[1]
     model = SAGE(in_feats, args.n_hidden, n_classes,
-        n_layers=args.n_layers, activation=F.relu, dropout=args.dropout, aggregator_type=args.aggregator_type)
+                 n_layers=args.n_layers, activation=F.relu, dropout=args.dropout, aggregator_type=args.aggregator_type)
     # model = SGC(in_feats, args.n_hidden, args.n_hidden, num_hidden_layers=args.n_layers-2)
     if use_cuda:
         model.cuda()
@@ -122,15 +120,19 @@ def main(args):
     # training loop
     print("start training...")
     dur = []
+    # maxv, ix = node_features.max(0)
+    # node_features /= maxv
     model.train()
     for epoch in range(args.n_epochs):
         model.train()
         optimizer.zero_grad()
         if epoch > 5:
             t0 = time.time()
-        logits = model(g, node_features)
+
+        # logits = model(g, node_features)
+        logits = model(g,th.cat((node_features, labels[:, None]), 1))
         # loss = softmax_focal_loss(logits[train_idx], labels[train_idx]) 
-        loss = F.cross_entropy(logits[train_idx], labels[train_idx]) 
+        loss = F.cross_entropy(logits[train_idx], labels[train_idx])
         loss.backward()
         optimizer.step()
         t1 = time.time()
@@ -143,8 +145,9 @@ def main(args):
             # val_loss = softmax_focal_loss(logits[val_idx], labels[val_idx])
             val_loss = F.cross_entropy(logits[val_idx], labels[val_idx])
             val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
-        print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
-              format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
+        print(
+            "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
+            format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
     print()
     if args.model_path is not None:
         th.save(model.state_dict(), args.model_path)
@@ -156,35 +159,36 @@ def main(args):
         test_loss = F.cross_entropy(logits[test_idx], labels[test_idx])
         test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
 
-    print("Test Acc: {:.4f} | Test loss: {:.4f}| " .format(test_acc, test_loss.item()))
+    print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
     print()
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RGCN')
     parser.add_argument("--dropout", type=float, default=0,
-            help="dropout probability")
+                        help="dropout probability")
     parser.add_argument("--n-hidden", type=int, default=16,
-            help="number of hidden units")
+                        help="number of hidden units")
     parser.add_argument("--gpu", type=int, default=-1,
-            help="gpu")
+                        help="gpu")
     parser.add_argument("--lr", type=float, default=1e-2,
-            help="learning rate")
+                        help="learning rate")
     parser.add_argument("--n-bases", type=int, default=-1,
-            help="number of filter weight matrices, default: -1 [use all]")
+                        help="number of filter weight matrices, default: -1 [use all]")
     parser.add_argument("--n-layers", type=int, default=3,
-            help="number of propagation rounds")
+                        help="number of propagation rounds")
     parser.add_argument("-e", "--n-epochs", type=int, default=50,
-            help="number of training epochs")
+                        help="number of training epochs")
     parser.add_argument("-d", "--dataset", type=str, required=True,
-            help="dataset to use")
+                        help="dataset to use")
     parser.add_argument("--model_path", type=str, default=None,
-            help='path for save the model')
+                        help='path for save the model')
     parser.add_argument("--l2norm", type=float, default=0,
-            help="l2 norm coef")
+                        help="l2 norm coef")
     parser.add_argument("--use-self-loop", default=False, action='store_true',
-            help="include self feature as a special relation")
+                        help="include self feature as a special relation")
     parser.add_argument("--normalize", default=False, required=False, type=bool,
-            help="Normalize with 0 mean and unit variance")
+                        help="Normalize with 0 mean and unit variance")
     parser.add_argument("--aggregator-type", type=str, default="gcn",
                         help="Aggregator type: mean/gcn/pool/lstm")
     parser.add_argument("--init_eweights", default=True, type=bool, help="Initialize edge weights")
@@ -194,6 +198,6 @@ if __name__ == '__main__':
     parser.set_defaults(validation=True)
 
     args = parser.parse_args()
-    
+
     print(args)
     main(args)

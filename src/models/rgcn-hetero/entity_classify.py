@@ -184,6 +184,11 @@ def main(args):
     elif args.dataset == "mps_onset_test":
         print("Loading Mozart Sonatas For Bar Onset Detection")
         dataset = MPGD_onset_test()
+    elif args.dataset == "toy":
+        dataset = toy_homo_onset()
+        # Load the Homogeneous Graph
+        g = dataset[0]
+        n_classes = dataset.num_classes
     else:
         raise ValueError()
 

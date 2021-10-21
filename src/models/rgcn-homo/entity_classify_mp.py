@@ -32,6 +32,7 @@ from utils import MPGD_homo_onset, toy_homo_onset
 
 from utils import StratifiedSampler
 
+
 def load_reddit():
     from dgl.data import RedditDataset
 
@@ -42,6 +43,7 @@ def load_reddit():
     g.ndata['labels'] = g.ndata['label']
     return g, data.num_classes
 
+
 def inductive_split(g):
     """Split the graph into training graph, validation graph, and test graph by training
     and validation masks.  Suitable for inductive models."""
@@ -50,12 +52,14 @@ def inductive_split(g):
     test_g = g
     return train_g, val_g, test_g
 
+
 def compute_acc(pred, labels):
     """
     Compute the accuracy of prediction given the labels.
     """
     labels = labels.long()
     return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
+
 
 def evaluate(model, g, nfeat, labels, val_nid, device):
     """
@@ -72,6 +76,7 @@ def evaluate(model, g, nfeat, labels, val_nid, device):
     model.train()
     return compute_acc(pred[val_nid], labels[val_nid].to(pred.device))
 
+
 def load_subtensor(nfeat, labels, seeds, input_nodes, device):
     """
     Extracts features and labels for a subset of nodes
@@ -79,6 +84,7 @@ def load_subtensor(nfeat, labels, seeds, input_nodes, device):
     batch_inputs = nfeat[input_nodes].to(device)
     batch_labels = labels[seeds].to(device)
     return batch_inputs, batch_labels
+
 
 #### Entry point
 def run(args, device, data):
@@ -99,18 +105,24 @@ def run(args, device, data):
         dataloader_device = device
 
     # Create PyTorch DataLoader for constructing blocks
-    sampler = dgl.dataloading.MultiLayerNeighborSampler(
-        [int(fanout) for fanout in args.fan_out.split(',')])   
-    dataloader = dgl.dataloading.NodeDataLoader(
+    node_sampler = dgl.dataloading.MultiLayerNeighborSampler(
+        [int(fanout) for fanout in args.fan_out.split(',')])
+
+    # (train_labels==0).sum()/train_labels.shape
+    # prob=[1 for l in train_labels]
+    # weights=1/prob
+    # data_sampler= th.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
+    train_dataloader = dgl.dataloading.NodeDataLoader(
         train_g,
         train_nid,
-        sampler,
+        node_sampler,
         device=dataloader_device,
         batch_size=args.batch_size,
-        # shuffle=True,
+        shuffle=False,
         drop_last=False,
         num_workers=args.num_workers,
-        sampler=StratifiedSampler(train_labels, args.batch_size))
+        # sampler=data_sampler
+    )
 
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)
@@ -127,7 +139,7 @@ def run(args, device, data):
         # Loop over the dataloader to sample the computation dependency graph as a list of
         # blocks.
         tic_step = time.time()
-        for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
+        for step, (input_nodes, seeds, blocks) in enumerate(train_dataloader):
             # Load the input features as well as output labels
             batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
                                                         seeds, input_nodes, device)
@@ -139,20 +151,22 @@ def run(args, device, data):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if epoch>3:
+            if epoch > 3:
                 iter_tput.append(len(seeds) / (time.time() - tic_step + 1e-8))
             if step % args.log_every == 0:
                 acc = compute_acc(batch_pred, batch_labels)
                 gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
-                print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
-                    epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
+                print(
+                    'Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
+                        epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
             tic_step = time.time()
-            if epoch == args.num_epochs-1 :
-                path = os.path.join(os.path.dirname(__file__), "artifacts", "last_epoch_results_block_"+str(step) + ".csv")
+            if epoch == args.num_epochs - 1:
+                path = os.path.join(os.path.dirname(__file__), "artifacts",
+                                    "last_epoch_results_block_" + str(step) + ".csv")
                 if not os.path.exists(os.path.join(os.path.dirname(__file__), "artifacts")):
                     os.makedirs(os.path.join(os.path.dirname(__file__), "artifacts"))
-                df = pd.DataFrame({"labels" : batch_labels.detach().numpy(), "predictions" : batch_pred.argmax(dim=1).detach().numpy()}).to_csv(path)
-                
+                df = pd.DataFrame({"labels": batch_labels.detach().numpy(),
+                                   "predictions": batch_pred.argmax(dim=1).detach().numpy()}).to_csv(path)
 
         toc = time.time()
         print('Epoch Time(s): {:.4f}'.format(toc - tic))
@@ -164,9 +178,8 @@ def run(args, device, data):
             test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
             print('Test Acc: {:.4f}'.format(test_acc))
 
-
-
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
+
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
@@ -213,18 +226,18 @@ if __name__ == '__main__':
             info_path = os.path.join(data_dir, name, name + '_info.pkl')
             n_classes = load_info(info_path)['num_classes']
         else:
-            dataset =  MPGD_homo_onset(save_path = data_dir) # select_piece = "K533-1"
+            dataset = MPGD_homo_onset(save_path=data_dir)  # select_piece = "K533-1"
             # Load the Homogeneous Graph
-            g= dataset[0]
+            g = dataset[0]
             n_classes = dataset.num_classes
     elif args.dataset == "toy":
-        dataset =  toy_homo_onset()
+        dataset = toy_homo_onset()
         # Load the Homogeneous Graph
-        g= dataset[0]
-        n_classes = dataset.num_classes   
+        g = dataset[0]
+        n_classes = dataset.num_classes
     elif args.dataset == "cora":
         dataset = dgl.data.CoraGraphDataset()
-        g= dataset[0]
+        g = dataset[0]
         n_classes = dataset.num_classes
     elif args.dataset == "reddit":
         g, n_classes = load_reddit()
