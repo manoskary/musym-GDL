@@ -30,9 +30,22 @@ Cadence and Voice Leading Detection in Symbolic Classical Music is a challenging
 
 Install requirements with pip: 
 
+```bash
+conda create -n musym python=3.7
+conda activate musym
+conda install -c dglteam dglconda install pytorch torchvision torchaudio cudatoolkit=10.2 -c pytorch
+
+```
+or 
+```bash
+conda env create -f environment.yml
+conda activate dar
+``` 
+or 
 ```shell
 pip install -r requirements.txt
 ```
+or 
 
 Run a experiment :
 
