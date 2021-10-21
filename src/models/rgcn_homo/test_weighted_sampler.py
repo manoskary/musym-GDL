@@ -11,13 +11,13 @@ import dgl.dataloading
 import torch
 import torch.nn as nn
 import tqdm
-from dgl.nn import SAGEConv
+from dgl.nn import SAGEConv, GraphConv
 
 
-class Model(nn.Module):
+class MyModel(nn.Module):
     def __init__(self, in_feats, num_classes):
-        super(Model, self).__init__()
-        self.conv = SAGEConv(in_feats, num_classes, aggregator_type="mean")
+        super(MyModel, self).__init__()
+        self.conv = SAGEConv(in_feats, num_classes, aggregator_type="gcn")
 
     def forward(self, mfgs, x):
         # Lines that are changed are marked with an arrow: "<---"
@@ -37,28 +37,29 @@ def main(config):
     # --------------- Dataset Loading -------------------------
     dataset = dgl.data.CoraGraphDataset()
     g = dataset[0]
+    g = dgl.add_self_loop(g)
     n_classes = dataset.num_classes
-    train_nid = torch.ones(g.num_nodes()).type(torch.int64)
+    train_nid = torch.tensor(range(g.num_nodes())).type(torch.int64)
     in_feats = g.ndata["feat"].shape[1]
 
     # --------------- Transfer to Devise ---------------
     use_cuda = config["gpu"] >= 0 and torch.cuda.is_available()
     if use_cuda:
         device = torch.device('cuda:%d' % config["gpu"])
-        # dataloader_device = device
+        dataloader_device = device
     else:
         device = torch.device('cpu')
         train_nid = train_nid.to(device)
-    dataloader_device = torch.device('cpu')
+        dataloader_device = device
     # ---------------- Sampler Definition ---------------
 
     # Graph Sampler takes all available neighbors
-    graph_sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
+    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler([5])
 
     # Balance Label Sampler
     label_weights = get_sample_weights(g.ndata["label"])
     # Torch Sampler
-    sampler = torch.utils.data.sampler.WeightedRandomSampler(label_weights, len(label_weights))
+    # sampler = torch.utils.data.sampler.WeightedRandomSampler(label_weights, len(label_weights))
 
 
     dataloader = dgl.dataloading.NodeDataLoader(
@@ -69,11 +70,11 @@ def main(config):
         batch_size=config["batch_size"],
         drop_last=False,
         num_workers=0,
-        sampler=sampler
+        # sampler=sampler
         )
 
     # Define model and optimizer
-    model = Model(in_feats, n_classes)
+    model = MyModel(in_feats, n_classes)
     model = model.to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters())
@@ -102,7 +103,7 @@ if __name__ == '__main__':
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument('-d', '--dataset', type=str, default='toy01')
     argparser.add_argument('--num-epochs', type=int, default=20)
-    argparser.add_argument('--batch-size', type=int, default=128)
+    argparser.add_argument('--batch-size', type=int, default=32)
 
     args = argparser.parse_args()
     config = vars(args)
