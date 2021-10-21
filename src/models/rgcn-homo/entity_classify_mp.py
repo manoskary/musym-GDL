@@ -9,13 +9,14 @@ import argparse
 import numpy as np
 import time
 import os, sys
-import torch
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 import dgl
+import tqdm
 
 import pandas as pd
+import tqdm
 
 from models import SAGE
 
@@ -49,9 +50,9 @@ def load_reddit():
 def inductive_split(g):
     """Split the graph into training graph, validation graph, and test graph by training
     and validation masks.  Suitable for inductive models."""
-    train_g = g.subgraph(g.ndata['train_mask'].type(torch.int64))
-    val_g = g.subgraph(g.ndata['val_mask'].type(torch.int64))
-    test_g = g.subgraph(g.ndata['train_mask'].type(torch.int64))
+    train_g = g.subgraph(g.ndata['train_mask'].type(th.int64))
+    val_g = g.subgraph(g.ndata['val_mask'].type(th.int64))
+    test_g = g.subgraph(g.ndata['train_mask'].type(th.int64))
     return train_g, val_g, test_g
 
 def compute_acc(pred, labels):
@@ -151,7 +152,7 @@ def run(config, device, data):
         # Loop over the dataloader to sample the computation dependency graph as a list of
         # blocks.
         tic_step = time.time()
-        for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
+        for step, (input_nodes, seeds, blocks) in enumerate(tqdm.tqdm(dataloader, position=0, leave=True)):
             # Load the input features as well as output labels
             batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
                                                         seeds, input_nodes, device)
@@ -163,21 +164,13 @@ def run(config, device, data):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if epoch>3:
-                iter_tput.append(len(seeds) / (time.time() - tic_step + 1e-8))
-            if step % config["log_every"] == 0:
-                acc = compute_acc(batch_pred, batch_labels)
-                gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
-                print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
-                    epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
-            tic_step = time.time()
-            if epoch == config["num_epochs"]-1 :
-                path = os.path.join(os.path.dirname(__file__), "artifacts", "last_epoch_results_block_"+str(step) + ".csv")
-                if not os.path.exists(os.path.join(os.path.dirname(__file__), "artifacts")):
-                    os.makedirs(os.path.join(os.path.dirname(__file__), "artifacts"))
-                df = pd.DataFrame({"labels" : batch_labels.detach().cpu().numpy(), "predictions" : batch_pred.argmax(dim=1).detach().cpu().numpy()}).to_csv(path)
 
+            iter_tput.append(len(seeds) / (time.time() - tic_step + 1e-8))
 
+        acc = compute_acc(batch_pred, batch_labels)
+        gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
+        print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
+                epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
         toc = time.time()
         print('Epoch Time(s): {:.4f}'.format(toc - tic))
 
@@ -191,16 +184,12 @@ def run(config, device, data):
         wandb.log({"train_accuracy": acc.item(), "train_loss": loss.item(), "val_accuracy": eval_acc})
 
         scheduler.step(eval_acc)
-        if epoch % config["eval_every"] == 0 and epoch != 0:
+        if epoch % 5 == 0 and epoch != 0:
             test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
             wandb.log({"test_accuracy": test_acc})
             print('Test Acc: {:.4f}'.format(test_acc))
-
-
-
-
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
-    est_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
+    test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
     print('Test Acc: {:.4f}'.format(test_acc))
 
 @wandb_mixin
@@ -209,8 +198,9 @@ def main(config):
 
     config["num_layers"] = len(config["fan_out"])
 
-    wandb.run.name = str("SAGE-" + str(config["num_layers"]) + "x" + str(
-        config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"]) + "-lr_scheduler")
+    wandb.run.name = str("SageMP-{}x{}-bs={}".format(config["num_layers"], config["num_hidden"],
+                                                                            config["batch_size"]))
+
 
     use_cuda = config["gpu"] >= 0 and th.cuda.is_available()
 
@@ -244,18 +234,25 @@ def main(config):
         nn.init.uniform_(w)
         g.edata["w"] = w
 
-    if config["inductive"]:
-        train_g, val_g, test_g = inductive_split(g)
-        train_nfeat = train_g.ndata.pop('feat')
-        val_nfeat = val_g.ndata.pop('feat')
-        test_nfeat = test_g.ndata.pop('feat')
-        train_labels = train_g.ndata.pop('label')
-        val_labels = val_g.ndata.pop('label')
-        test_labels = test_g.ndata.pop('label')
-    else:
-        train_g = val_g = test_g = g
-        train_nfeat = val_nfeat = test_nfeat = g.ndata.pop('feat')
-        train_labels = val_labels = test_labels = g.ndata.pop('label')
+    # Hack to track node idx in dataloader's subgraphs.
+    train_mask = g.ndata['train_mask']
+    test_mask = g.ndata['test_mask']
+    val_mask = g.ndata['val_mask']
+    train_g = g.subgraph(th.nonzero(train_mask)[:, 0])
+    train_labels = train_g.ndata['label']
+    eids = th.arange(train_g.number_of_edges())
+
+
+    # Validation and Testing
+    val_g = g.subgraph(th.nonzero(val_mask)[:, 0])
+    val_labels = val_g.ndata['label']
+    test_g = g.subgraph(th.nonzero(test_mask)[:, 0])
+    test_labels = test_g.ndata['label']
+
+    # Features
+    train_nfeat = train_g.ndata.pop('feat')
+    val_nfeat = val_g.ndata.pop('feat')
+    test_nfeat = test_g.ndata.pop('feat')
 
     print("Number of total graph nodes : {} ".format(train_labels.shape[0]))
 
@@ -281,7 +278,7 @@ if __name__ == '__main__':
     argparser.add_argument('--fan-out', type=str, default='5, 5')
     argparser.add_argument('--batch-size', type=int, default=128)
     argparser.add_argument('--log-every', type=int, default=20)
-    argparser.add_argument('--eval-every', type=int, default=5)
+    argparser.add_argument('--eval-every', type=int, default=1)
     argparser.add_argument('--lr', type=float, default=0.01)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--add-self-loop', action='store_true', help="Add a self loop to every node of the graph.")

@@ -10,7 +10,10 @@ import time
 import os, sys
 from models import *
 
-
+# Hyperparam Tuning and Logging
+from ray import tune
+from ray.tune.integration.wandb import wandb_mixin
+import wandb
 
 PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
@@ -27,7 +30,7 @@ def normalize(x, eps=1e-8):
 
 
 
-
+@wandb_mixin
 def main(args):
     """
     Main Call for Node Classification with GraphSage.
@@ -35,20 +38,20 @@ def main(args):
     """
 
     config = args if isinstance(args, dict) else vars(args)
-    
+    config["num_layers"] = len(config["fan_out"])
 
     # load graph data
     if config["dataset"] == 'mps_onset':
-        g, n_classes = load_and_save("mpgd_homo_onset", "MPGD_homo_onset")
-    elif config["dataset"] =="toy":
-        g, n_classes = load_and_save("toy_homo_onset")
+        g, n_classes = load_and_save("mpgd_homo_onset", config["data_dir"], "MPGD_homo_onset")
+    elif config["dataset"] == "toy":
+        g, n_classes = load_and_save("toy_homo_onset", config["data_dir"])
     elif config["dataset"] == "toy01":
-        g, n_classes = load_and_save("toy_01_homo")
+        g, n_classes = load_and_save("toy_01_homo", config["data_dir"])
     elif config["dataset"] == "toy02":
-        g, n_classes = load_and_save("toy_02_homo")
+        g, n_classes = load_and_save("toy_02_homo", config["data_dir"])
     elif config["dataset"] == "cora":
         dataset = dgl.data.CoraGraphDataset()
-        g= dataset[0]
+        g = dataset[0]
         n_classes = dataset.num_classes
     elif config["dataset"] == "reddit":
         g, n_classes = load_reddit()
@@ -58,8 +61,8 @@ def main(args):
     
 
     # Pass parameters to create experiment
-    # wandb.init(config=defaults)
-    # wandb.name(str(config["gnn"]) + "-" + str(config["num_layers"]) + "x" + str(config["num_hidden"]))
+    wandb.run.name = str("SageMP-{}x{}-bs={}".format(config["num_layers"], config["num_hidden"],
+                                                     config["batch_size"]))
 
     train_mask = g.ndata['train_mask']
     test_mask = g.ndata['test_mask']
@@ -100,26 +103,12 @@ def main(args):
     
     # create model
     in_feats = node_features.shape[1]
-    if config["gnn"] == "GraphSage" or config["gnn"] == "SAGE":
-        g = dgl.add_self_loop(g)
-        model = GraphSAGE(in_feats, config["num_hidden"], n_classes, 
-            n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
-    elif config["gnn"] == "SGC":
-        g = dgl.add_self_loop(g)
-        model  = SGC(in_feats, config["num_hidden"], n_classes,
-             n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
-    elif config["gnn"] == "GAT":
-        g = dgl.add_self_loop(g)
-        model  = GAT(in_feats, config["num_hidden"], n_classes,
-             n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
-    elif config["gnn"] == "LSTMSAGE":
-        g = dgl.add_self_loop(g)
-        model  = LSTMGraphSAGE(in_feats, config["num_hidden"], n_classes,
-             n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])    
-    else :
-        raise AttributeError("The specified Graph Network is not implemented.")
+    g = dgl.add_self_loop(g)
+    model = GraphSAGE(in_feats, config["num_hidden"], n_classes,
+        n_layers=config["num_layers"], activation=F.relu, dropout=config["dropout"])
+
     if use_cuda:
-        m = model.cuda()
+        model = model.cuda()
 
 
     # optimizer
@@ -151,24 +140,20 @@ def main(args):
 
 
         scheduler.step(val_loss)
-            
+        tune.report(mean_loss=loss.item())
+        wandb.log({"train_accuracy": train_acc, "train_loss": loss.item(), "val_accuracy": val_acc, "val_loss":val_loss.item()})
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
               format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
-
-    print()
-    # Saving Model for later
-    # if config["model_path"] is not None:
-    #     th.save(model.state_dict(), config["model_path"])
-
-    model.eval()
-    with th.no_grad():
-        logits = model.forward(g, node_features)
-        test_loss = criterion(logits[test_idx], labels[test_idx])
-        test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
-        # Log the Results
-        # wandb.log({"test_accuracy" : test_acc, "test_loss" : test_loss})
-    print("Test Acc: {:.4f} | Test loss: {:.4f}| " .format(test_acc, test_loss.item()))
-    print()
+        if epoch % 5 == 0 and epoch != 0:
+            model.eval()
+            with th.no_grad():
+                logits = model.forward(g, node_features)
+                test_loss = criterion(logits[test_idx], labels[test_idx])
+                test_acc = th.sum(logits[test_idx].argmax(dim=1) == labels[test_idx]).item() / len(test_idx)
+                # Log the Results
+                wandb.log({"test_accuracy" : test_acc, "test_loss" : test_loss})
+            print("Test Acc: {:.4f} | Test loss: {:.4f}| " .format(test_acc, test_loss.item()))
+            print()
 
 if __name__ == '__main__':
 

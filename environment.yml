@@ -1,4 +1,4 @@
-name: cenv
+name: musym
 dependencies:
   - python
   - pip

@@ -44,6 +44,27 @@ FILE_LIST = [
 	'note.csv', 'rest-follows-note.csv', 'rest.csv' 
 	]
 
+BASIS_FN = [
+	'duration_basis.duration', 'fermata_basis.fermata', 'grace_basis.grace_note',
+	'grace_basis.n_grace', 'grace_basis.grace_pos', 'onset_basis.onset',
+	'onset_basis.score_position', 'polynomial_pitch_basis.pitch',
+	'polynomial_pitch_basis.pitch^2', 'polynomial_pitch_basis.pitch^3',
+	'relative_score_position_basis.score_position', 'slur_basis.slur_incr',
+	'slur_basis.slur_decr', 'time_signature_basis.time_signature_num_1',
+	'time_signature_basis.time_signature_num_2', 'time_signature_basis.time_signature_num_3',
+	'time_signature_basis.time_signature_num_4', 'time_signature_basis.time_signature_num_5',
+	'time_signature_basis.time_signature_num_6', 'time_signature_basis.time_signature_num_7',
+	'time_signature_basis.time_signature_num_8', 'time_signature_basis.time_signature_num_9',
+	'time_signature_basis.time_signature_num_10', 'time_signature_basis.time_signature_num_11',
+	'time_signature_basis.time_signature_num_12', 'time_signature_basis.time_signature_num_other',
+	'time_signature_basis.time_signature_den_1', 'time_signature_basis.time_signature_den_2',
+	'time_signature_basis.time_signature_den_4', 'time_signature_basis.time_signature_den_8',
+	'time_signature_basis.time_signature_den_16', 'time_signature_basis.time_signature_den_other',
+	'vertical_neighbor_basis.n_total', 'vertical_neighbor_basis.n_above', 'vertical_neighbor_basis.n_below',
+	'vertical_neighbor_basis.highest_pitch', 'vertical_neighbor_basis.lowest_pitch',
+	'vertical_neighbor_basis.pitch_range'
+	]
+
 def min_max_scaler(X):
 	data_min = np.nanmin(X, axis=0)
 	data_max = np.nanmax(X, axis=0)
@@ -56,6 +77,8 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 	def __init__(self, name, url, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, save_path=None, piece_list=None):
 		if features:
 			self.features = features
+		elif "basis" in url:
+			self.features = ["onset", "duration", "ts"] + BASIS_FN + ["pitch"]
 		else :
 			self.features = ["onset", "duration", "ts", "pitch"]
 		self.normalize = normalize
@@ -162,7 +185,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 					if resize_factor != 1 or n != 0:
 						if "pitch" in self.features:
 							num_feat = len(self.features)
-							dur_resize = torch.tensor([resize_factor for _ in range(num_feat-1)] + [1]).float()
+							dur_resize = torch.tensor([resize_factor for _ in range(3)] + [1 for _ in range(num_feat-3)]).float()
 							pitch_aug = torch.tensor([0 for _ in  range(num_feat-1)] + [n]).float()
 							graph = dgl.graph(edges)
 							graph.ndata['feat'] = note_node_features.float()*dur_resize + pitch_aug
@@ -299,6 +322,7 @@ class MozartPianoGraphDataset(DGLDataset):
 		else :
 			self.note_features = ["onset", "duration", "ts", "pitch"]
 			self.rest_features = ["onset", "duration", "ts"]
+
 		if piece_list:
 			self.piece_list = piece_list
 		self.normalize = normalize
@@ -307,6 +331,7 @@ class MozartPianoGraphDataset(DGLDataset):
 		self.select_piece = select_piece
 		# url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mozart_piano_sonatas/"
 		super().__init__(name=name, raw_dir=raw_dir, url=url)
+
 
 	def process(self):
 		if not hasattr(self, 'piece_list'):
@@ -491,7 +516,7 @@ class toy_homo_onset(MozartPianoHomoGraphDataset):
 class toy_01_homo(MozartPianoHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy-01-homo/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy-01-basis-homo/"
 		super().__init__(
 				name='toy_01_homo', url=url, 
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, 
@@ -502,14 +527,23 @@ class toy_01_homo(MozartPianoHomoGraphDataset):
 class toy_02_homo(MozartPianoHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy-02-homo/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy-02-basis-homo/"
 		super().__init__(
 				name='toy_02_homo', url=url, 
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug, 
 				select_piece=select_piece, normalize=True, 
 				features=None, save_path=save_path, 
 				piece_list = MIX)
-		
+
+class cad_basis_homo(MozartPianoHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-homo/"
+		super().__init__(
+				name='cad_basis_homo', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=True,
+				features=None, save_path=save_path,
+				piece_list = MIX)
 
 
 if __name__ == "__main__":
