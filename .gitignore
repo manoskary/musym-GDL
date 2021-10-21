@@ -133,3 +133,9 @@ dmypy.json
 
 data/
 artifacts/
+
+
+# Logging Platforms
+
+.neptune/
+wandb/

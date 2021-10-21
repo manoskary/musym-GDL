@@ -1,36 +1,39 @@
 """Entity Classification with Mini Batch sampling for Music with Graph Convolutional Networks
 
 Author : Emmanouil Karystinaios
-
+edited Mini Baching hyparams and added schedule lr
 Reference repo : https://github.com/melkisedeath/musym-GDL
 """
 
-import argparse, gc
+import argparse
 import numpy as np
 import time
+import os, sys
+import torch
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
-import dgl.multiprocessing as mp
-from dgl.multiprocessing import Queue
-from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader
 import dgl
-from dgl import DGLGraph
-from functools import partial
+
 import pandas as pd
 
 from models import SAGE
-import tqdm
-import os, sys
+
+
+# Hyperparam Tuning and Logging
+from ray import tune
+from ray.tune.integration.wandb import wandb_mixin
+import wandb
+
+
 
 PACKAGE_PARENT = '..'
 SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
 sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
 
-from utils import MPGD_homo_onset, toy_homo_onset
+from utils import *
 
-from utils import StratifiedSampler
+
 
 
 def load_reddit():
@@ -43,15 +46,13 @@ def load_reddit():
     g.ndata['labels'] = g.ndata['label']
     return g, data.num_classes
 
-
 def inductive_split(g):
     """Split the graph into training graph, validation graph, and test graph by training
     and validation masks.  Suitable for inductive models."""
-    train_g = g.subgraph(g.ndata['train_mask'])
-    val_g = g.subgraph(g.ndata['val_mask'] | g.ndata['train_mask'])
-    test_g = g
+    train_g = g.subgraph(g.ndata['train_mask'].type(torch.int64))
+    val_g = g.subgraph(g.ndata['val_mask'].type(torch.int64))
+    test_g = g.subgraph(g.ndata['train_mask'].type(torch.int64))
     return train_g, val_g, test_g
-
 
 def compute_acc(pred, labels):
     """
@@ -61,7 +62,7 @@ def compute_acc(pred, labels):
     return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
 
 
-def evaluate(model, g, nfeat, labels, val_nid, device):
+def evaluate(model, g, nfeat, labels, val_nid, device, config):
     """
     Evaluate the model on the validation set specified by ``val_nid``.
     g : The entire graph.
@@ -72,10 +73,9 @@ def evaluate(model, g, nfeat, labels, val_nid, device):
     """
     model.eval()
     with th.no_grad():
-        pred = model.inference(g, nfeat, device, args.batch_size, args.num_workers)
+        pred = model.inference(g, nfeat, device, config["batch_size"], config["num_workers"])
     model.train()
     return compute_acc(pred[val_nid], labels[val_nid].to(pred.device))
-
 
 def load_subtensor(nfeat, labels, seeds, input_nodes, device):
     """
@@ -85,9 +85,9 @@ def load_subtensor(nfeat, labels, seeds, input_nodes, device):
     batch_labels = labels[seeds].to(device)
     return batch_inputs, batch_labels
 
-
 #### Entry point
-def run(args, device, data):
+@wandb_mixin
+def run(config, device, data):
     # Unpack data
     n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
     val_nfeat, val_labels, test_nfeat, test_labels = data
@@ -97,7 +97,7 @@ def run(args, device, data):
     test_nid = th.nonzero(~(test_g.ndata['train_mask'] | test_g.ndata['val_mask']), as_tuple=True)[0]
 
     dataloader_device = th.device('cpu')
-    if args.sample_gpu:
+    if config["sample_gpu"]:
         train_nid = train_nid.to(device)
         # copy only the csc to the GPU
         train_g = train_g.formats(['csc'])
@@ -105,41 +105,53 @@ def run(args, device, data):
         dataloader_device = device
 
     # Create PyTorch DataLoader for constructing blocks
-    node_sampler = dgl.dataloading.MultiLayerNeighborSampler(
-        [int(fanout) for fanout in args.fan_out.split(',')])
+    if isinstance(config["fan_out"], str):
+        fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
+    else :
+        fanouts = config["fan_out"]
+    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
+    # TODO fix correct sampler formulation
+    if n_classes == 2:
+        # For Imbalanced Binary Labels
+        weights = th.ones(train_nfeat.shape[0])
+        true_idx = th.nonzero(train_labels)
+        false_idx = (train_labels == 0).nonzero()
+        weights[true_idx] = true_idx.shape[0]/train_labels.shape[0] 
+        weights[false_idx] = false_idx.shape[0]/train_labels.shape[0] 
+        # sampler = th.utils.data.WeightedRandomSampler(weights)
+    else :
+        sampler = None
 
-    # (train_labels==0).sum()/train_labels.shape
-    # prob=[1 for l in train_labels]
-    # weights=1/prob
-    # data_sampler= th.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
-    train_dataloader = dgl.dataloading.NodeDataLoader(
+    # TODO create a new dataloader with weighted sampling or review random walk DRNE
+    dataloader = dgl.dataloading.NodeDataLoader(
         train_g,
         train_nid,
-        node_sampler,
+        graph_sampler,
         device=dataloader_device,
-        batch_size=args.batch_size,
-        shuffle=False,
+        batch_size=config["batch_size"],
+        shuffle=True,
         drop_last=False,
-        num_workers=args.num_workers,
-        # sampler=data_sampler
-    )
+        num_workers=config["num_workers"]
+        )
 
     # Define model and optimizer
-    model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)
+    model = SAGE(in_feats, config["num_hidden"], n_classes, config["num_layers"], F.relu, config["dropout"])
     model = model.to(device)
-    loss_fcn = nn.CrossEntropyLoss()
-    optimizer = th.optim.Adam(model.parameters(), lr=args.lr)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = th.optim.Adam(model.parameters(), lr=config["lr"])
+    scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
 
     # Training loop
     avg = 0
     iter_tput = []
-    for epoch in range(args.num_epochs):
+    wandb.watch(model, criterion, log="all", log_freq=10)
+    for epoch in range(config["num_epochs"]):
         tic = time.time()
 
         # Loop over the dataloader to sample the computation dependency graph as a list of
         # blocks.
         tic_step = time.time()
-        for step, (input_nodes, seeds, blocks) in enumerate(train_dataloader):
+        for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
             # Load the input features as well as output labels
             batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
                                                         seeds, input_nodes, device)
@@ -147,104 +159,92 @@ def run(args, device, data):
 
             # Compute loss and prediction
             batch_pred = model(blocks, batch_inputs)
-            loss = loss_fcn(batch_pred, batch_labels)
+            loss = criterion(batch_pred, batch_labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if epoch > 3:
+            if epoch>3:
                 iter_tput.append(len(seeds) / (time.time() - tic_step + 1e-8))
-            if step % args.log_every == 0:
+            if step % config["log_every"] == 0:
                 acc = compute_acc(batch_pred, batch_labels)
                 gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
-                print(
-                    'Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
-                        epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
+                print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
+                    epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
             tic_step = time.time()
-            if epoch == args.num_epochs - 1:
-                path = os.path.join(os.path.dirname(__file__), "artifacts",
-                                    "last_epoch_results_block_" + str(step) + ".csv")
+            if epoch == config["num_epochs"]-1 :
+                path = os.path.join(os.path.dirname(__file__), "artifacts", "last_epoch_results_block_"+str(step) + ".csv")
                 if not os.path.exists(os.path.join(os.path.dirname(__file__), "artifacts")):
                     os.makedirs(os.path.join(os.path.dirname(__file__), "artifacts"))
-                df = pd.DataFrame({"labels": batch_labels.detach().numpy(),
-                                   "predictions": batch_pred.argmax(dim=1).detach().numpy()}).to_csv(path)
+                df = pd.DataFrame({"labels" : batch_labels.detach().cpu().numpy(), "predictions" : batch_pred.argmax(dim=1).detach().cpu().numpy()}).to_csv(path)
+
 
         toc = time.time()
         print('Epoch Time(s): {:.4f}'.format(toc - tic))
+
+
         if epoch >= 5:
             avg += toc - tic
-        if epoch % args.eval_every == 0 and epoch != 0:
-            eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device)
-            print('Eval Acc {:.4f}'.format(eval_acc))
-            test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device)
+
+        eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device, config)
+        print('Eval Acc {:.4f}'.format(eval_acc))
+        tune.report(mean_loss=loss.item())
+        wandb.log({"train_accuracy": acc.item(), "train_loss": loss.item(), "val_accuracy": eval_acc})
+
+        scheduler.step(eval_acc)
+        if epoch % config["eval_every"] == 0 and epoch != 0:
+            test_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
+            wandb.log({"test_accuracy": test_acc})
             print('Test Acc: {:.4f}'.format(test_acc))
 
+
+
+
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
+    est_acc = evaluate(model, test_g, test_nfeat, test_labels, test_nid, device, config)
+    print('Test Acc: {:.4f}'.format(test_acc))
 
+@wandb_mixin
+def main(config):
+    # Pass parameters to create experiment
 
-if __name__ == '__main__':
-    argparser = argparse.ArgumentParser()
-    argparser.add_argument('--gpu', type=int, default=0,
-                           help="GPU device ID. Use -1 for CPU training")
-    argparser.add_argument('--dataset', type=str, default='reddit')
-    argparser.add_argument('--num-epochs', type=int, default=20)
-    argparser.add_argument('--num-hidden', type=int, default=16)
-    argparser.add_argument('--num-layers', type=int, default=3)
-    argparser.add_argument('--fan-out', type=str, default='5, 10, 25')
-    argparser.add_argument('--batch-size', type=int, default=512)
-    argparser.add_argument('--log-every', type=int, default=20)
-    argparser.add_argument('--eval-every', type=int, default=5)
-    argparser.add_argument('--lr', type=float, default=0.003)
-    argparser.add_argument('--dropout', type=float, default=0.5)
-    argparser.add_argument('--num-workers', type=int, default=4,
-                           help="Number of sampling processes. Use 0 for no extra process.")
-    argparser.add_argument('--sample-gpu', action='store_true',
-                           help="Perform the sampling process on the GPU. Must have 0 workers.")
-    argparser.add_argument('--inductive', action='store_true',
-                           help="Inductive learning setting")
-    argparser.add_argument('--data-cpu', action='store_true',
-                           help="By default the script puts all node features and labels "
-                                "on GPU when using it to save time for data copy. This may "
-                                "be undesired if they cannot fit in GPU memory at once. "
-                                "This flag disables that.")
-    args = argparser.parse_args()
+    config["num_layers"] = len(config["fan_out"])
 
-    if args.gpu >= 0:
-        device = th.device('cuda:%d' % args.gpu)
+    wandb.run.name = str("SAGE-" + str(config["num_layers"]) + "x" + str(
+        config["num_hidden"]) + " --lr " + str(config["lr"]) + " --dropout " + str(config["dropout"]) + "-lr_scheduler")
+
+    use_cuda = config["gpu"] >= 0 and th.cuda.is_available()
+
+    if use_cuda:
+        device = th.device('cuda:%d' % config["gpu"])
     else:
         device = th.device('cpu')
-
     # load graph data
-    if args.dataset == 'mps_onset':
-        print("Loading Mozart Sonatas For Cadence Detection")
-        data_dir = os.path.abspath("./data")
-        if os.path.exists(data_dir):
-            name = "mpgd_homo_onset"
-            # load processed data from directory `self.save_path`
-            graph_path = os.path.join(data_dir, name, name + '_graph.bin')
-            # Load the Homogeneous Graph
-            g = load_graphs(graph_path)[0][0]
-            info_path = os.path.join(data_dir, name, name + '_info.pkl')
-            n_classes = load_info(info_path)['num_classes']
-        else:
-            dataset = MPGD_homo_onset(save_path=data_dir)  # select_piece = "K533-1"
-            # Load the Homogeneous Graph
-            g = dataset[0]
-            n_classes = dataset.num_classes
-    elif args.dataset == "toy":
-        dataset = toy_homo_onset()
-        # Load the Homogeneous Graph
-        g = dataset[0]
-        n_classes = dataset.num_classes
-    elif args.dataset == "cora":
+    if config["dataset"] == 'mps_onset':
+        g, n_classes = load_and_save("mpgd_homo_onset", config["data_dir"], "MPGD_homo_onset")
+    elif config["dataset"] == "toy":
+        g, n_classes = load_and_save("toy_homo_onset", config["data_dir"])
+    elif config["dataset"] == "toy01":
+        g, n_classes = load_and_save("toy_01_homo", config["data_dir"])
+    elif config["dataset"] == "toy02":
+        g, n_classes = load_and_save("toy_02_homo", config["data_dir"])
+    elif config["dataset"] == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g = dataset[0]
         n_classes = dataset.num_classes
-    elif args.dataset == "reddit":
+    elif config["dataset"] == "reddit":
         g, n_classes = load_reddit()
     else:
         raise ValueError()
 
-    if args.inductive:
+    if config["add_self_loop"]:
+        g = dgl.add_self_loop(g)
+
+    if config["init_eweights"]:
+        w = th.empty(g.num_edges())
+        nn.init.uniform_(w)
+        g.edata["w"] = w
+
+    if config["inductive"]:
         train_g, val_g, test_g = inductive_split(g)
         train_nfeat = train_g.ndata.pop('feat')
         val_nfeat = val_g.ndata.pop('feat')
@@ -257,7 +257,9 @@ if __name__ == '__main__':
         train_nfeat = val_nfeat = test_nfeat = g.ndata.pop('feat')
         train_labels = val_labels = test_labels = g.ndata.pop('label')
 
-    if not args.data_cpu:
+    print("Number of total graph nodes : {} ".format(train_labels.shape[0]))
+
+    if not config["data_cpu"]:
         train_nfeat = train_nfeat.to(device)
         train_labels = train_labels.to(device)
 
@@ -265,4 +267,95 @@ if __name__ == '__main__':
     data = n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
            val_nfeat, val_labels, test_nfeat, test_labels
 
-    run(args, device, data)
+    run(config, device, data)
+
+
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser(description='GraphSAGE')
+    argparser.add_argument('--gpu', type=int, default=0,
+                           help="GPU device ID. Use -1 for CPU training")
+    argparser.add_argument('-d', '--dataset', type=str, default='reddit')
+    argparser.add_argument('--num-epochs', type=int, default=20)
+    argparser.add_argument('--num-hidden', type=int, default=32)
+    argparser.add_argument('--num-layers', type=int, default=2)
+    argparser.add_argument('--fan-out', type=str, default='5, 5')
+    argparser.add_argument('--batch-size', type=int, default=128)
+    argparser.add_argument('--log-every', type=int, default=20)
+    argparser.add_argument('--eval-every', type=int, default=5)
+    argparser.add_argument('--lr', type=float, default=0.01)
+    argparser.add_argument('--dropout', type=float, default=0.5)
+    argparser.add_argument('--add-self-loop', action='store_true', help="Add a self loop to every node of the graph.")
+    argparser.add_argument('--num-workers', type=int, default=4,
+                           help="Number of sampling processes. Use 0 for no extra process.")
+    argparser.add_argument("--init-eweights", type=int, default=0,
+                           help="Initialize learnable graph weights. Use 1 for True and 0 for false")
+    argparser.add_argument('--sample-gpu', action='store_true',
+                           help="Perform the sampling process on the GPU. Must have 0 workers.")
+    argparser.add_argument('--inductive', action='store_true',
+                           help="Inductive learning setting")
+    argparser.add_argument('--data-cpu', action='store_true',
+                           help="By default the script puts all node features and labels "
+                                "on GPU when using it to save time for data copy. This may "
+                                "be undesired if they cannot fit in GPU memory at once. "
+                                "This flag disables that.")
+    args = argparser.parse_args()
+    config = vars(args)
+
+    use_cuda = config["gpu"] >= 0 and th.cuda.is_available()
+
+    if use_cuda:
+        device = th.device('cuda:%d' % config["gpu"])
+    else:
+        device = th.device('cpu')
+    # load graph data
+    if config["dataset"] == 'mps_onset':
+        g, n_classes = load_and_save("mpgd_homo_onset", "MPGD_homo_onset")
+    elif config["dataset"] =="toy":
+        g, n_classes = load_and_save("toy_homo_onset")
+    elif config["dataset"] == "toy01":
+        g, n_classes = load_and_save("toy_01_homo")
+    elif config["dataset"] == "toy02":
+        g, n_classes = load_and_save("toy_02_homo")
+    elif config["dataset"] == "cora":
+        dataset = dgl.data.CoraGraphDataset()
+        g= dataset[0]
+        n_classes = dataset.num_classes
+    elif config["dataset"] == "reddit":
+        g, n_classes = load_reddit()
+    else:
+        raise ValueError()
+
+    if config["add_self_loop"]:
+        g = dgl.add_self_loop(g)
+
+    if config["init_eweights"]:
+        w = th.empty(g.num_edges())
+        nn.init.uniform_(w)
+        g.edata["w"] = w
+
+
+
+    if config["inductive"]:
+        train_g, val_g, test_g = inductive_split(g)
+        train_nfeat = train_g.ndata.pop('feat')
+        val_nfeat = val_g.ndata.pop('feat')
+        test_nfeat = test_g.ndata.pop('feat')
+        train_labels = train_g.ndata.pop('label')
+        val_labels = val_g.ndata.pop('label')
+        test_labels = test_g.ndata.pop('label')
+    else:
+        train_g = val_g = test_g = g
+        train_nfeat = val_nfeat = test_nfeat = g.ndata.pop('feat')
+        train_labels = val_labels = test_labels = g.ndata.pop('label')
+
+    print("Number of total graph nodes : {} ".format(train_labels.shape[0]))
+
+    if not config["data_cpu"]:
+        train_nfeat = train_nfeat.to(device)
+        train_labels = train_labels.to(device)
+
+    # Pack data
+    data = n_classes, train_g, val_g, test_g, train_nfeat, train_labels, \
+           val_nfeat, val_labels, test_nfeat, test_labels
+
+    run(config, device, data)

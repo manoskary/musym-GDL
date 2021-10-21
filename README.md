@@ -47,10 +47,20 @@ pip install -r requirements.txt
 ```
 or 
 
-Run a experiment :
+#### Quickstart with Conda
+
+```shell
+conda env create -f environment.yml
+```
+Followed by
+```shell
+conda activate musym
+```
+
+### Run a experiment
 
 ```shell
 cd src/models/rgcn-homo
-python entity_classify.py -d cora --testing --gpu 0
+python entity_classify.py -d cora --gpu 0
 ```
 
