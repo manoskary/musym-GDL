@@ -66,6 +66,7 @@ def main(config):
         train_nid,
         graph_sampler,
         device=dataloader_device,
+        batch_size=2,
         # batch_size=config["batch_size"],
         # drop_last=False,
         # num_workers=0,
