@@ -59,7 +59,7 @@ def main(config):
     # Balance Label Sampler
     label_weights = get_sample_weights(g.ndata["label"])
     # Torch Sampler
-    # sampler = torch.utils.data.sampler.WeightedRandomSampler(label_weights, len(label_weights))
+    sampler = torch.utils.data.sampler.WeightedRandomSampler(label_weights, len(label_weights))
 
 
     dataloader = dgl.dataloading.NodeDataLoader(
@@ -70,7 +70,7 @@ def main(config):
         batch_size=config["batch_size"],
         drop_last=False,
         num_workers=0,
-        # sampler=sampler
+        sampler=sampler
         )
 
     # Define model and optimizer
