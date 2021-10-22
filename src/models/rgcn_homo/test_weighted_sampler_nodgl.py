@@ -29,6 +29,7 @@ class SageLayer(nn.Module):
         self.weight = nn.Linear(self.input_size if self.gcn else 2 * self.input_size, out_size)
         self.fc_self = nn.Linear(self.input_size, self.input_size, bias=False)
         self.init_params()
+        # TODO add inference function
 
     def init_params(self):
         gain= nn.init.calculate_gain('relu')
@@ -143,13 +144,18 @@ def main(config):
 
     # Training loop
     for epoch in range(config["num_epochs"]):
-        # Loop over the dataloader to sample the computation dependency graph as a list of blocks.
+        # Loop over the dataloader to sample Node Ids
         for step, (batch_nids, batch_labels) in enumerate(tqdm(dataloader, position=0, leave=True)):
-            # Load the input features as well as output labels
-            neigh_features = [torch.squeeze(node_features[adj[i].coalesce().indices()]) for i in batch_nids]
+
+            # Load the input features
             batch_features = node_features[batch_nids]
+            # Fetch the neighbor features
+            # TODO eventually every nodeID should have a list of k distant neighbors for every kth layer
+            # TODO we can add sampling max(m) neighbors instead of fetching all of them similar to dgl.samplers
+            neigh_features = [torch.squeeze(node_features[adj[i].coalesce().indices()]) for i in batch_nids]
             print(step, batch_features.shape)
             # Predict and loss
+            # TODO move features to GPU option
             batch_pred = model(batch_features, neigh_features)
             loss = criterion(batch_pred, batch_labels)
             optimizer.zero_grad()
