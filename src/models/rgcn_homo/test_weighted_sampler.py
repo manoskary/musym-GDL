@@ -1,10 +1,3 @@
-"""Entity Classification with Mini Batch sampling for Music with Graph Convolutional Networks
-
-Author : Emmanouil Karystinaios
-edited Mini Baching hyparams and added schedule lr
-Reference repo : https://github.com/melkisedeath/musym-GDL
-"""
-
 import torch
 torch.manual_seed(0)
 import random
@@ -18,7 +11,7 @@ import dgl.dataloading
 
 import torch.nn as nn
 from tqdm import tqdm
-from dgl.nn import SAGEConv, GraphConv
+from dgl.nn import SAGEConv
 
 
 
@@ -61,9 +54,8 @@ def main(config):
         train_nid = train_nid.to(device)
         dataloader_device = device
     # ---------------- Sampler Definition ---------------
-
     # Graph Sampler takes all available neighbors
-    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler([5])
+    graph_sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
 
     # Balance Label Sampler
     label_weights = get_sample_weights(g.ndata["label"])
@@ -92,7 +84,7 @@ def main(config):
         # Loop over the dataloader to sample the computation dependency graph as a list of blocks.
         for step, (input_nodes, seeds, blocks) in enumerate(tqdm(dataloader, position=0, leave=True, desc='data')):
             # Load the input features as well as output labels
-            batch_inputs = (blocks[0].srcdata["feat"], blocks[0].dstdata["feat"])
+            batch_inputs = blocks[0].srcdata["feat"]
             batch_labels = blocks[-1].dstdata['label']
             print(step, blocks[0].num_nodes(), batch_labels.shape)
             # Predict and loss

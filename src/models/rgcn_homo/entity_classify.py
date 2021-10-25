@@ -40,7 +40,7 @@ def main(args):
     config = args if isinstance(args, dict) else vars(args)
     config["num_layers"] = len(config["fan_out"])
 
-    # load graph data
+    # --------------- Dataset Loading -------------------------
     if config["dataset"] == 'mps_onset':
         g, n_classes = load_and_save("mpgd_homo_onset", config["data_dir"], "MPGD_homo_onset")
     elif config["dataset"] == "toy":
@@ -49,12 +49,12 @@ def main(args):
         g, n_classes = load_and_save("toy_01_homo", config["data_dir"])
     elif config["dataset"] == "toy02":
         g, n_classes = load_and_save("toy_02_homo", config["data_dir"])
+    elif config["dataset"] == "cad":
+        g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
     elif config["dataset"] == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g = dataset[0]
         n_classes = dataset.num_classes
-    elif config["dataset"] == "reddit":
-        g, n_classes = load_reddit()
     else:
         raise ValueError()
 
@@ -135,6 +135,8 @@ def main(args):
         with th.no_grad():
             model.eval()
             train_acc = th.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
+            wandb.log(compute_metrics(logits[train_idx].argmax(dim=1), labels[train_idx]))
+
             val_loss = criterion(logits[val_idx], labels[val_idx])
             val_acc = th.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
 
@@ -142,6 +144,7 @@ def main(args):
         scheduler.step(val_loss)
         tune.report(mean_loss=loss.item())
         wandb.log({"train_accuracy": train_acc, "train_loss": loss.item(), "val_accuracy": val_acc, "val_loss":val_loss.item()})
+
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
               format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
         if epoch % 5 == 0 and epoch != 0:

@@ -110,19 +110,13 @@ def run(config, device, data):
         fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
     else :
         fanouts = config["fan_out"]
-    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
-    # TODO fix correct sampler formulation
-    if n_classes == 2:
-        # For Imbalanced Binary Labels
-        weights = th.ones(train_nfeat.shape[0])
-        true_idx = th.nonzero(train_labels)
-        false_idx = (train_labels == 0).nonzero()
-        weights[true_idx] = true_idx.shape[0]/train_labels.shape[0] 
-        weights[false_idx] = false_idx.shape[0]/train_labels.shape[0] 
-        # sampler = th.utils.data.WeightedRandomSampler(weights)
-    else :
-        sampler = None
 
+
+    graph_sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
+
+    # Balance Label Sampler
+    label_weights = get_sample_weights(train_labels)
+    sampler = th.utils.data.sampler.WeightedRandomSampler(label_weights, len(label_weights))
     # TODO create a new dataloader with weighted sampling or review random walk DRNE
     dataloader = dgl.dataloading.NodeDataLoader(
         train_g,
@@ -130,9 +124,10 @@ def run(config, device, data):
         graph_sampler,
         device=dataloader_device,
         batch_size=config["batch_size"],
-        shuffle=True,
+        # shuffle=True,
         drop_last=False,
-        num_workers=config["num_workers"]
+        num_workers=config["num_workers"],
+        sampler=sampler
         )
 
     # Define model and optimizer
@@ -181,6 +176,7 @@ def run(config, device, data):
         eval_acc = evaluate(model, val_g, val_nfeat, val_labels, val_nid, device, config)
         print('Eval Acc {:.4f}'.format(eval_acc))
         tune.report(mean_loss=loss.item())
+
         wandb.log({"train_accuracy": acc.item(), "train_loss": loss.item(), "val_accuracy": eval_acc})
 
         scheduler.step(eval_acc)
@@ -208,7 +204,8 @@ def main(config):
         device = th.device('cuda:%d' % config["gpu"])
     else:
         device = th.device('cpu')
-    # load graph data
+
+    # --------------- Dataset Loading -------------------------
     if config["dataset"] == 'mps_onset':
         g, n_classes = load_and_save("mpgd_homo_onset", config["data_dir"], "MPGD_homo_onset")
     elif config["dataset"] == "toy":
@@ -217,12 +214,12 @@ def main(config):
         g, n_classes = load_and_save("toy_01_homo", config["data_dir"])
     elif config["dataset"] == "toy02":
         g, n_classes = load_and_save("toy_02_homo", config["data_dir"])
+    elif config["dataset"] == "cad":
+        g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
     elif config["dataset"] == "cora":
         dataset = dgl.data.CoraGraphDataset()
         g = dataset[0]
         n_classes = dataset.num_classes
-    elif config["dataset"] == "reddit":
-        g, n_classes = load_reddit()
     else:
         raise ValueError()
 

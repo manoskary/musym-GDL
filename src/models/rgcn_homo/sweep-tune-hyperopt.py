@@ -68,9 +68,9 @@ if __name__ == '__main__':
     else:
         raise ValueError("This dataset is not set for optimization")
 
-    config["num_hidden"] = tune.grid_search([8, 16, 32])
+    config["num_hidden"] = 16 # tune.grid_search([8, 16, 32])
     config["fan_out"] = [5]
-    config["batch_size"] = tune.grid_search([256, 512, 1024])
+    config["batch_size"] = 2048 # tune.grid_search([1024, 2048, 4096])
     # config["alpha"] = tune.grid_search([0.3, 0.5])
     config["beta"] = 0.15
     config["temperature"] = 0.5

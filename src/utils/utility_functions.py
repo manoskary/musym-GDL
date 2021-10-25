@@ -2,6 +2,7 @@ import sys
 import os
 from dgl.data.utils import load_info, load_graphs
 import torch
+from sklearn import metrics
 
 from .nc_dataset_class import *
 
@@ -39,3 +40,21 @@ def load_and_save(name, data_dir=None, classname=None):
         g = dataset[0]
         n_classes = dataset.num_classes
         return g, n_classes
+
+
+def compute_metrics(y_pred, y_true):
+    with torch.no_grad():
+        y_pred = y_pred.cpu().numpy()
+        y_true = y_true.cpu().numpy()
+        metrics_out = dict()
+        fpr, tpr, thresholds = metrics.roc_curve(y_true, y_pred, pos_label=1)
+        metrics_out["auc"] = metrics.auc(fpr, tpr)
+        metrics_out["precision"], metrics_out["recall"], metrics_out["fscore"], _ = metrics.precision_recall_fscore_support(y_true, y_pred, average='binary', zero_division=1   )
+        return metrics_out
+
+
+def get_sample_weights(labels):
+    class_sample_count = torch.tensor([(labels == t).sum() for t in torch.unique(labels, sorted=True)])
+    weight = 1. / class_sample_count.float()
+    sample_weights = torch.tensor([weight[t] for t in labels])
+    return sample_weights

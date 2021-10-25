@@ -47,7 +47,7 @@ conda activate musym
 ### Run a experiment
 
 ```shell
-cd src/models/rgcn-homo
+cd src/models/rgcn_homo
 python entity_classify.py -d cora --gpu 0
 ```
 
