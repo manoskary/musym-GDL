@@ -504,10 +504,10 @@ class NonDglSAGELayer(nn.Module):
 
     def forward(self, adj, h):
         # using GCN aggregator
-        x = adj @ h
-        x = self.linear_neigh(x)
-        x = x + self.bias
-        return x
+        y = adj @ h
+        y = self.linear_neigh(y)
+        y = y + self.bias
+        return y
 
 class NonDglSAGE(nn.Module):
     def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation, dropout):
@@ -654,4 +654,3 @@ class Gaug(nn.Module):
             # TODO prediction may replace values because Edge dataloder repeats nodes, maybe take average or addition.
             y[sub_g.ndata['idx']] = h.cpu()
         return y
-

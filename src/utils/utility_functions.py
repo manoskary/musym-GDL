@@ -49,7 +49,7 @@ def compute_metrics(y_pred, y_true):
         metrics_out = dict()
         fpr, tpr, thresholds = metrics.roc_curve(y_true, y_pred, pos_label=1)
         metrics_out["auc"] = metrics.auc(fpr, tpr)
-        metrics_out["precision"], metrics_out["recall"], metrics_out["fscore"], _ = metrics.precision_recall_fscore_support(y_true, y_pred, average='binary', zero_division=1   )
+        metrics_out["precision"], metrics_out["recall"], metrics_out["fscore"], _ = metrics.precision_recall_fscore_support(y_true, y_pred, average='micro', zero_division=1   )
         return metrics_out
 
 

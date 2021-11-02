@@ -9,6 +9,8 @@ import argparse
 import numpy as np
 import time
 import os, sys
+
+import torch
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
@@ -112,19 +114,18 @@ def run(config, device, data):
         fanouts = config["fan_out"]
 
 
-    graph_sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
+    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
 
     # Balance Label Sampler
     label_weights = get_sample_weights(train_labels)
-    sampler = th.utils.data.sampler.WeightedRandomSampler(label_weights, len(label_weights))
-    # TODO create a new dataloader with weighted sampling or review random walk DRNE
+    sampler = th.utils.data.sampler.WeightedRandomSampler(label_weights, len(label_weights), replacement=False)
     dataloader = dgl.dataloading.NodeDataLoader(
         train_g,
         train_nid,
         graph_sampler,
         device=dataloader_device,
         batch_size=config["batch_size"],
-        # shuffle=True,
+        shuffle=False,
         drop_last=False,
         num_workers=config["num_workers"],
         sampler=sampler
@@ -151,18 +152,20 @@ def run(config, device, data):
             # Load the input features as well as output labels
             batch_inputs, batch_labels = load_subtensor(train_nfeat, train_labels,
                                                         seeds, input_nodes, device)
-            blocks = [block.int().to(device) for block in blocks]
 
-            # Compute loss and prediction
-            batch_pred = model(blocks, batch_inputs)
-            loss = criterion(batch_pred, batch_labels)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            if len(torch.nonzero(batch_labels)) > 5:
+                blocks = [block.int().to(device) for block in blocks]
 
-            iter_tput.append(len(seeds) / (time.time() - tic_step + 1e-8))
+                # Compute loss and prediction
+                batch_pred = model(blocks, batch_inputs)
+                loss = criterion(batch_pred, batch_labels)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-        acc = compute_acc(batch_pred, batch_labels)
+                iter_tput.append(len(seeds) / (time.time() - tic_step + 1e-8))
+                acc = compute_acc(batch_pred, batch_labels)
+
         gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
         print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MB'.format(
                 epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
