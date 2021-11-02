@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
+import copy
 
 
 class SageLayer(nn.Module):
@@ -45,9 +46,10 @@ class SageLayer(nn.Module):
 
         nodes	 -- list of nodes
         """
-        batch_ids, neigh_ids = block
-        nfeats = node_features[batch_ids]
-        neigh_features = [node_features[nids] for nids in neigh_ids]
+        if isinstance(block, tuple):
+            src_idx, dst_idx = block
+        nfeats = node_features[:src_idx]
+        neigh_features = [node_features[nids] for nids in dst_idx]
         aggregate_feats = self.aggregate(neigh_features)
         if not self.gcn:
             combined = torch.cat([nfeats, aggregate_feats], dim=1)
@@ -85,33 +87,61 @@ class GraphSage(nn.Module):
 
 
 class MyDataset(torch.utils.data.Dataset):
-  'Characterizes a dataset for PyTorch'
-  def __init__(self, list_IDs, labels):
+    'Characterizes a dataset for PyTorch'
+    def __init__(self, graph, labels, node_features, num_layers):
         'Initialization'
+        self.g = graph
+        self.adj = graph.adj().to_dense()
         self.labels = labels
-        self.list_IDs = list_IDs
+        self.list_IDs = torch.tensor(range(graph.num_nodes())).type(torch.int64)
+        self.node_features = node_features
+        self.num_layers = num_layers
 
-  def __len__(self):
+
+    def __len__(self):
         'Denotes the total number of samples'
         return len(self.list_IDs)
 
-  def __getitem__(self, index):
+    def __getitem__(self, index):
         'Generates one sample of data'
         # Select sample
         ID = self.list_IDs[index]
-
         # Load data and get label
-        X = ID
+        blocks, batch_feats = self.get_blocks(ID)
         y = self.labels[ID]
+        return blocks, batch_feats, y
 
-        return X, y
+    def get_blocks(self, batch_nids):
+        blocks = list()
+        b_idx = copy.copy(batch_nids)
+        for i in range(self.num_layers - 1):
+           # Neighbors for every layer
+            neighs = [torch.squeeze(torch.nonzero(row), dim=1) for row in self.adj[b_idx]]
+            inc = 0
+            lens = torch.zeros((len(neighs), 2)).type(torch.int32)
+            for j, neigh in enumerate(neighs):
+                lens[j][0] = inc
+                lens[j][1] = inc + len(neigh)
+                inc += len(neigh)
+
+            src_nodes = len(b_idx)
+            nidx, revidx = torch.unique(torch.cat(neighs), return_inverse=True)
+
+            blocks.append((src_nodes, [revidx[lens[i, 0]: lens[i, 1]] for i in range(len(neighs))]))
+            idx = [batch_nids, nidx]
+            b_idx = torch.cat(idx)
+            h = self.node_features[b_idx]
+        return blocks, h
 
 def fetch_neigh_features(batch_nids, adj, node_features, num_layers):
     blocks = list()
     inc = 0
     idx = list()
     layer = list()
+    b_idx = copy.copy(batch_nids)
+    # For every layer
     for i in range(num_layers):
+        # Neighbors for every layer
         neighs = [torch.squeeze(torch.nonzero(row), dim=1) for row in adj[batch_nids]]
         src_pos = (inc, len(batch_nids)+inc)
 
@@ -138,6 +168,7 @@ def fetch_neigh_features(batch_nids, adj, node_features, num_layers):
     neigh_features = node_features[neigh_ids]
     return blocks, neigh_features
 
+
 def get_sample_weights(labels):
     class_sample_count = torch.tensor([(labels == t).sum() for t in torch.unique(labels, sorted=True)])
     weight = 1. / class_sample_count.float()
@@ -150,12 +181,11 @@ def main(config):
     # --------------- Dataset Loading -------------------------
     dataset = dgl.data.CoraGraphDataset()
     g = dataset[0]
-    adj = g.adj().to_dense()
     n_classes = dataset.num_classes
 
     in_feats = g.ndata["feat"].shape[1]
-    dataset = MyDataset(torch.tensor(range(g.num_nodes())).type(torch.int64), g.ndata["label"])
     node_features = g.ndata["feat"]
+    dataset = MyDataset(g, g.ndata["label"], node_features, num_layers=config["num_layers"])
 
     # --------------- Transfer to Devise ---------------
     use_cuda = config["gpu"] >= 0 and torch.cuda.is_available()
@@ -178,7 +208,7 @@ def main(config):
     )
 
     # Define model and optimizer
-    model = GraphSage(in_feats=in_feats, n_hidden=16, n_classes=n_classes, n_layers=2, activation=F.relu, dropout=0.5)
+    model = GraphSage(in_feats=in_feats, n_hidden=16, n_classes=n_classes, n_layers=config["num_layers"], activation=F.relu, dropout=0.5)
     model = model.to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters())
@@ -186,13 +216,10 @@ def main(config):
     # Training loop
     for epoch in range(config["num_epochs"]):
         # Loop over the dataloader to sample Node Ids
-        for step, (batch_nids, batch_labels) in enumerate(tqdm(dataloader, position=0, leave=True)):
+        for step, (blocks, neigh_features, batch_labels) in enumerate(tqdm(dataloader, position=0, leave=True)):
             # Fetch the neighbor features
             # TODO eventually every nodeID should have a list of k distant neighbors for every kth layer
-            # TODO we can add sampling max(m) neighbors instead of fetching all of them similar to dgl.samplers
-            blocks, neigh_features = fetch_neigh_features(batch_nids, adj, node_features, 2)
-            # batch_features = node_features[batch_nids]
-            # neigh_features = [node_features[torch.nonzero(row)] for row in adj[batch_nids]]
+            # TODO we can add sampling max(m) neighbors instead of fetching all of them similar to dgl.samplers/
             # Predict and loss
             # TODO move features to GPU option
             batch_pred = model(blocks, neigh_features)
@@ -214,7 +241,8 @@ if __name__ == '__main__':
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument('-d', '--dataset', type=str, default='toy01')
     argparser.add_argument('--num-epochs', type=int, default=20)
-    argparser.add_argument('--batch-size', type=int, default=20)
+    argparser.add_argument('--num-layers', type=int, default=2)
+    argparser.add_argument('--batch-size', type=int, default=256)
 
     args = argparser.parse_args()
     config = vars(args)
