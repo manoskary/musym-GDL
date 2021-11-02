@@ -12,7 +12,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 import copy
+import os, sys
 
+PACKAGE_PARENT = '..'
+SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
+sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
+
+from utils import *
 
 class SageLayer(nn.Module):
     """
@@ -88,14 +94,15 @@ class GraphSage(nn.Module):
 
 class MyDataset(torch.utils.data.Dataset):
     'Characterizes a dataset for PyTorch'
-    def __init__(self, graph, labels, node_features, num_layers):
+    def __init__(self, graph, labels, node_features, num_layers, k=5):
         'Initialization'
         self.g = graph
-        self.adj = graph.adj().to_dense()
+        self.adj = graph.adj().to_dense().type(torch.uint8)
         self.labels = labels
         self.list_IDs = torch.tensor(range(graph.num_nodes())).type(torch.int64)
         self.node_features = node_features
         self.num_layers = num_layers
+        self.k = k
 
 
     def __len__(self):
@@ -107,31 +114,22 @@ class MyDataset(torch.utils.data.Dataset):
         # Select sample
         ID = self.list_IDs[index]
         # Load data and get label
-        blocks, batch_feats = self.get_blocks(ID)
+        # blocks, batch_feats = self.get_blocks(ID)
+        X = ID
         y = self.labels[ID]
-        return blocks, batch_feats, y
+        # return blocks, batch_feats, y
+        return X, y
 
-    def get_blocks(self, batch_nids):
-        blocks = list()
-        b_idx = copy.copy(batch_nids)
-        for i in range(self.num_layers - 1):
-           # Neighbors for every layer
-            neighs = [torch.squeeze(torch.nonzero(row), dim=1) for row in self.adj[b_idx]]
-            inc = 0
-            lens = torch.zeros((len(neighs), 2)).type(torch.int32)
-            for j, neigh in enumerate(neighs):
-                lens[j][0] = inc
-                lens[j][1] = inc + len(neigh)
-                inc += len(neigh)
-
-            src_nodes = len(b_idx)
-            nidx, revidx = torch.unique(torch.cat(neighs), return_inverse=True)
-
-            blocks.append((src_nodes, [revidx[lens[i, 0]: lens[i, 1]] for i in range(len(neighs))]))
-            idx = [batch_nids, nidx]
-            b_idx = torch.cat(idx)
-            h = self.node_features[b_idx]
-        return blocks, h
+    # def get_blocks(self, idx):
+    #     blocks = list()
+    #     b_idx = copy.copy(idx)
+    #     for i in range(self.num_layers - 1):
+    #         # Neighbors for every layer
+    #         neighs = torch.tensor(random.choices(torch.squeeze(torch.nonzero(self.adj[b_idx]), dim=1), k=self.k))
+    #
+    #         b_idx = torch.cat([torch.tensor([idx]), neighs])
+    #         h = self.node_features[b_idx]
+    #     return blocks, h
 
 def fetch_neigh_features(batch_nids, adj, node_features, num_layers):
     blocks = list()
@@ -175,14 +173,39 @@ def get_sample_weights(labels):
     sample_weights = torch.tensor([weight[t] for t in labels])
     return sample_weights
 
+
+def get_blocks(batch_nids, adj, node_features, num_layers):
+    blocks = list()
+    b_idx = copy.copy(batch_nids)
+    for i in range(num_layers - 1):
+       # Neighbors for every layer
+        neighs = [torch.squeeze(torch.nonzero(row), dim=1) for row in adj[b_idx]]
+        inc = 0
+        lens = torch.zeros((len(neighs), 2)).type(torch.int32)
+        for j, neigh in enumerate(neighs):
+            lens[j][0] = inc
+            lens[j][1] = inc + len(neigh)
+            inc += len(neigh)
+
+        src_nodes = len(b_idx)
+        nidx, revidx = torch.unique(torch.cat(neighs), return_inverse=True)
+
+        blocks.append((src_nodes, [revidx[lens[i, 0]: lens[i, 1]] for i in range(len(neighs))]))
+        idx = [batch_nids, nidx]
+        b_idx = torch.cat(idx)
+        h = node_features[b_idx]
+    return blocks, h
+
 def main(config):
     """Pass parameters to create experiment"""
 
     # --------------- Dataset Loading -------------------------
     dataset = dgl.data.CoraGraphDataset()
-    g = dataset[0]
     n_classes = dataset.num_classes
+    g = dataset[0]
+    # g, n_classes = load_and_save("cad_basis_homo", "./data/")
 
+    adj = g.adj().to_dense().type(torch.uint8)
     in_feats = g.ndata["feat"].shape[1]
     node_features = g.ndata["feat"]
     dataset = MyDataset(g, g.ndata["label"], node_features, num_layers=config["num_layers"])
@@ -216,8 +239,10 @@ def main(config):
     # Training loop
     for epoch in range(config["num_epochs"]):
         # Loop over the dataloader to sample Node Ids
-        for step, (blocks, neigh_features, batch_labels) in enumerate(tqdm(dataloader, position=0, leave=True)):
+        # for step, (blocks, neigh_features, batch_labels) in enumerate(tqdm(dataloader, position=0, leave=True)):
+        for step, (batch_nids, batch_labels) in enumerate(tqdm(dataloader, position=0, leave=True)):
             # Fetch the neighbor features
+            blocks, neigh_features = get_blocks(batch_nids, adj, node_features, config["num_layers"])
             # TODO eventually every nodeID should have a list of k distant neighbors for every kth layer
             # TODO we can add sampling max(m) neighbors instead of fetching all of them similar to dgl.samplers/
             # Predict and loss
