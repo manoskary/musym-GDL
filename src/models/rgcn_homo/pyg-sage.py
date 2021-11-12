@@ -1,10 +1,10 @@
-from pytorch_geometric.data import CoraFull
-
 import torch
 import numpy as np
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import remove_self_loops, add_self_loops
-from torch_geometric.nn import GraphConv, TopKPooling, GatedGraphConv
+from torch_geometric.nn import TopKPooling
+import torch_geometric.transforms as T
+from torch_geometric.datasets import Planetoid
 from torch_geometric.nn import global_mean_pool as gap, global_max_pool as gmp
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
@@ -40,7 +40,7 @@ class SAGEConv(MessagePassing):
 
 class SAGE(torch.nn.Module):
     def __init__(self, in_feats, num_hidden, num_classes, num_layers=1):
-        super(Net, self).__init__()
+        super(SAGE, self).__init__()
 
         self.layers = torch.nn.ModuleList()
         self.pool_layers = torch.nn.ModuleList()
@@ -104,24 +104,49 @@ def evaluate(model, loader):
 
 
 
-def main():
+def main(config):
+    dataset = 'Cora'
+    transform = T.Compose([
+        T.RandomNodeSplit(num_val=500, num_test=500),
+        T.TargetIndegree(),
+    ])
 
+    dataset = Planetoid(config["data_path"], dataset, transform=transform)
+    data = dataset[0]
 
-    train_dataset = CoraFull()
-    batch_size = 1024
+    batch_size = config["batch_size"]
     train_loader = DataLoader(train_dataset, batch_size=batch_size)
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
 
-    device = torch.device('cuda')
-    model = Net().to(device)
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device("cpu")
+    model = SAGE(dataset.num_features, config["num_hidden"], dataset.num_classes, config["num_layers"]).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
-    criterion = torch.nn.BCELoss()
+    criterion = torch.nn.CrossEntropyLoss()
 
-    for epoch in range(1):
+    for epoch in range(config["num_epochs"]):
         loss = train(model, train_loader, optimizer, criterion, len(train_dataset), device)
         train_acc = evaluate(model, train_loader)
         val_acc = evaluate(model, val_loader)
         test_acc = evaluate(model, test_loader)
         print('Epoch: {:03d}, Loss: {:.5f}, Train Auc: {:.5f}, Val Auc: {:.5f}, Test Auc: {:.5f}'.
               format(epoch, loss, train_acc, val_acc, test_acc))
+
+
+if __name__ == '__main__':
+    import os
+    import argparse
+    argparser = argparse.ArgumentParser(description='Weighted Sampling SAGE')
+    argparser.add_argument('--gpu', type=int, default=-1,
+                           help="GPU device ID. Use -1 for CPU training")
+    argparser.add_argument('-d', '--dataset', type=str, default='toy01')
+    argparser.add_argument('--num-epochs', type=int, default=20)
+    argparser.add_argument('--num-hidden', type=int, default=128)
+    argparser.add_argument('--num-layers', type=int, default=2)
+    argparser.add_argument('--batch-size', type=int, default=512)
+
+
+    args = argparser.parse_args()
+    config = vars(args)
+    config["data_path"] = "./data/"
+    main(config)
