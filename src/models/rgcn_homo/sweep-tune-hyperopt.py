@@ -1,12 +1,10 @@
 import os.path
 
-from gaug_test import main as main_gaug
+from src.models.rgcn_homo.GAUG.gaug_test import main as main_gaug
 from entity_classify_mp import main as main_mp
 from entity_classify import main as main_simple
 import argparse
 from ray import tune
-from ray.tune.schedulers import AsyncHyperBandScheduler
-from ray.tune.suggest.hyperopt import HyperOptSearch
 import wandb
 
 if __name__ == '__main__':

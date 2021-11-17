@@ -96,13 +96,16 @@ class MyDataset(torch.utils.data.Dataset):
     'Characterizes a dataset for PyTorch'
     def __init__(self, graph, labels, node_features, num_layers, k=5):
         'Initialization'
-        self.g = graph
-        self.adj = graph.adj().to_dense().type(torch.uint8)
+        self.adj = graph.adj()
         self.labels = labels
         self.list_IDs = torch.tensor(range(graph.num_nodes())).type(torch.int64)
         self.node_features = node_features
         self.num_layers = num_layers
-        self.k = k
+        self.neigh_feats = torch.zeros(num_layers, node_features.shape[0], node_features.shape[1])
+        self.neigh_feats[0] = torch.spmm(adj, node_features)
+        self.indices = self.adj.coalesce().indices()
+        for i in range(1, num_layers-1):
+            self.neigh_feats[i] = torch.spmm(adj, neigh_feats[i-1])
 
 
     def __len__(self):
@@ -114,22 +117,16 @@ class MyDataset(torch.utils.data.Dataset):
         # Select sample
         ID = self.list_IDs[index]
         # Load data and get label
-        # blocks, batch_feats = self.get_blocks(ID)
+        for i in range(num_layers - 1):
+            neighs[i] = torch.where(self.indices[0, :] == ID)[0]
+        blocks = [num_layers ]
         X = ID
         y = self.labels[ID]
         # return blocks, batch_feats, y
         return X, y
 
-    # def get_blocks(self, idx):
-    #     blocks = list()
-    #     b_idx = copy.copy(idx)
-    #     for i in range(self.num_layers - 1):
-    #         # Neighbors for every layer
-    #         neighs = torch.tensor(random.choices(torch.squeeze(torch.nonzero(self.adj[b_idx]), dim=1), k=self.k))
-    #
-    #         b_idx = torch.cat([torch.tensor([idx]), neighs])
-    #         h = self.node_features[b_idx]
-    #     return blocks, h
+    def get_blocks(self, index):
+        neighs = torch.nonzero(adj[])
 
 def fetch_neigh_features(batch_nids, adj, node_features, num_layers):
     blocks = list()

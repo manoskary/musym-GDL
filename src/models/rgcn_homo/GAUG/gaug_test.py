@@ -227,7 +227,7 @@ if __name__ == '__main__':
     argparser.add_argument("--alpha", type=float, default=1)
     argparser.add_argument("--beta", type=float, default=0.5)
     argparser.add_argument("--temperature", type=float, default=0.2)
-    argparser.add_argument("--data-dir", type=str, default=os.path.abspath("./data/"))
+    argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
     argparser.add_argument("--unlog", action="store_true", help="Unbinds wandb.")
     args = argparser.parse_args()
 

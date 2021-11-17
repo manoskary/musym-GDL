@@ -12,7 +12,6 @@ import torch.optim as optim
 import math
 import torch.nn.functional as F
 import dgl
-from models import NonDglSAGE
 from imblearn.over_sampling import ADASYN, SMOTE
 import argparse
 
@@ -25,15 +24,24 @@ class SageConv(nn.Module):
 		self.reset_parameters()
 
 	def reset_parameters(self):
-		nn.init.normal_(self.linear.weight)
+		nn.init.xavier_uniform_(self.linear.weight, gain=nn.init.calculate_gain('relu'))
 		if self.linear.bias is not None:
 			nn.init.constant_(self.linear.bias, 0.)
 
 	def forward(self, adj, features):
 		"""
-        Args:
-            adj: can be sparse or dense matrix.
-        """
+
+		Parameters
+		----------
+		adj : torch sparse or dense
+			Can be Dense or Sparse Adjacency Matrix.
+		features : torch.tensor
+			A float tensor with the node attributes.
+		Returns
+		-------
+		combined : torch.tensor
+			An embeded feature tensor.
+		"""
 		if not isinstance(adj, torch.sparse.FloatTensor):
 			if len(adj.shape) == 3:
 				neigh_feature = torch.bmm(adj, features) / (adj.sum(dim=1).reshape((adj.shape[0], adj.shape[1], -1)) + 1)
@@ -47,6 +55,7 @@ class SageConv(nn.Module):
 		data = torch.cat([features, neigh_feature], dim=-1)
 		combined = self.linear(data)
 		return combined
+
 
 class SageEncoder(nn.Module):
 	def __init__(self, in_feats, n_hidden, n_layers, activation=F.relu, dropout=0.1):
@@ -68,6 +77,7 @@ class SageEncoder(nn.Module):
 			h = self.dropout(h)
 		return h
 
+
 class SageClassifier(nn.Module):
 	def __init__(self, in_feats, n_hidden, n_classes, n_layers=1, activation=F.relu, dropout=0.1):
 		super(SageClassifier, self).__init__()
@@ -76,10 +86,16 @@ class SageClassifier(nn.Module):
 		self.n_layers = n_layers
 		self.activation = activation
 		self.dropout = nn.Dropout(dropout)
+		self.clf = nn.Linear(n_hidden, n_classes)
 		self.layers = nn.ModuleList()
 		self.layers.append(SageConv(self.in_feats, self.n_hidden))
 		for i in range(n_layers - 1):
 			self.layers.append(SageConv(self.n_hidden, self.n_hidden))
+
+	def reset_parameters(self):
+		nn.init.xavier_uniform_(self.clf.weight, gain=nn.init.calculate_gain('relu'))
+		if self.clf.bias is not None:
+			nn.init.constant_(self.clf.bias, 0.)
 
 	def forward(self, adj, inputs):
 		h = inputs
@@ -88,6 +104,7 @@ class SageClassifier(nn.Module):
 			if l != self.n_layers-1:
 				h = self.activation(h)
 				h = self.dropout(h)
+		h = self.clf(h)
 		return h
 
 
@@ -102,10 +119,11 @@ class SageDecoder(nn.Module):
 		stdv = 1. / math.sqrt(self.de_weight.size(1))
 		self.de_weight.data.uniform_(-stdv, stdv)
 
-	def forward(self, node_embed):
-		combine = F.linear(node_embed, self.de_weight)
-		adj_out = torch.sigmoid(torch.mm(combine, combine.transpose(-1, -2)))
+	def forward(self, encoded_features):
+		out = F.linear(encoded_features, self.de_weight)
+		adj_out = torch.sigmoid(torch.mm(out, out.transpose(-1, -2)))
 		return adj_out
+
 
 class EdgeLoss(nn.Module):
 	def __init__(self):
@@ -144,9 +162,9 @@ def main(config):
 		dataloader_device = device
 
 	# Define model and optimizer
-	encoder = SageEncoder(in_feats, 64, config["num_layers"])
-	decoder = SageDecoder(64)
-	classifier = SageClassifier(64, 64, n_classes, config["num_layers"])
+	encoder = SageEncoder(in_feats, config["num_hidden"], config["num_layers"])
+	decoder = SageDecoder(config["num_hidden"])
+	classifier = SageClassifier(config["num_hidden"], config["num_hidden"], n_classes, config["num_layers"]-1)
 	dloss = EdgeLoss()
 	criterion = nn.CrossEntropyLoss()
 	optimizer_en = optim.Adam(encoder.parameters(), lr=0.001, weight_decay=5e-4)
@@ -180,14 +198,16 @@ def main(config):
 		if epoch%100 == 0 and epoch != 0:
 			print('Epoch {:04d} | Loss {:.4f} | Accuracy {:.4f} |'.format(epoch, loss.item(), acc))
 
+
 if __name__ == '__main__':
 	argparser = argparse.ArgumentParser(description='Weighted Sampling SAGE')
 	argparser.add_argument('--gpu', type=int, default=-1,
 						   help="GPU device ID. Use -1 for CPU training")
 	argparser.add_argument('-d', '--dataset', type=str, default='toy01')
-	argparser.add_argument('--num-epochs', type=int, default=1000)
-	argparser.add_argument('--batch-size', type=int, default=1024)
+	argparser.add_argument('--num-epochs', type=int, default=2000)
+	# argparser.add_argument('--batch-size', type=int, default=1024)
 	argparser.add_argument("--num-layers", type=int, default=1)
+	argparser.add_argument("--num-hidden", type=int, default=64)
 	argparser.add_argument("--lambda", type=float, default=1e-4)
 
 	args = argparser.parse_args()
