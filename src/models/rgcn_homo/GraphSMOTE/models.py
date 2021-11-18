@@ -3,6 +3,94 @@ import torch.nn as nn
 import math
 import torch.nn.functional as F
 import dgl.nn as dglnn
+from random import randint
+import random
+
+
+class SMOTE(object):
+	"""
+	Minority Sampling with SMOTE.
+	"""
+	def __init__(self, distance='euclidian', dims=512, k=5):
+		super(SMOTE, self).__init__()
+		self.newindex = 0
+		self.k = k
+		self.dims = dims
+		self.distance_measure = distance
+
+	def populate(self, N, i, nnarray, min_samples, k):
+		while N:
+			nn = randint(0, k - 2)
+
+			diff = min_samples[nnarray[nn]] - min_samples[i]
+			gap = random.uniform(0, 1)
+
+			self.synthetic_arr[self.newindex, :] = min_samples[i] + gap * diff
+
+			self.newindex += 1
+
+			N -= 1
+
+	def k_neighbors(self, euclid_distance, k):
+		nearest_idx = torch.zeros((euclid_distance.shape[0], euclid_distance.shape[0]), dtype=torch.int64)
+
+		idxs = torch.argsort(euclid_distance, dim=1)
+		nearest_idx[:, :] = idxs
+
+		return nearest_idx[:, 1:k]
+
+	def find_k(self, X, k):
+		euclid_distance = torch.zeros((X.shape[0], X.shape[0]), dtype=torch.float32)
+
+		for i in range(len(X)):
+			dif = (X - X[i]) ** 2
+			dist = torch.sqrt(dif.sum(axis=1))
+			euclid_distance[i] = dist
+
+		return self.k_neighbors(euclid_distance, k)
+
+	def generate(self, min_samples, N, k):
+		"""
+		Returns (N/100) * n_minority_samples synthetic minority samples.
+		Parameters
+		----------
+		min_samples : Numpy_array-like, shape = [n_minority_samples, n_features]
+			Holds the minority samples
+		N : percetange of new synthetic samples:
+			n_synthetic_samples = N/100 * n_minority_samples. Can be < 100.
+		k : int. Number of nearest neighbours.
+		Returns
+		-------
+		S : Synthetic samples. array,
+			shape = [(N/100) * n_minority_samples, n_features].
+        """
+		T = min_samples.shape[0]
+		self.synthetic_arr = torch.zeros(int(N / 100) * T, self.dims)
+		N = int(N / 100)
+		if self.distance_measure == 'euclidian':
+			indices = self.find_k(min_samples, k)
+		for i in range(indices.shape[0]):
+			self.populate(N, i, indices[i], min_samples, k)
+		self.newindex = 0
+		return self.synthetic_arr
+
+	def fit_generate(self, X, y):
+		# get occurence of each class
+		occ = torch.eye(int(y.max() + 1), int(y.max() + 1))[y].sum(axis=0)
+		# get the dominant class
+		dominant_class = torch.argmax(occ)
+		# get occurence of the dominant class
+		n_occ = int(occ[dominant_class].item())
+		for i in range(len(occ)):
+			if i != dominant_class:
+				# calculate the amount of synthetic data to generate
+				N = (n_occ - occ[i]) * 100 / occ[i]
+				candidates = X[y == i]
+				xs = self.generate(candidates, N, self.k)
+				X = torch.cat((X, xs))
+				ys = torch.ones(xs.shape[0]) * i
+				y = torch.cat((y, ys))
+		return X, y
 
 # Graphsage layer
 class SageConvLayer(nn.Module):
@@ -157,3 +245,45 @@ class Encoder(nn.Module):
         return adj
 
 
+class GraphSMOTE(nn.Module):
+	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1):
+		super(GraphSMOTE, self).__init__()
+		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
+		self.decoder = SageDecoder(n_hidden, dropout)
+		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers, activation, dropout)
+		self.smote = SMOTE(dims=n_hidden, k=5)
+		self.decoder_loss = EdgeLoss()
+
+	def forward(self, blocks, input_feats, adj, batch_labels):
+		x = input_feats
+		x = self.encoder(blocks, x)
+		x, y = self.smote.fit_generate(x, batch_labels)
+		pred_adj = self.decoder(x)
+		loss = self.decoder_loss(pred_adj, adj)
+		pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+		x = self.classifier(pred_adj, x)
+		return x, y.type(torch.long), loss
+
+	#TODO fix that.
+	def inference(self, g, device, batch_size, num_workers=0):
+		g.ndata['idx'] = th.tensor(range(g.number_of_nodes()))
+		node_features = g.ndata['feat']
+		sampler = dgl.dataloading.MultiLayerFullNeighborSampler(self.n_layers)
+		dataloader = dgl.dataloading.EdgeDataLoader(
+			g,
+			th.arange(g.number_of_edges()),
+			sampler,
+			batch_size=batch_size,
+			shuffle=False,
+			drop_last=False,
+			num_workers=num_workers)
+		y = th.zeros(g.num_nodes(), self.n_classes)
+		for input_nodes, sub_g, blocks in tqdm.tqdm(dataloader, position=0, leave=True):
+			blocks = [block.int().to(device) for block in blocks]
+			batch_inputs = node_features[input_nodes].to(device)
+			feat_inputs = sub_g.ndata["feat"].to(device)
+			adj = sub_g.adj(ctx=device).to_dense()
+			h = self.forward(adj, blocks, batch_inputs, feat_inputs)
+			# TODO prediction may replace values because Edge dataloder repeats nodes, maybe take average or addition.
+			y[sub_g.ndata['idx']] = h.cpu()
+		return y
