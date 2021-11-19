@@ -1,17 +1,14 @@
 import os
-import sys
 import time
 import torch
 import dgl
 import numpy as np
 from models import *
 import tqdm
-import torch.optim as optim
 from models import GraphSMOTE
+from sklearn.metrics import roc_auc_score
 
-PACKAGE_PARENT = '..'
-SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
-sys.path.append(os.path.normpath(os.path.join(os.path.join(SCRIPT_DIR, PACKAGE_PARENT), PACKAGE_PARENT)))
+
 
 
 def main(args):
@@ -31,19 +28,17 @@ def main(args):
     n_classes = dataset.num_classes
 
     # --------------- Manually build train masks ------------------------
-    train_mask = val_mask = np.zeros(g.num_nodes())
+    train_mask = val_mask = test_mask = torch.zeros(g.num_nodes())
 
-    train_mask[ : int(0.7*g.num_nodes())] = 1
-    np.random.shuffle(train_mask)
-    train_mask = torch.tensor(train_mask)
+    rand_inds = torch.tensor(range(g.num_nodes()))
+    np.random.shuffle(rand_inds)
+    train_inds = torch.tensor(rand_inds[:int(0.7*g.num_nodes())])
+    val_inds = torch.tensor(rand_inds[int(0.7 * g.num_nodes()) : int(0.8 * g.num_nodes())])
+    test_inds = torch.tensor(rand_inds[int(0.8*g.num_nodes()):])
 
-    val_mask[: int(0.4 * g.num_nodes())] = 1
-    np.random.shuffle(train_mask)
-    val_mask = test_mask = torch.tensor(val_mask)
-
-    # train_mask = g.ndata['train_mask']
-    # test_mask = g.ndata['test_mask']
-    # val_mask = g.ndata['val_mask']
+    train_mask[train_inds] = 1
+    val_mask[val_inds] = 1
+    test_mask[test_inds] = 1
 
     if config["init_eweights"]:
         w = torch.empty(g.num_edges())
@@ -98,7 +93,8 @@ def main(args):
     if use_cuda:
         model = model.cuda()
 
-    optim = torch.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
     criterion = nn.CrossEntropyLoss()
 
     # training loop
@@ -107,6 +103,8 @@ def main(args):
     for epoch in range(config["num_epochs"]):
         model.train()
         t0 = time.time()
+        train_acc = 0
+        train_roc = 0
         for step, (input_nodes, sub_g, blocks) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True)):
             batch_inputs = node_features[input_nodes].to(device)
             # batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"]).to(device)
@@ -127,30 +125,32 @@ def main(args):
             pred, upsampl_lab, embed_loss = model(blocks, batch_inputs, adj, batch_labels)
             loss = criterion(pred, upsampl_lab) + embed_loss * 0.000001
             acc = (torch.argmax(pred, dim=1) == upsampl_lab).float().sum() / len(pred)
-            optim.zero_grad()
+            optimizer.zero_grad()
             loss.backward()
-            optim.step()
+            optimizer.step()
             t1 = time.time()
+            train_acc += acc
         if epoch > 5:
             dur.append(t1 - t0)
         with torch.no_grad():
-            train_acc = torch.sum(torch.argmax(pred[:len(batch_labels)], dim=1) == batch_labels).item() / batch_labels.shape[0]
+
+            # train_acc = torch.sum(torch.argmax(pred[:len(batch_labels)], dim=1) == batch_labels).item() / batch_labels.shape[0]
             pred = model.inference(val_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
+            scheduler.step(val_acc)
             # print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Time: {:.4f} |".format(epoch, acc, loss, np.average(dur)))
-        print(
-            "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
-            format(epoch, train_acc, loss.item(), val_acc, val_loss, np.average(dur)))
-    #     if epoch%5==0:
-    #         model.eval()
-    #         with torch.no_grad():
-    #             pred = model.inference(test_g, device=device, batch_size=config["batch_size"],
-    #                                    num_workers=config["num_workers"])
-    #             test_loss = F.cross_entropy(pred, test_labels)
-    #             test_acc = (torch.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
-    #         print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
-    # print()
+        print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Train Auc-Roc {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
+            format(epoch, train_acc/(step+1), loss.item(), train_roc, val_acc, val_loss, np.average(dur)))
+        if epoch%5==0:
+            model.eval()
+            with torch.no_grad():
+                pred = model.inference(test_g, device=device, batch_size=config["batch_size"],
+                                       num_workers=config["num_workers"])
+                test_loss = F.cross_entropy(pred, test_labels)
+                test_acc = (torch.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
+            print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
+    print()
 
 
     print()
