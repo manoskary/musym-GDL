@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 import math
+from tqdm import tqdm
 import torch.nn.functional as F
 import dgl.nn as dglnn
 from random import randint
 import random
-
+import dgl
 
 class SMOTE(object):
 	"""
@@ -241,13 +242,15 @@ class Encoder(nn.Module):
 
     def decode(self, h):
         h = self.dropout(h)
-        adj = th.matmul(h, h.t())
+        adj = torch.matmul(h, h.t())
         return adj
 
 
 class GraphSMOTE(nn.Module):
 	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1):
 		super(GraphSMOTE, self).__init__()
+		self.n_layers = n_layers
+		self.n_classes = n_classes
 		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
 		self.decoder = SageDecoder(n_hidden, dropout)
 		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers, activation, dropout)
@@ -266,24 +269,32 @@ class GraphSMOTE(nn.Module):
 
 	#TODO fix that.
 	def inference(self, g, device, batch_size, num_workers=0):
-		g.ndata['idx'] = th.tensor(range(g.number_of_nodes()))
+		g.ndata['idx'] = torch.tensor(range(g.number_of_nodes()))
 		node_features = g.ndata['feat']
+		labels = g.ndata["label"]
 		sampler = dgl.dataloading.MultiLayerFullNeighborSampler(self.n_layers)
 		dataloader = dgl.dataloading.EdgeDataLoader(
 			g,
-			th.arange(g.number_of_edges()),
+			torch.arange(g.number_of_edges()),
 			sampler,
 			batch_size=batch_size,
 			shuffle=False,
 			drop_last=False,
 			num_workers=num_workers)
-		y = th.zeros(g.num_nodes(), self.n_classes)
-		for input_nodes, sub_g, blocks in tqdm.tqdm(dataloader, position=0, leave=True):
+		y = torch.zeros(g.num_nodes(), self.n_classes)
+
+		for input_nodes, sub_g, blocks in tqdm(dataloader, position=0, leave=True):
 			blocks = [block.int().to(device) for block in blocks]
 			batch_inputs = node_features[input_nodes].to(device)
-			feat_inputs = sub_g.ndata["feat"].to(device)
+			batch_labels = labels[input_nodes].to(device)
+
+			# feat_inputs = sub_g.ndata["feat"].to(device)
+
 			adj = sub_g.adj(ctx=device).to_dense()
-			h = self.forward(adj, blocks, batch_inputs, feat_inputs)
+			h = self.encoder(blocks, batch_inputs)
+			pred_adj = self.decoder(h)
+			pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+			h = self.classifier(pred_adj, h)
 			# TODO prediction may replace values because Edge dataloder repeats nodes, maybe take average or addition.
-			y[sub_g.ndata['idx']] = h.cpu()
+			y[sub_g.ndata['idx']] = h.cpu()[:len(batch_labels)]
 		return y

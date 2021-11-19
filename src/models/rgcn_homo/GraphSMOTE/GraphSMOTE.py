@@ -172,7 +172,7 @@ def main(config):
 	optimizer_de = optim.Adam(decoder.parameters(), lr=0.001, weight_decay=5e-4)
 
 	# Training loop
-	node_features = g.ndata["feat"]
+	self.decoder(node_features = g.ndata["feat"]
 	labels = g.ndata["label"]
 
 	sm = SMOTE()

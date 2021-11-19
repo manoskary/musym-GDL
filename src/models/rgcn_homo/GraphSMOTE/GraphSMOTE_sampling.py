@@ -30,6 +30,17 @@ def main(args):
     g = dataset[0]
     n_classes = dataset.num_classes
 
+    # --------------- Manually build train masks ------------------------
+    train_mask = val_mask = np.zeros(g.num_nodes())
+
+    train_mask[ : int(0.7*g.num_nodes())] = 1
+    np.random.shuffle(train_mask)
+    train_mask = torch.tensor(train_mask)
+
+    val_mask[: int(0.4 * g.num_nodes())] = 1
+    np.random.shuffle(train_mask)
+    val_mask = test_mask = torch.tensor(val_mask)
+
     # train_mask = g.ndata['train_mask']
     # test_mask = g.ndata['test_mask']
     # val_mask = g.ndata['val_mask']
@@ -40,18 +51,17 @@ def main(args):
         g.edata["w"] = w
 
     # Hack to track node idx in dataloader's subgraphs.
-    # train_g = g.subgraph(torch.nonzero(train_mask)[:, 0])
-    train_g = g
+    train_g = g.subgraph(torch.nonzero(train_mask)[:, 0])
     train_g.ndata['idx'] = torch.tensor(range(train_g.number_of_nodes()))
     labels = train_g.ndata['label']
     eids = torch.arange(train_g.number_of_edges())
     node_features = train_g.ndata['feat']
 
     # Validation and Testing
-    # val_g = g.subgraph(torch.nonzero(val_mask)[:, 0])
-    # val_labels = val_g.ndata['label']
-    # test_g = g.subgraph(torch.nonzero(test_mask)[:, 0])
-    # test_labels = test_g.ndata['label']
+    val_g = g.subgraph(torch.nonzero(val_mask)[:, 0])
+    val_labels = val_g.ndata['label']
+    test_g = g.subgraph(torch.nonzero(test_mask)[:, 0])
+    test_labels = test_g.ndata['label']
 
 
 
@@ -104,7 +114,7 @@ def main(args):
             batch_labels = labels[sub_g.ndata['idx']].to(device)
             blocks = [block.int().to(device) for block in blocks]
             # The features for the loaded subgraph
-            feat_inputs = sub_g.ndata["feat"].to(device)
+            # feat_inputs = sub_g.ndata["feat"].to(device)
             # The adjacency matrix of the subgraph
             if config["init_eweights"]:
                 subgraph_shape = (sub_g.num_nodes(), sub_g.num_nodes())
@@ -121,17 +131,17 @@ def main(args):
             loss.backward()
             optim.step()
             t1 = time.time()
-        # if epoch > 5:
+        if epoch > 5:
             dur.append(t1 - t0)
-        # with torch.no_grad():
-        #     train_acc = torch.sum(torch.argmax(pred, dim=1) == batch_labels).item() / batch_labels.shape[0]
-        #     pred = model.inference(val_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
-        #     val_loss = F.cross_entropy(pred, val_labels)
-        #     val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
-            print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Time: {:.4f} |".format(epoch, acc, loss, np.average(dur)))
-    #     print(
-    #         "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
-    #         format(epoch, train_acc, loss.item(), val_acc, val_loss, np.average(dur)))
+        with torch.no_grad():
+            train_acc = torch.sum(torch.argmax(pred[:len(batch_labels)], dim=1) == batch_labels).item() / batch_labels.shape[0]
+            pred = model.inference(val_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
+            val_loss = F.cross_entropy(pred, val_labels)
+            val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
+            # print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Time: {:.4f} |".format(epoch, acc, loss, np.average(dur)))
+        print(
+            "Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
+            format(epoch, train_acc, loss.item(), val_acc, val_loss, np.average(dur)))
     #     if epoch%5==0:
     #         model.eval()
     #         with torch.no_grad():
@@ -151,7 +161,7 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=-1,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
-    argparser.add_argument('--num-epochs', type=int, default=20)
+    argparser.add_argument('--num-epochs', type=int, default=40)
     argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
     argparser.add_argument('--lr', type=float, default=1e-2)
