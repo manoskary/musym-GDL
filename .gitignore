@@ -133,7 +133,7 @@ dmypy.json
 
 data/
 artifacts/
-src/models/tests/
+musym/models/tests/
 
 
 # Logging Platforms

@@ -501,7 +501,7 @@ def get_num_gpu():
     p.join()
     return q.get(block=False)
 
-GPU_COUNT = get_num_gpu()
+GPU_COUNT = get_num_gpu() if torch.cuda.is_available() else 0
 
 def skip_if_not_4gpu():
     """skip if DGL_BENCH_DEVICE is gpu

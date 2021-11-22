@@ -253,7 +253,7 @@ class GraphSMOTE(nn.Module):
 		self.n_classes = n_classes
 		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
 		self.decoder = SageDecoder(n_hidden, dropout)
-		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers, activation, dropout)
+		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
 		self.smote = SMOTE(dims=n_hidden, k=5)
 		self.decoder_loss = EdgeLoss()
 

@@ -1,2 +1,2 @@
 from .entity_classify_mp import *
-from src.utils import *
+from musym.utils import *

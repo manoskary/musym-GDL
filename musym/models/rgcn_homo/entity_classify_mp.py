@@ -17,10 +17,7 @@ import torch.nn.functional as F
 import dgl
 import tqdm
 
-import pandas as pd
-import tqdm
-
-from models import SAGE
+from musym.models.rgcn_homo.models import SAGE
 
 
 # Hyperparam Tuning and Logging

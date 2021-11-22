@@ -45,6 +45,8 @@ def main(args):
         nn.init.uniform_(w)
         g.edata["w"] = w
 
+
+
     # Hack to track node idx in dataloader's subgraphs.
     train_g = g.subgraph(torch.nonzero(train_mask)[:, 0])
     train_g.ndata['idx'] = torch.tensor(range(train_g.number_of_nodes()))
@@ -106,11 +108,13 @@ def main(args):
         train_acc = 0
         train_roc = 0
         for step, (input_nodes, sub_g, blocks) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True)):
-            batch_inputs = node_features[input_nodes].to(device)
+
             # batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"]).to(device)
             # Hack to track the node idx for NodePred layer (SAGE) not the same as block or input nodes
-            batch_labels = labels[sub_g.ndata['idx']].to(device)
+            # batch_labels = labels[sub_g.ndata['idx']].to(device)
             blocks = [block.int().to(device) for block in blocks]
+            batch_labels = blocks[-1].dstdata["label"]
+            batch_inputs = blocks[0].srcdata["feat"]
             # The features for the loaded subgraph
             # feat_inputs = sub_g.ndata["feat"].to(device)
             # The adjacency matrix of the subgraph

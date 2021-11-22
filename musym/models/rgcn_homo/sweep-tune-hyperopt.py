@@ -1,6 +1,6 @@
 import os.path
 
-from src.models.rgcn_homo.GAUG.gaug_test import main as main_gaug
+from musym.models.rgcn_homo.GAUG.gaug_test import main as main_gaug
 from entity_classify_mp import main as main_mp
 from entity_classify import main as main_simple
 import argparse
