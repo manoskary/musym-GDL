@@ -15,7 +15,6 @@ import dgl
 from imblearn.over_sampling import ADASYN, SMOTE
 import argparse
 
-
 # Graphsage layer
 class SageConv(nn.Module):
 	def __init__(self, in_features, out_features, bias=False):

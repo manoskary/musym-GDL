@@ -1,5 +1,5 @@
 import dgl
-import torch as th
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -14,7 +14,7 @@ def compute_acc(pred, labels):
     Compute the accuracy of prediction given the labels.
     """
     labels = labels.long()
-    return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
+    return (torch.argmax(pred, dim=1) == labels).float().sum() / len(pred)
 
 
 def evaluate(model, g, labels, batch_size, device):
@@ -28,11 +28,17 @@ def evaluate(model, g, labels, batch_size, device):
     device : The GPU device to evaluate on.
     """
     model.eval()
-    with th.no_grad():
+    with torch.no_grad():
         pred = model.inference(g, device, batch_size)
     model.train()
     return compute_acc(pred, labels)
 
+def apply_minority_sampling(labels, n_classes, imbalance_ratio=0.3):
+    N = int(n_classes/2)
+    label_weights = torch.full((len(labels), 1), 1 - imbalance_ratio).squeeze().type(torch.double)
+    for i in range(N):
+        label_weights = torch.where(labels == i, imbalance_ratio, label_weights)
+    return label_weights
 
 @utils.benchmark('acc', 600)
 @utils.parametrize('data', ['ogbn-products', "reddit"])
@@ -47,8 +53,8 @@ def track_acc(data):
     # This avoids creating certain formats in each sub-process, which saves memory and CPU.
     g.create_formats_()
 
-    num_epochs = 20
-    num_hidden = 16
+    num_epochs = 50
+    num_hidden = 32
     num_layers = 2
     fan_out = '5,10'
     batch_size = 1024
@@ -56,23 +62,27 @@ def track_acc(data):
     dropout = 0.5
     num_workers = 4
 
-    train_nid = th.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
+    train_nid = torch.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
     train_g = g.subgraph(train_nid)
     train_g.ndata['idx'] = torch.tensor(range(train_g.number_of_nodes()))
     eids = torch.arange(train_g.number_of_edges())
 
     # Create PyTorch DataLoader for constructing blocks
-    sampler = dgl.dataloading.MultiLayerNeighborSampler(
+    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler(
         [int(fanout) for fanout in fan_out.split(',')])
+
+    # label_weights = apply_minority_sampling(train_g.ndata["label"], n_classes, imbalance_ratio=0.3)
+    # sampler = torch.utils.data.sampler.WeightedRandomSampler(label_weights, batch_size, replacement=False)
 
     dataloader = dgl.dataloading.EdgeDataLoader(
         train_g,
         eids,
-        sampler,
+        graph_sampler,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=False,
         drop_last=False,
-        num_workers=num_workers
+        num_workers=num_workers,
+        # sampler=sampler
     )
 
     # Define model and optimizer
@@ -90,8 +100,8 @@ def track_acc(data):
         batch_labels = blocks[-1].dstdata['label']
         adj = sub_g.adj(ctx=device).to_dense()
         # Compute loss and prediction
-        batch_pred = model(blocks, batch_inputs, adj, batch_labels)
-        loss = loss_fcn(batch_pred, batch_labels) + embed_loss.to(device) * 0.000001
+        batch_pred, upsampl_lab, embed_loss = model(blocks, batch_inputs, adj, batch_labels)
+        loss = loss_fcn(batch_pred, upsampl_lab) + embed_loss.to(device) * 0.000001
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -109,13 +119,17 @@ def track_acc(data):
 
             # Compute loss and prediction
             pred, upsampl_lab, embed_loss = model(blocks, batch_inputs, adj, batch_labels)
-            loss = criterion(pred, upsampl_lab) + embed_loss.to(device) * 0.000001
+            loss = loss_fcn(pred, upsampl_lab) + embed_loss.to(device) * 0.000001
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-    test_g = g.subgraph(torch.nonzero(~g.ndata["train_mask"]))
+    test_g = g.subgraph(torch.nonzero(~g.ndata["train_mask"], as_tuple=True)[0])
     test_acc = evaluate(
         model, test_g, test_g.ndata['label'], batch_size, device)
 
     return test_acc.item()
+
+
+if __name__ == '__main__':
+    print(track_acc("reddit"))

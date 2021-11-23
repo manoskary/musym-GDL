@@ -127,7 +127,7 @@ def main(args):
 
             # Prediction of the GraphSMOTE model
             pred, upsampl_lab, embed_loss = model(blocks, batch_inputs, adj, batch_labels)
-            loss = criterion(pred, upsampl_lab) + embed_loss * 0.000001
+            loss_fcn = criterion(pred, upsampl_lab) + embed_loss * 0.000001
             acc = (torch.argmax(pred, dim=1) == upsampl_lab).float().sum() / len(pred)
             optimizer.zero_grad()
             loss.backward()
