@@ -86,11 +86,12 @@ class SMOTE(object):
 			if i != dominant_class:
 				# calculate the amount of synthetic data to generate
 				N = (n_occ - occ[i]) * 100 / occ[i]
-				candidates = X[y == i]
-				xs = self.generate(candidates, N, self.k)
-				X = torch.cat((X, xs))
-				ys = torch.ones(xs.shape[0]) * i
-				y = torch.cat((y, ys))
+				if N != 0:
+					candidates = X[y == i]
+					xs = self.generate(candidates, N, self.k)
+					X = torch.cat((X, xs))
+					ys = torch.ones(xs.shape[0]) * i
+					y = torch.cat((y, ys))
 		return X, y
 
 # Graphsage layer
@@ -254,7 +255,7 @@ class GraphSMOTE(nn.Module):
 		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
 		self.decoder = SageDecoder(n_hidden, dropout)
 		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
-		self.smote = SMOTE(dims=n_hidden, k=5)
+		self.smote = SMOTE(dims=n_hidden, k=2)
 		self.decoder_loss = EdgeLoss()
 
 	def forward(self, blocks, input_feats, adj, batch_labels):

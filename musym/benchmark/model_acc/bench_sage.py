@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .. import utils
+from musym.benchmark import utils
 
 class GraphSAGE(nn.Module):
     def __init__(self,

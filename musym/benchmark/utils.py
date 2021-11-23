@@ -434,21 +434,22 @@ def noop_decorator(param_name, params):
 class TestFilter:
     def __init__(self):
         self.conf = None
-        if "DGL_REG_CONF" in os.environ:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            path = os.path.join(current_dir, "../../",
-                                os.environ["DGL_REG_CONF"])
-            with open(path, "r") as f:
-                self.conf = json.load(f)
-            if "INSTANCE_TYPE" in os.environ:
-                instance_type = os.environ["INSTANCE_TYPE"]
-            else:
-                raise Exception(
-                    "Must set both DGL_REG_CONF and INSTANCE_TYPE as env")
-            self.enabled_tests = self.conf[instance_type]["tests"]
-        else:
-            import logging
-            logging.warning("No regression test conf file specified")
+        # TODO figure out the following code integration with wandb
+        # if "DGL_REG_CONF" in os.environ:
+        #     current_dir = os.path.dirname(os.path.abspath(__file__))
+        #     path = os.path.join(current_dir, "../../",
+        #                         os.environ["DGL_REG_CONF"])
+        #     with open(path, "r") as f:
+        #         self.conf = json.load(f)
+        #     if "INSTANCE_TYPE" in os.environ:
+        #         instance_type = os.environ["INSTANCE_TYPE"]
+        #     else:
+        #         raise Exception(
+        #             "Must set both DGL_REG_CONF and INSTANCE_TYPE as env")
+        #     self.enabled_tests = self.conf[instance_type]["tests"]
+        # else:
+        #     import logging
+        #     logging.warning("No regression test conf file specified")
 
     def check(self, func):
         funcfullname = inspect.getmodule(func).__name__ + "." + func.__name__

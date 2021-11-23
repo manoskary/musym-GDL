@@ -1,11 +1,10 @@
 import dgl
-import torch as th
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from .. import utils
-
+from musym.benchmark import utils
 from musym.models.rgcn_homo.models import SAGE
 
 
@@ -14,10 +13,10 @@ def compute_acc(pred, labels):
     Compute the accuracy of prediction given the labels.
     """
     labels = labels.long()
-    return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
+    return (torch.argmax(pred, dim=1) == labels).float().sum() / len(pred)
 
 
-def evaluate(model, g, inputs, labels, val_nid, batch_size, device):
+def evaluate(model, g, inputs, labels, val_nid, batch_size, device, num_workers):
     """
     Evaluate the model on the validation set specified by ``val_nid``.
     g : The entire graph.
@@ -28,8 +27,8 @@ def evaluate(model, g, inputs, labels, val_nid, batch_size, device):
     device : The GPU device to evaluate on.
     """
     model.eval()
-    with th.no_grad():
-        pred = model.inference(g, inputs, batch_size, device)
+    with torch.no_grad():
+        pred = model.inference(g, inputs, device, batch_size, num_workers)
     model.train()
     return compute_acc(pred[val_nid], labels[val_nid])
 
@@ -67,7 +66,7 @@ def track_acc(data):
     dropout = 0.5
     num_workers = 4
 
-    train_nid = th.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
+    train_nid = torch.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
 
     # Create PyTorch DataLoader for constructing blocks
     sampler = dgl.dataloading.MultiLayerNeighborSampler(
@@ -120,9 +119,13 @@ def track_acc(data):
             optimizer.step()
 
     test_g = g
-    test_nid = th.nonzero(
+    test_nid = torch.nonzero(
         ~(test_g.ndata['train_mask'] | test_g.ndata['val_mask']), as_tuple=True)[0]
     test_acc = evaluate(
-        model, test_g, test_g.ndata['features'], test_g.ndata['labels'], test_nid, batch_size, device)
+        model, test_g, test_g.ndata['features'], test_g.ndata['labels'], test_nid, batch_size, device, num_workers)
 
     return test_acc.item()
+
+
+if __name__ == '__main__':
+    print(track_acc("reddit"))
