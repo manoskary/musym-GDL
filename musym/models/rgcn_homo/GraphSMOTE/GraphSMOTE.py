@@ -11,7 +11,6 @@ import torch.nn as nn
 import torch.optim as optim
 import math
 import torch.nn.functional as F
-import dgl
 from imblearn.over_sampling import ADASYN, SMOTE
 import argparse
 from data_utils import load_imbalanced_cora
@@ -170,10 +169,8 @@ def main(config):
 	optimizer_de = optim.Adam(decoder.parameters(), lr=0.001, weight_decay=5e-4)
 
 	# Training loop
-	self.decoder(node_features = g.ndata["feat"]
 	labels = g.ndata["label"]
-
-	sm = SMOTE()
+	node_features = g.ndata["feat"]
 
 	for epoch in tqdm(range(config["num_epochs"]), desc='epoch'):
 		# Loop over the dataloader to sample the computation dependency graph as a list of blocks.
@@ -193,8 +190,7 @@ def main(config):
 		optimizer_cls.step()
 		optimizer_en.step()
 		optimizer_de.step()
-		if epoch%100 == 0 and epoch != 0:
-			print('Epoch {:04d} | Loss {:.4f} | Accuracy {:.4f} |'.format(epoch, loss.item(), acc))
+		print('Epoch {:04d} | Loss {:.4f} | Accuracy {:.4f} |'.format(epoch, loss.item(), acc))
 
 
 if __name__ == '__main__':
@@ -202,7 +198,7 @@ if __name__ == '__main__':
 	argparser.add_argument('--gpu', type=int, default=-1,
 						   help="GPU device ID. Use -1 for CPU training")
 	argparser.add_argument('-d', '--dataset', type=str, default='toy01')
-	argparser.add_argument('--num-epochs', type=int, default=2000)
+	argparser.add_argument('--num-epochs', type=int, default=200)
 	# argparser.add_argument('--batch-size', type=int, default=1024)
 	argparser.add_argument("--num-layers", type=int, default=1)
 	argparser.add_argument("--num-hidden", type=int, default=64)
