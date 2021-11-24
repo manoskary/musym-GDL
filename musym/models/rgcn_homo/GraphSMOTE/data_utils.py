@@ -106,7 +106,8 @@ def load_imbalanced_cora():
     c_train_num = []
     imbalance = True
     im_ratio = 0.5
-    for i in range(labels.max().item() + 1):
+    n_classes = labels.max().item() + 1
+    for i in range(n_classes):
         if imbalance and i > labels.max().item() - im_class_num:  # only imbalance the last classes
             c_train_num.append(int(class_sample_num * im_ratio))
 
@@ -120,8 +121,8 @@ def load_imbalanced_cora():
     g.ndata["train_mask"] = train_mask
     g.ndata["val_mask"] = val_mask
     g.ndata["test_mask"] = test_mask
-    return g
+    return g, n_classes
 
 
 if __name__ == '__main__':
-    g = load_imbalanced_cora()
+    g, n_classes = load_imbalanced_cora()
