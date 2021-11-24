@@ -89,9 +89,9 @@ class SMOTE(object):
 				if N != 0:
 					candidates = X[y == i]
 					xs = self.generate(candidates, N, self.k)
-					X = torch.cat((X, xs))
+					X = torch.cat((X, xs.to(X.get_device())))
 					ys = torch.ones(xs.shape[0]) * i
-					y = torch.cat((y, ys))
+					y = torch.cat((y, ys.to(y.get_device())))
 		return X, y
 
 # Graphsage layer
@@ -266,7 +266,7 @@ class GraphSMOTE(nn.Module):
 		x, y = self.smote.fit_generate(x, batch_labels)
 		pred_adj = self.decoder(x)
 		loss = self.decoder_loss(pred_adj, adj)
-		pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+		pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()))
 		x = self.classifier(pred_adj, x)
 		return x, y.type(torch.long), loss
 
@@ -296,7 +296,7 @@ class GraphSMOTE(nn.Module):
 			adj = sub_g.adj(ctx=device).to_dense()
 			h = self.encoder(blocks, batch_inputs)
 			pred_adj = self.decoder(h)
-			pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+			pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(h.get_device()))
 			h = self.classifier(pred_adj, h)
 			# TODO prediction may replace values because Edge dataloder repeats nodes, maybe take average or addition.
 			y[sub_g.ndata['idx']] = h.cpu()[:len(batch_labels)]

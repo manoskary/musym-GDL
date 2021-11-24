@@ -9,6 +9,7 @@ from models import GraphSMOTE
 from data_utils import load_imbalanced_local
 from sklearn.metrics import f1_score, precision_recall_fscore_support
 from musym.utils import load_and_save
+import wandb
 
 def main(args):
     """
@@ -22,10 +23,10 @@ def main(args):
     config["log"] = False if config["unlog"] else True
 
     # --------------- Dataset Loading -------------------------
-    # g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
-    dataset = dgl.data.CoraGraphDataset()
-    g = dataset[0]
-    n_classes = dataset.num_classes
+    g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
+    # dataset = dgl.data.CoraGraphDataset()
+    # g = dataset[0]
+    # n_classes = dataset.num_classes
 
     if "train_mask" in g.ndata.keys() and "val_mask" in g.ndata.keys() and "test_mask" in g.ndata.keys():
         train_mask = g.ndata['train_mask']
@@ -46,6 +47,8 @@ def main(args):
         test_mask[test_inds] = 1
 
 
+    # --------------------- Init WANDB ---------------------------------
+    wandb.init(project="SMOTE", group="GraphSMOTE-sampling", job_type="Cadence-Detection", config=config)
 
 
     # Hack to track node idx in dataloader's subgraphs.
@@ -97,6 +100,7 @@ def main(args):
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
     criterion = nn.CrossEntropyLoss()
 
+    wandb.watch(model, log_freq=1000)
     # training loop
     print("start training...")
     dur = []
@@ -132,17 +136,19 @@ def main(args):
             optimizer.step()
             t1 = time.time()
             train_acc += acc
-            train_fscore += f1_score(batch_labels.detach().numpy(), torch.argmax(pred, dim=1)[:len(batch_labels)].detach().numpy(), average='weighted')
+            train_fscore += f1_score(batch_labels.detach().cpu().numpy(), torch.argmax(pred, dim=1)[:len(batch_labels)].detach().cpu().numpy(), average='weighted')
         if epoch > 5:
             dur.append(t1 - t0)
         with torch.no_grad():
             pred = model.inference(val_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
-            val_fscore = f1_score(val_labels.detach().numpy(), torch.argmax(pred, dim=1).detach().numpy(), average='weighted')
+            val_fscore = f1_score(val_labels.detach().cpu().numpy(), torch.argmax(pred, dim=1).detach().cpu().numpy(), average='weighted')
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
             scheduler.step(val_acc)
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Train f1 score {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f} | Time: {:.4f}".
             format(epoch, train_acc/(step+1), loss.item(), train_fscore/(step+1), val_acc, val_loss, val_fscore, np.average(dur)))
+
+        wandb.log(dict(zip(["train_acc", "train_loss", "train_fscore", "val_acc", "val_loss", "val_fscore"], [train_acc/(step+1), loss.item(), train_fscore/(step+1), val_acc, val_loss, val_fscore])))
         if epoch%5==0 and epoch != 0:
             model.eval()
             with torch.no_grad():
@@ -150,8 +156,10 @@ def main(args):
                                        num_workers=config["num_workers"])
                 test_loss = F.cross_entropy(pred, test_labels)
                 test_acc = (torch.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
-                precision, recall, test_fscore, _ = precision_recall_fscore_support(test_labels.detach().numpy(), torch.argmax(pred, dim=1).detach().numpy(), average='weighted')
+                precision, recall, test_fscore, _ = precision_recall_fscore_support(test_labels.detach().cpu().numpy(), torch.argmax(pred, dim=1).detach().cpu().numpy(), average='weighted')
             print("Test Acc: {:.4f} | Test loss: {:.4f}| Test Precision: {:.4f}| Test Recall : {:.4f}| Test Weighted f1 score: {:.4f}|".format(test_acc, test_loss.item(), precision, recall, test_fscore))
+            wandb.log(dict(zip(["test_acc", "test_loss", "test_precision", "test_recall", "test_fscore"],
+                               [test_acc, test_loss.item(), precision, recall, test_fscore])))
     print()
 
 
@@ -163,7 +171,7 @@ def main(args):
 if __name__ == '__main__':
     import argparse
     argparser = argparse.ArgumentParser(description='GraphSAGE')
-    argparser.add_argument('--gpu', type=int, default=-1,
+    argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
     argparser.add_argument('--num-epochs', type=int, default=200)
@@ -175,7 +183,7 @@ if __name__ == '__main__':
                            help="Weight for L2 loss")
     argparser.add_argument("--fan-out", default=[5, 10])
     argparser.add_argument('--shuffle', type=int, default=True)
-    argparser.add_argument("--batch-size", type=int, default=32)
+    argparser.add_argument("--batch-size", type=int, default=1024)
     argparser.add_argument("--num-workers", type=int, default=0)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
@@ -188,6 +196,8 @@ if __name__ == '__main__':
     argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
     argparser.add_argument("--unlog", action="store_true", help="Unbinds wandb.")
     args = argparser.parse_args()
+
+    wandb.login()
 
     print(args)
     main(args)
