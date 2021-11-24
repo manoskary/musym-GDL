@@ -13,7 +13,7 @@ import math
 import torch.nn.functional as F
 from imblearn.over_sampling import ADASYN, SMOTE
 import argparse
-from data_utils import load_imbalanced_cora
+from data_utils import load_imbalanced_local
 
 # Graphsage layer
 class SageConv(nn.Module):
@@ -143,7 +143,7 @@ def main(config):
 	"""Pass parameters to create experiment"""
 
 	# --------------- Dataset Loading -------------------------
-	g, n_classes = load_imbalanced_cora()
+	g, n_classes = load_imbalanced_local("cora")
 	adj = g.adj().to_dense()
 	train_nid = torch.tensor(range(g.num_nodes())).type(torch.int64)
 	in_feats = g.ndata["feat"].shape[1]

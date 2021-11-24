@@ -64,7 +64,7 @@ class SMOTE(object):
 		-------
 		S : Synthetic samples. array,
 			shape = [(N/100) * n_minority_samples, n_features].
-        """
+		"""
 		T = min_samples.shape[0]
 		self.synthetic_arr = torch.zeros(int(N / 100) * T, self.dims)
 		N = int(N / 100)
@@ -181,6 +181,7 @@ class SageClassifier(nn.Module):
 			h = conv(adj, h)
 			if l != self.n_layers-1:
 				h = self.activation(h)
+				h = F.normalize(h)
 				h = self.dropout(h)
 		h = self.clf(h)
 		return h
@@ -220,31 +221,32 @@ class EdgeLoss(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, in_feats, n_hidden, n_layers, activation, dropout):
-        super(Encoder, self).__init__()
-        self.in_feats = in_feats
-        self.n_hidden = n_hidden
-        self.activation = activation
-        self.dropout = nn.Dropout(dropout)
-        self.layers = nn.ModuleList()
-        # Probably should change nework to GraphSAGE
-        self.layers.append(dglnn.SAGEConv(self.in_feats, self.n_hidden, aggregator_type="pool"))
-        for i in range(n_layers - 1):
-            self.layers.append(dglnn.SAGEConv(self.n_hidden, self.n_hidden, aggregator_type="pool"))
+	def __init__(self, in_feats, n_hidden, n_layers, activation, dropout):
+		super(Encoder, self).__init__()
+		self.in_feats = in_feats
+		self.n_hidden = n_hidden
+		self.activation = activation
+		self.dropout = nn.Dropout(dropout)
+		self.layers = nn.ModuleList()
+		# Probably should change nework to GraphSAGE
+		self.layers.append(dglnn.SAGEConv(self.in_feats, self.n_hidden, aggregator_type="pool"))
+		for i in range(n_layers - 1):
+			self.layers.append(dglnn.SAGEConv(self.n_hidden, self.n_hidden, aggregator_type="pool"))
 
-    def forward(self, blocks, inputs):
-        h = inputs
-        for l, (conv, block) in enumerate(zip(self.layers, blocks)):
-            h = conv(block, h)
-            if l != len(self.layers) - 1:
-                h = self.activation(h)
-                h = self.dropout(h)
-        return h
+	def forward(self, blocks, inputs):
+		h = inputs
+		for l, (conv, block) in enumerate(zip(self.layers, blocks)):
+			h = conv(block, h)
+			if l != len(self.layers) - 1:
+				h = self.activation(h)
+				h = F.normalize(h)
+				h = self.dropout(h)
+		return h
 
-    def decode(self, h):
-        h = self.dropout(h)
-        adj = torch.matmul(h, h.t())
-        return adj
+	def decode(self, h):
+		h = self.dropout(h)
+		adj = torch.matmul(h, h.t())
+		return adj
 
 
 class GraphSMOTE(nn.Module):

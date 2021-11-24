@@ -2,6 +2,7 @@ import random
 import torch
 import numpy as np
 import scipy.sparse as sp
+from scipy.io import loadmat
 import dgl
 
 def normalize(mx):
@@ -12,6 +13,29 @@ def normalize(mx):
     r_mat_inv = sp.diags(r_inv)
     mx = r_mat_inv.dot(mx)
     return mx
+
+
+def refine_label_order(labels):
+    IMBALANCE_THRESH = 101
+    max_label = labels.max()
+    j = 0
+
+    for i in range(labels.max(),0,-1):
+        if sum(labels==i) >= IMBALANCE_THRESH and i>j:
+            while sum(labels==j) >= IMBALANCE_THRESH and i>j:
+                j = j+1
+            if i > j:
+                head_ind = labels == j
+                tail_ind = labels == i
+                labels[head_ind] = i
+                labels[tail_ind] = j
+                j = j+1
+            else:
+                break
+        elif i <= j:
+            break
+
+    return labels
 
 
 def load_cora_local(path="data/cora/", dataset="cora"):
@@ -60,6 +84,32 @@ def load_cora_local(path="data/cora/", dataset="cora"):
     return g
 
 
+def load_data_Blog():#
+    #--------------------
+    #
+    #--------------------
+    mat = loadmat('data/BlogCatalog/blogcatalog.mat')
+    adj = mat['network']
+    label = mat['group']
+
+    embed = np.loadtxt('data/BlogCatalog/blogcatalog.embeddings_64')
+    feature = np.zeros((embed.shape[0],embed.shape[1]-1))
+    feature[embed[:,0].astype(int),:] = embed[:,1:]
+
+    features = normalize(feature)
+    labels = np.array(label.todense().argmax(axis=1)).squeeze()
+
+    labels[labels>16] = labels[labels>16]-1
+
+    print("change labels order, imbalanced classes to the end.")
+    labels = refine_label_order(labels)
+
+    g = dgl.from_scipy(adj, eweight_name="w")
+    g.ndata["label"] = torch.LongTensor(labels)
+    g.ndata["feat"] = torch.FloatTensor(features)
+    return g
+
+
 def split_arti(labels, c_train_num):
     #labels: n-dim Longtensor, each element in [0,...,m-1].
     #cora: m=7
@@ -97,10 +147,68 @@ def split_arti(labels, c_train_num):
     return train_idx, val_idx, test_idx, c_num_mat
 
 
-def load_imbalanced_cora():
-    g = load_cora_local()
-    class_sample_num = 20
-    im_class_num = 3
+def split_genuine(labels):
+    num_classes = len(set(labels.tolist()))
+    c_idxs = [] # class-wise index
+    train_idx = []
+    val_idx = []
+    test_idx = []
+    c_num_mat = np.zeros((num_classes,3)).astype(int)
+
+    for i in range(num_classes):
+        c_idx = (labels==i).nonzero()[:,-1].tolist()
+        c_num = len(c_idx)
+        print('{:d}-th class sample number: {:d}'.format(i,len(c_idx)))
+        random.shuffle(c_idx)
+        c_idxs.append(c_idx)
+
+        if c_num <4:
+            if c_num < 3:
+                print("too small class type")
+                ipdb.set_trace()
+            c_num_mat[i,0] = 1
+            c_num_mat[i,1] = 1
+            c_num_mat[i,2] = 1
+        else:
+            c_num_mat[i,0] = int(c_num/4)
+            c_num_mat[i,1] = int(c_num/4)
+            c_num_mat[i,2] = int(c_num/2)
+
+        train_idx = train_idx + c_idx[:c_num_mat[i,0]]
+        val_idx = val_idx + c_idx[c_num_mat[i,0]:c_num_mat[i,0]+c_num_mat[i,1]]
+        test_idx = test_idx + c_idx[c_num_mat[i,0]+c_num_mat[i,1]:c_num_mat[i,0]+c_num_mat[i,1]+c_num_mat[i,2]]
+    random.shuffle(train_idx)
+    train_idx = torch.LongTensor(train_idx)
+    val_idx = torch.LongTensor(val_idx)
+    test_idx = torch.LongTensor(test_idx)
+
+    return train_idx, val_idx, test_idx, c_num_mat
+
+
+def load_imbalanced_local(name):
+    """
+    Loads imbalanced local dataset similar to the GraphSMOTE paper.
+
+    Parameters
+    ----------
+    name : string in {'cora', 'BlogCatalog'}
+        The name of the dataset to load.
+    Returns
+    -------
+    g : dgl.graph
+    n_classes : int
+    """
+    if name == 'cora':
+        g = load_cora_local()
+        class_sample_num = 20
+        im_class_num = 3
+    elif name == "BlogCatalog":
+        g = load_data_Blog()
+        im_class_num = 14  # set it to be the number less than 100
+        class_sample_num = 20
+    else:
+        raise ValueError("Unknown dataset name")
+
     labels = g.ndata["label"]
     # for artificial imbalanced setting: only the last im_class_num classes are imbalanced
     c_train_num = []
@@ -113,7 +221,7 @@ def load_imbalanced_cora():
 
         else:
             c_train_num.append(class_sample_num)
-    idx_train, idx_val, idx_test, class_num_mat = split_arti(labels, c_train_num)
+    idx_train, idx_val, idx_test, class_num_mat = split_arti(labels, c_train_num) if name == "cora" else split_genuine(labels)
     train_mask = val_mask = test_mask = torch.zeros(g.num_nodes())
     train_mask[idx_train] = 1
     val_mask[idx_val] = 1
@@ -125,4 +233,5 @@ def load_imbalanced_cora():
 
 
 if __name__ == '__main__':
-    g, n_classes = load_imbalanced_cora()
+    g, n_classes = load_imbalanced_local("cora")
+    g, n_classes = load_imbalanced_local("BlogCatalog")

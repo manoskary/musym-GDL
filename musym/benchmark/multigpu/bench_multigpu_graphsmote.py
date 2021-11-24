@@ -147,7 +147,7 @@ def run(result_queue, proc_id, n_gpus, args, devices, data):
 @utils.parametrize('data', ['reddit', 'ogbn-products'])
 def track_time(data):
     args = SimpleNamespace(
-        num_hidden=16,
+        num_hidden=32,
         fan_out = "10,25",
         batch_size = 1000,
         lr = 0.003,

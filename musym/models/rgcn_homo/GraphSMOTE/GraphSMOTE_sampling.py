@@ -6,11 +6,9 @@ import numpy as np
 from models import *
 import tqdm
 from models import GraphSMOTE
-from data_utils import load_imbalanced_cora
-from sklearn.metrics import roc_auc_score
-
-
-
+from data_utils import load_imbalanced_local
+from sklearn.metrics import f1_score, precision_recall_fscore_support
+from musym.utils import load_and_save
 
 def main(args):
     """
@@ -24,30 +22,30 @@ def main(args):
     config["log"] = False if config["unlog"] else True
 
     # --------------- Dataset Loading -------------------------
-    g, n_classes = load_imbalanced_cora()
+    # g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
+    dataset = dgl.data.CoraGraphDataset()
+    g = dataset[0]
+    n_classes = dataset.num_classes
 
-    # --------------- Manually build train masks ------------------------
-    # train_mask = val_mask = test_mask = torch.zeros(g.num_nodes())
-    #
-    # rand_inds = torch.tensor(range(g.num_nodes()))
-    # np.random.shuffle(rand_inds)
-    # train_inds = torch.tensor(rand_inds[:int(0.7*g.num_nodes())])
-    # val_inds = torch.tensor(rand_inds[int(0.7 * g.num_nodes()) : int(0.8 * g.num_nodes())])
-    # test_inds = torch.tensor(rand_inds[int(0.8*g.num_nodes()):])
-    #
-    # train_mask[train_inds] = 1
-    # val_mask[val_inds] = 1
-    # test_mask[test_inds] = 1
-    #
-    # if config["init_eweights"]:
-    #     w = torch.empty(g.num_edges())
-    #     nn.init.uniform_(w)
-    #     g.edata["w"] = w
+    if "train_mask" in g.ndata.keys() and "val_mask" in g.ndata.keys() and "test_mask" in g.ndata.keys():
+        train_mask = g.ndata['train_mask']
+        val_mask = g.ndata['val_mask']
+        test_mask = g.ndata['test_mask']
+    else:
+        # --------------- Manually build train masks ------------------------
+        train_mask = val_mask = test_mask = torch.zeros(g.num_nodes())
+
+        rand_inds = torch.tensor(range(g.num_nodes()))
+        np.random.shuffle(rand_inds)
+        train_inds = torch.tensor(rand_inds[:int(0.7*g.num_nodes())])
+        val_inds = torch.tensor(rand_inds[int(0.7 * g.num_nodes()) : int(0.8 * g.num_nodes())])
+        test_inds = torch.tensor(rand_inds[int(0.8*g.num_nodes()):])
+
+        train_mask[train_inds] = 1
+        val_mask[val_inds] = 1
+        test_mask[test_inds] = 1
 
 
-    train_mask = g.ndata['train_mask']
-    val_mask = g.ndata['val_mask']
-    test_mask = g.ndata['test_mask']
 
 
     # Hack to track node idx in dataloader's subgraphs.
@@ -62,9 +60,6 @@ def main(args):
     val_labels = val_g.ndata['label']
     test_g = g.subgraph(torch.nonzero(test_mask)[:, 0])
     test_labels = test_g.ndata['label']
-
-
-
 
     # check cuda
     use_cuda = config["gpu"] >= 0 and torch.cuda.is_available()
@@ -109,7 +104,7 @@ def main(args):
         model.train()
         t0 = time.time()
         train_acc = 0
-        train_roc = 0
+        train_fscore = 0
         for step, (input_nodes, sub_g, blocks) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True)):
 
             # batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"]).to(device)
@@ -121,7 +116,7 @@ def main(args):
             # The features for the loaded subgraph
             # feat_inputs = sub_g.ndata["feat"].to(device)
             # The adjacency matrix of the subgraph
-            if config["init_eweights"]:
+            if config["init_eweights"] or "w" in train_g.edata.keys():
                 subgraph_shape = (sub_g.num_nodes(), sub_g.num_nodes())
                 subgraph_indices = torch.vstack(sub_g.edges())
                 adj = torch.sparse.FloatTensor(subgraph_indices, sub_g.edata["w"], subgraph_shape).to_dense().to(device)
@@ -137,26 +132,26 @@ def main(args):
             optimizer.step()
             t1 = time.time()
             train_acc += acc
+            train_fscore += f1_score(batch_labels.detach().numpy(), torch.argmax(pred, dim=1)[:len(batch_labels)].detach().numpy(), average='weighted')
         if epoch > 5:
             dur.append(t1 - t0)
         with torch.no_grad():
-
-            # train_acc = torch.sum(torch.argmax(pred[:len(batch_labels)], dim=1) == batch_labels).item() / batch_labels.shape[0]
             pred = model.inference(val_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
+            val_fscore = f1_score(val_labels.detach().numpy(), torch.argmax(pred, dim=1).detach().numpy(), average='weighted')
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
             scheduler.step(val_acc)
-            # print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Time: {:.4f} |".format(epoch, acc, loss, np.average(dur)))
-        print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Train Auc-Roc {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Time: {:.4f}".
-            format(epoch, train_acc/(step+1), loss.item(), train_roc, val_acc, val_loss, np.average(dur)))
-        if epoch%5==0:
+        print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Train f1 score {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f} | Time: {:.4f}".
+            format(epoch, train_acc/(step+1), loss.item(), train_fscore/(step+1), val_acc, val_loss, val_fscore, np.average(dur)))
+        if epoch%5==0 and epoch != 0:
             model.eval()
             with torch.no_grad():
                 pred = model.inference(test_g, device=device, batch_size=config["batch_size"],
                                        num_workers=config["num_workers"])
                 test_loss = F.cross_entropy(pred, test_labels)
                 test_acc = (torch.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
-            print("Test Acc: {:.4f} | Test loss: {:.4f}| ".format(test_acc, test_loss.item()))
+                precision, recall, test_fscore, _ = precision_recall_fscore_support(test_labels.detach().numpy(), torch.argmax(pred, dim=1).detach().numpy(), average='weighted')
+            print("Test Acc: {:.4f} | Test loss: {:.4f}| Test Precision: {:.4f}| Test Recall : {:.4f}| Test Weighted f1 score: {:.4f}|".format(test_acc, test_loss.item(), precision, recall, test_fscore))
     print()
 
 
@@ -177,7 +172,7 @@ if __name__ == '__main__':
                            help="Weight for L2 loss")
     argparser.add_argument("--fan-out", default=[5, 10])
     argparser.add_argument('--shuffle', type=int, default=True)
-    argparser.add_argument("--batch-size", type=int, default=128)
+    argparser.add_argument("--batch-size", type=int, default=32)
     argparser.add_argument("--num-workers", type=int, default=0)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
