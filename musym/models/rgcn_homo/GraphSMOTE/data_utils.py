@@ -1,9 +1,20 @@
 import random
 import torch
-import numpy as numpy
+import numpy as np
+import scipy.sparse as sp
+import dgl
+
+def normalize(mx):
+    """Row-normalize sparse matrix"""
+    rowsum = np.array(mx.sum(1))
+    r_inv = np.power(rowsum, -1).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = sp.diags(r_inv)
+    mx = r_mat_inv.dot(mx)
+    return mx
 
 
-def load_data(path="data/cora/", dataset="cora"):#modified from code: pygcn
+def load_cora_local(path="data/cora/", dataset="cora"):
     """Load citation network dataset (cora only for now)"""
     #input: idx_features_labels, adj
     #idx,labels are not required to be processed in advance
@@ -43,12 +54,10 @@ def load_data(path="data/cora/", dataset="cora"):#modified from code: pygcn
     features = torch.FloatTensor(np.array(features.todense()))
     labels = torch.LongTensor(labels)
 
-    utils.print_edges_num(adj.todense(), labels)
-
-    adj = sparse_mx_to_torch_sparse_tensor(adj)
-    #adj = torch.FloatTensor(np.array(adj.todense()))
-
-    return adj, features, labels
+    g = dgl.from_scipy(adj, eweight_name="w")
+    g.ndata["label"] = labels
+    g.ndata["feat"] = features
+    return g
 
 
 def split_arti(labels, c_train_num):
@@ -87,3 +96,32 @@ def split_arti(labels, c_train_num):
 
     return train_idx, val_idx, test_idx, c_num_mat
 
+
+def load_imbalanced_cora():
+    g = load_cora_local()
+    class_sample_num = 20
+    im_class_num = 3
+    labels = g.ndata["label"]
+    # for artificial imbalanced setting: only the last im_class_num classes are imbalanced
+    c_train_num = []
+    imbalance = True
+    im_ratio = 0.5
+    for i in range(labels.max().item() + 1):
+        if imbalance and i > labels.max().item() - im_class_num:  # only imbalance the last classes
+            c_train_num.append(int(class_sample_num * im_ratio))
+
+        else:
+            c_train_num.append(class_sample_num)
+    idx_train, idx_val, idx_test, class_num_mat = split_arti(labels, c_train_num)
+    train_mask = val_mask = test_mask = torch.zeros(g.num_nodes())
+    train_mask[idx_train] = 1
+    val_mask[idx_val] = 1
+    test_mask[idx_test] = 1
+    g.ndata["train_mask"] = train_mask
+    g.ndata["val_mask"] = val_mask
+    g.ndata["test_mask"] = test_mask
+    return g
+
+
+if __name__ == '__main__':
+    g = load_imbalanced_cora()
