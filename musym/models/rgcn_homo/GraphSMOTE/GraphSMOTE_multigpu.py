@@ -1,60 +1,18 @@
 import dgl
-from types import SimpleNamespace
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.multiprocessing as mp
 import time
-import math
+import math, os
+import numpy as np
 from torch.nn.parallel import DistributedDataParallel
+from musym.benchmark.utils import thread_wrapped_func
+from models import GraphSMOTE
 
-from musym.benchmark import utils
-from musym.models.rgcn_homo.GraphSMOTE.models import GraphSMOTE
-
-
-
-
-def load_subtensor(nfeat, labels, seeds, input_nodes, dev_id):
-    """
-    Extracts features and labels for a subset of nodes.
-    """
-    batch_inputs = nfeat[input_nodes].to(dev_id)
-    batch_labels = labels[seeds].to(dev_id)
-    return batch_inputs, batch_labels
-
-
-def compute_acc(pred, labels):
-    """
-    Compute the accuracy of prediction given the labels.
-    """
-    labels = labels.long()
-    return (torch.argmax(pred, dim=1) == labels).float().sum() / len(pred)
-
-
-def evaluate(model, g, labels, batch_size, device):
-    """
-    Evaluate the model on the validation set specified by ``val_nid``.
-    g : The entire graph.
-    inputs : The features of all the nodes.
-    labels : The labels of all the nodes.
-    val_nid : the node Ids for validation.
-    batch_size : Number of nodes to compute at the same time.
-    device : The GPU device to evaluate on.
-    """
-    model.eval()
-    with torch.no_grad():
-        pred = model.inference(g, device, batch_size)
-    model.train()
-    return compute_acc(pred, labels)
-
-def apply_minority_sampling(labels, n_classes, imbalance_ratio=0.3):
-    N = int(n_classes/2)
-    label_weights = torch.full((len(labels), 1), 1 - imbalance_ratio).squeeze().type(torch.double)
-    for i in range(N):
-        label_weights = torch.where(labels == i, imbalance_ratio, label_weights)
-    return label_weights
-
+from sklearn.metrics import f1_score
+from musym.utils import load_and_save
 
 
 
@@ -65,13 +23,13 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
         dist_init_method = 'tcp://{master_ip}:{master_port}'.format(
             master_ip='127.0.0.1', master_port='12345')
         world_size = n_gpus
-        th.distributed.init_process_group(backend="nccl",
-                                          init_method=dist_init_method,
-                                          world_size=world_size,
-                                          rank=proc_id)
-    th.cuda.set_device(dev_id)
+        torch.distributed.init_process_group(backend="nccl",
+                                             init_method=dist_init_method,
+                                             world_size=world_size,
+                                             rank=proc_id)
+    torch.cuda.set_device(dev_id)
 
-    n_classes, train_g, _, _ = data
+    n_classes, train_g, val_g, test_g = data
 
     train_nfeat = train_g.ndata.pop('feat')
     train_labels = train_g.ndata.pop('label')
@@ -83,7 +41,7 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
     train_eids = torch.arange(train_g.number_of_edges())
 
     # Split train_nid
-    train_eids = th.split(train_nid, math.ceil(
+    train_eids = torch.split(train_eids, math.ceil(
         len(train_eids) / n_gpus))[proc_id]
 
     # Create PyTorch DataLoader for constructing blocks
@@ -93,10 +51,10 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
         train_g,
         train_eids,
         graph_sampler,
-        batch_size=batch_size,
+        batch_size=config["batch_size"],
         shuffle=False,
         drop_last=False,
-        num_workers=num_workers,
+        num_workers=config["num_workers"],
     )
 
     # Define model and optimizer
@@ -110,32 +68,43 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
     optimizer = optim.Adam(model.parameters(), lr=config["lr"])
 
     # Training loop
-    acc = 0
-    for step, (input_nodes, sub_g, blocks) in enumerate(dataloader):
-        if proc_id == 0:
-            tic_step = time.time()
+    dur = []
+    for epoch in range(config["num_epochs"]):
+        model.train()
+        t0 = time.time()
+        for step, (input_nodes, sub_g, blocks) in enumerate(dataloader):
+            if proc_id == 0:
+                tic_step = time.time()
 
-        # Load the input features as well as output labels
-        blocks = [block.int().to(dev_id) for block in blocks]
-        batch_inputs = blocks[0].srcdata['feat']
-        batch_labels = blocks[-1].dstdata['label']
-        adj = sub_g.adj(ctx=dev_id).to_dense()
+            # Load the input features as well as output labels
+            blocks = [block.int().to(dev_id) for block in blocks]
+            batch_inputs = blocks[0].srcdata['feat']
+            batch_labels = blocks[-1].dstdata['label']
+            adj = sub_g.adj(ctx=dev_id).to_dense()
 
-        # Compute loss and prediction
-        pred, upsampl_lab, embed_loss = model(blocks, batch_inputs, adj, batch_labels)
-        loss = loss_fcn(pred, upsampl_lab) + embed_loss * 0.000001
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            # Compute loss and prediction
+            pred, upsampl_lab, embed_loss = model(blocks, batch_inputs, adj, batch_labels)
+            loss = loss_fcn(pred, upsampl_lab) + embed_loss * 0.000001
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        if proc_id == 0:
-            timing_records.append(time.time() - tic_step)
+            if proc_id == 0:
+                timing_records.append(time.time() - tic_step)
 
-        if step >= 50:
-            break
+            if step >= 50:
+                break
+        with torch.no_grad():
+            val_labels = val_g.ndata["label"]
+            pred = model.inference(val_g, device=dev_id, batch_size=config["batch_size"], num_workers=config["num_workers"])
+            val_fscore = f1_score(val_labels.detach().numpy(), torch.argmax(pred, dim=1).detach().numpy(),
+                                  average='weighted')
+            val_loss = F.cross_entropy(pred, val_labels)
+            val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
+        print("Epoch {:05d} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f}".format(epoch, val_acc, val_loss, val_fscore))
 
     if n_gpus > 1:
-        th.distributed.barrier()
+        torch.distributed.barrier()
     if proc_id == 0:
         result_queue.put(np.array(timing_records))
 
@@ -196,7 +165,7 @@ def main(args):
     result_queue = mp.Queue()
     procs = []
     for proc_id in range(n_gpus):
-        p = mp.Process(target=utils.thread_wrapped_func(run),
+        p = mp.Process(target=thread_wrapped_func(run),
                        args=(result_queue, proc_id, n_gpus, config, devices, data))
         p.start()
         procs.append(p)
