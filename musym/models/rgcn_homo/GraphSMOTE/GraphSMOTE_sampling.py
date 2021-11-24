@@ -6,6 +6,7 @@ import numpy as np
 from models import *
 import tqdm
 from models import GraphSMOTE
+from data_utils import load_imbalanced_cora
 from sklearn.metrics import roc_auc_score
 
 
@@ -23,28 +24,30 @@ def main(args):
     config["log"] = False if config["unlog"] else True
 
     # --------------- Dataset Loading -------------------------
-    dataset = dgl.data.CoraGraphDataset()
-    g = dataset[0]
-    n_classes = dataset.num_classes
+    g, n_classes = load_imbalanced_cora()
 
     # --------------- Manually build train masks ------------------------
-    train_mask = val_mask = test_mask = torch.zeros(g.num_nodes())
+    # train_mask = val_mask = test_mask = torch.zeros(g.num_nodes())
+    #
+    # rand_inds = torch.tensor(range(g.num_nodes()))
+    # np.random.shuffle(rand_inds)
+    # train_inds = torch.tensor(rand_inds[:int(0.7*g.num_nodes())])
+    # val_inds = torch.tensor(rand_inds[int(0.7 * g.num_nodes()) : int(0.8 * g.num_nodes())])
+    # test_inds = torch.tensor(rand_inds[int(0.8*g.num_nodes()):])
+    #
+    # train_mask[train_inds] = 1
+    # val_mask[val_inds] = 1
+    # test_mask[test_inds] = 1
+    #
+    # if config["init_eweights"]:
+    #     w = torch.empty(g.num_edges())
+    #     nn.init.uniform_(w)
+    #     g.edata["w"] = w
 
-    rand_inds = torch.tensor(range(g.num_nodes()))
-    np.random.shuffle(rand_inds)
-    train_inds = torch.tensor(rand_inds[:int(0.7*g.num_nodes())])
-    val_inds = torch.tensor(rand_inds[int(0.7 * g.num_nodes()) : int(0.8 * g.num_nodes())])
-    test_inds = torch.tensor(rand_inds[int(0.8*g.num_nodes()):])
 
-    train_mask[train_inds] = 1
-    val_mask[val_inds] = 1
-    test_mask[test_inds] = 1
-
-    if config["init_eweights"]:
-        w = torch.empty(g.num_edges())
-        nn.init.uniform_(w)
-        g.edata["w"] = w
-
+    train_mask = g.ndata['train_mask']
+    val_mask = g.ndata['val_mask']
+    test_mask = g.ndata['test_mask']
 
 
     # Hack to track node idx in dataloader's subgraphs.
@@ -127,7 +130,7 @@ def main(args):
 
             # Prediction of the GraphSMOTE model
             pred, upsampl_lab, embed_loss = model(blocks, batch_inputs, adj, batch_labels)
-            loss_fcn = criterion(pred, upsampl_lab) + embed_loss * 0.000001
+            loss = criterion(pred, upsampl_lab) + embed_loss * 0.000001
             acc = (torch.argmax(pred, dim=1) == upsampl_lab).float().sum() / len(pred)
             optimizer.zero_grad()
             loss.backward()
@@ -165,7 +168,7 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=-1,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
-    argparser.add_argument('--num-epochs', type=int, default=40)
+    argparser.add_argument('--num-epochs', type=int, default=200)
     argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
     argparser.add_argument('--lr', type=float, default=1e-2)
@@ -174,7 +177,7 @@ if __name__ == '__main__':
                            help="Weight for L2 loss")
     argparser.add_argument("--fan-out", default=[5, 10])
     argparser.add_argument('--shuffle', type=int, default=True)
-    argparser.add_argument("--batch-size", type=int, default=1024)
+    argparser.add_argument("--batch-size", type=int, default=128)
     argparser.add_argument("--num-workers", type=int, default=0)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
