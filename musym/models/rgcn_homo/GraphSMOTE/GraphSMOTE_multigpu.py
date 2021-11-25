@@ -24,7 +24,7 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
             master_ip='127.0.0.1', master_port='12345')
         world_size = n_gpus
         torch.distributed.init_process_group(backend="nccl",
-                                             init_method=dist_init_method,
+                                             # init_method=dist_init_method,
                                              world_size=world_size,
                                              rank=proc_id)
     torch.cuda.set_device(dev_id)
@@ -162,11 +162,13 @@ def main(args):
     # Pack data
     data = n_classes, train_g, val_g, test_g
 
+    # torch.multiprocessing.set_start_method('spawn')
     result_queue = mp.Queue()
     procs = []
     for proc_id in range(n_gpus):
         p = mp.Process(target=thread_wrapped_func(run),
-                       args=(result_queue, proc_id, n_gpus, config, devices, data))
+                       args=(result_queue, proc_id, n_gpus, config, devices, data)
+                       )
         p.start()
         procs.append(p)
     for p in procs:
@@ -196,7 +198,7 @@ if __name__ == '__main__':
     argparser.add_argument("--fan-out", default=[5, 10])
     argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument("--batch-size", type=int, default=2048)
-    argparser.add_argument("--num-workers", type=int, default=0)
+    argparser.add_argument("--num-workers", type=int, default=4)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
                                 "on GPU when using it to save time for data copy. This may "

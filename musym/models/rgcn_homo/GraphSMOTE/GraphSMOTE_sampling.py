@@ -1,9 +1,10 @@
 import os
 import time
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import dgl
 import numpy as np
-from models import *
 import tqdm
 from models import GraphSMOTE
 from data_utils import load_imbalanced_local
@@ -34,6 +35,7 @@ def main(args):
         test_mask = g.ndata['test_mask']
     else:
         # --------------- Manually build train masks ------------------------
+        print("Using manual Masks ...")
         train_mask = val_mask = test_mask = torch.zeros(g.num_nodes())
 
         rand_inds = torch.tensor(range(g.num_nodes()))
@@ -104,9 +106,11 @@ def main(args):
     # training loop
     print("start training...")
     dur = []
+    prev_fscore = 0
     for epoch in range(config["num_epochs"]):
         model.train()
         t0 = time.time()
+
         train_acc = 0
         train_fscore = 0
         for step, (input_nodes, sub_g, blocks) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True)):
@@ -141,9 +145,11 @@ def main(args):
             dur.append(t1 - t0)
         with torch.no_grad():
             pred = model.inference(val_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
-            val_fscore = f1_score(val_labels.detach().cpu().numpy(), torch.argmax(pred, dim=1).detach().cpu().numpy(), average='weighted')
+            val_fscore = f1_score(val_labels.cpu().numpy(), torch.argmax(pred, dim=1).cpu().numpy(), average='weighted')
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
+            if val_fscore > prev_fscore:
+                torch.save(model.state_dict(), "./data/saved_models/GraphSMOTE.pth")
             scheduler.step(val_acc)
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Train f1 score {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f} | Time: {:.4f}".
             format(epoch, train_acc/(step+1), loss.item(), train_fscore/(step+1), val_acc, val_loss, val_fscore, np.average(dur)))
