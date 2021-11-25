@@ -21,7 +21,7 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
     timing_records = []
     if n_gpus > 1:
         dist_init_method = 'tcp://{master_ip}:{master_port}'.format(
-            master_ip='127.0.0.1', master_port='12345')
+            master_ip='127.0.0.1', master_port='12346')
         world_size = n_gpus
         torch.distributed.init_process_group(backend="nccl",
                                              init_method=dist_init_method,
