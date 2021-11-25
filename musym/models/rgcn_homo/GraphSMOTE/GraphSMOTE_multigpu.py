@@ -211,5 +211,5 @@ if __name__ == '__main__':
     args = argparser.parse_args()
 
     print(args)
-    torch.multiprocessing.set_start_method('spawn')
+    # torch.multiprocessing.set_start_method('spawn')
     main(args)
