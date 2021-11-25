@@ -24,7 +24,7 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
             master_ip='127.0.0.1', master_port='12345')
         world_size = n_gpus
         torch.distributed.init_process_group(backend="nccl",
-                                             # init_method=dist_init_method,
+                                             init_method=dist_init_method,
                                              world_size=world_size,
                                              rank=proc_id)
     torch.cuda.set_device(dev_id)
@@ -162,7 +162,6 @@ def main(args):
     # Pack data
     data = n_classes, train_g, val_g, test_g
 
-    # torch.multiprocessing.set_start_method('spawn')
     result_queue = mp.Queue()
     procs = []
     for proc_id in range(n_gpus):
@@ -212,4 +211,5 @@ if __name__ == '__main__':
     args = argparser.parse_args()
 
     print(args)
+    torch.multiprocessing.set_start_method('spawn')
     main(args)

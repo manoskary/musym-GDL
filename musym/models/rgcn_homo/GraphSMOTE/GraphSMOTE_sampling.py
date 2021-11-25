@@ -148,8 +148,8 @@ def main(args):
             val_fscore = f1_score(val_labels.cpu().numpy(), torch.argmax(pred, dim=1).cpu().numpy(), average='weighted')
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
-            if val_fscore > prev_fscore:
-                torch.save(model.state_dict(), "./data/saved_models/GraphSMOTE.pth")
+            # if val_fscore > prev_fscore:
+            #     torch.save(model.state_dict(), "./data/saved_models/GraphSMOTE.pth")
             scheduler.step(val_acc)
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Train f1 score {:.4f} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f} | Time: {:.4f}".
             format(epoch, train_acc/(step+1), loss.item(), train_fscore/(step+1), val_acc, val_loss, val_fscore, np.average(dur)))
