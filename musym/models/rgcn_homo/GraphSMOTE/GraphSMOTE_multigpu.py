@@ -1,3 +1,10 @@
+import torch
+torch.manual_seed(0)
+import random
+random.seed(0)
+import numpy as np
+np.random.seed(0)
+
 import dgl
 import torch
 import torch.nn as nn
@@ -7,32 +14,27 @@ import torch.multiprocessing as mp
 import time
 import math, os
 import numpy as np
+import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
-from musym.benchmark.utils import thread_wrapped_func
 from models import GraphSMOTE
+from tqdm import tqdm
 
 from sklearn.metrics import f1_score
 from musym.utils import load_and_save
 
 
-
-def run(result_queue, proc_id, n_gpus, config, devices, data):
-    dev_id = devices[proc_id]
-    timing_records = []
-    if n_gpus > 1:
-        dist_init_method = 'tcp://{master_ip}:{master_port}'.format(
-            master_ip='127.0.0.1', master_port='12346')
-        world_size = n_gpus
-        torch.distributed.init_process_group(backend="nccl",
-                                             init_method=dist_init_method,
-                                             world_size=world_size,
-                                             rank=proc_id)
+def run(rank, n_gpus, config, data):
+    dev_id = proc_id = rank
     torch.cuda.set_device(dev_id)
 
+    # Unpack Data
     n_classes, train_g, val_g, test_g = data
 
     train_nfeat = train_g.ndata.pop('feat')
     train_labels = train_g.ndata.pop('label')
+
+    val_nfeat = val_g.ndata.pop('feat')
+    val_labels = val_g.ndata.pop('label')
 
     train_nfeat = train_nfeat.to(dev_id)
     train_labels = train_labels.to(dev_id)
@@ -44,15 +46,22 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
     train_eids = torch.split(train_eids, math.ceil(
         len(train_eids) / n_gpus))[proc_id]
 
+
+    if isinstance(config["fan_out"], str):
+        fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
+    else :
+        fanouts = config["fan_out"]
+
     # Create PyTorch DataLoader for constructing blocks
-    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler(
-        [int(fanout) for fanout in args.fan_out.split(',')])
+    cuda = torch.device('cuda')
+    graph_sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
     dataloader = dgl.dataloading.EdgeDataLoader(
         train_g,
         train_eids,
         graph_sampler,
+        device=cuda,
         batch_size=config["batch_size"],
-        shuffle=False,
+        shuffle=True,
         drop_last=False,
         num_workers=config["num_workers"],
     )
@@ -72,14 +81,15 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
     for epoch in range(config["num_epochs"]):
         model.train()
         t0 = time.time()
-        for step, (input_nodes, sub_g, blocks) in enumerate(dataloader):
+        tq_loader = enumerate(tqdm(dataloader, position=0, leave=True)) if proc_id == 0 else enumerate(dataloader)
+        for step, (input_nodes, sub_g, blocks) in tq_loader:
             if proc_id == 0:
                 tic_step = time.time()
 
             # Load the input features as well as output labels
             blocks = [block.int().to(dev_id) for block in blocks]
-            batch_inputs = blocks[0].srcdata['feat']
-            batch_labels = blocks[-1].dstdata['label']
+            batch_inputs = train_nfeat[input_nodes].to(dev_id)
+            batch_labels = train_labels[sub_g.ndata["idx"]].to(dev_id)
             adj = sub_g.adj(ctx=dev_id).to_dense()
 
             # Compute loss and prediction
@@ -88,26 +98,33 @@ def run(result_queue, proc_id, n_gpus, config, devices, data):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
-            if proc_id == 0:
-                timing_records.append(time.time() - tic_step)
-
             if step >= 50:
                 break
+        if n_gpus > 1:
+            torch.distributed.barrier()
+        if isinstance(model, DistributedDataParallel):
+            eval_model = model.module
+        else:
+            eval_model = model
         with torch.no_grad():
-            val_labels = val_g.ndata["label"]
-            pred = model.inference(val_g, device=dev_id, batch_size=config["batch_size"], num_workers=config["num_workers"])
-            val_fscore = f1_score(val_labels.detach().numpy(), torch.argmax(pred, dim=1).detach().numpy(),
+            main_device = 0
+            eval_model = eval_model.to(main_device)
+            pred = eval_model.inference(val_g, node_features=val_nfeat, labels=val_labels, device=0, batch_size=config["batch_size"], num_workers=config["num_workers"])
+            val_fscore = f1_score(val_labels.numpy(), torch.argmax(pred, dim=1).detach().numpy(),
                                   average='weighted')
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
         print("Epoch {:05d} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f}".format(epoch, val_acc, val_loss, val_fscore))
 
-    if n_gpus > 1:
-        torch.distributed.barrier()
-    if proc_id == 0:
-        result_queue.put(np.array(timing_records))
 
+
+
+def init_process(rank, world_size, fn, config, data, backend='nccl'):
+    """ Initialize the distributed environment. """
+    os.environ['MASTER_ADDR'] = "140.78.124.136"
+    os.environ['MASTER_PORT'] = '29500'
+    torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
+    fn(rank, world_size, config, data)
 
 
 def main(args):
@@ -123,8 +140,6 @@ def main(args):
 
     # --------------- Dataset Loading -------------------------
     g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
-
-
 
     if "train_mask" in g.ndata.keys() and "val_mask" in g.ndata.keys() and "test_mask" in g.ndata.keys():
         train_mask = g.ndata['train_mask']
@@ -152,7 +167,6 @@ def main(args):
     val_g = g.subgraph(torch.nonzero(val_mask)[:, 0])
     test_g = g.subgraph(torch.nonzero(test_mask)[:, 0])
 
-
     # Create csr/coo/csc formats before launching training processes with multi-gpu.
     # This avoids creating certain formats in each sub-process, which saves momory and CPU.
     train_g.create_formats_()
@@ -162,28 +176,22 @@ def main(args):
     # Pack data
     data = n_classes, train_g, val_g, test_g
 
-    result_queue = mp.Queue()
-    procs = []
-    for proc_id in range(n_gpus):
-        p = mp.Process(target=thread_wrapped_func(run),
-                       args=(result_queue, proc_id, n_gpus, config, devices, data)
-                       )
+
+    processes = []
+    mp.set_start_method("spawn")
+    for rank in range(n_gpus):
+        p = mp.Process(target=init_process, args=(rank, n_gpus, run, config, data))
         p.start()
-        procs.append(p)
-    for p in procs:
+        processes.append(p)
+
+    for p in processes:
         p.join()
-    time_records = result_queue.get(block=False)
-    num_exclude = 10 # exclude first 10 iterations
-    if len(time_records) < 15:
-        # exclude less if less records
-        num_exclude = int(len(time_records)*0.3)
-    return np.mean(time_records[num_exclude:])
 
 
 
 if __name__ == '__main__':
     import argparse
-    argparser = argparse.ArgumentParser(description='GraphSAGE')
+    argparser = argparse.ArgumentParser(description='GraphSMOTE_multigpu')
     argparser.add_argument('--gpu', type=int, default=-1,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
@@ -196,7 +204,7 @@ if __name__ == '__main__':
                            help="Weight for L2 loss")
     argparser.add_argument("--fan-out", default=[5, 10])
     argparser.add_argument('--shuffle', type=int, default=True)
-    argparser.add_argument("--batch-size", type=int, default=2048)
+    argparser.add_argument("--batch-size", type=int, default=1024)
     argparser.add_argument("--num-workers", type=int, default=4)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
@@ -209,7 +217,7 @@ if __name__ == '__main__':
     argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
     argparser.add_argument("--unlog", action="store_true", help="Unbinds wandb.")
     args = argparser.parse_args()
+    args.server_ip = "140.78.124.136"
 
     print(args)
-    # torch.multiprocessing.set_start_method('spawn')
     main(args)
