@@ -24,10 +24,8 @@ def main(args):
     config["log"] = False if config["unlog"] else True
 
     # --------------- Dataset Loading -------------------------
-    g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
-    # dataset = dgl.data.CoraGraphDataset()
-    # g = dataset[0]
-    # n_classes = dataset.num_classes
+    # g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
+    g, n_classes = load_imbalanced_local("cora")
 
     if "train_mask" in g.ndata.keys() and "val_mask" in g.ndata.keys() and "test_mask" in g.ndata.keys():
         train_mask = g.ndata['train_mask']
@@ -62,9 +60,11 @@ def main(args):
 
     # Validation and Testing
     val_g = g.subgraph(torch.nonzero(val_mask)[:, 0])
-    val_labels = val_g.ndata['label']
+    val_labels = val_g.ndata.pop('label')
+    val_feat = val_g.ndata.pop('feat')
     test_g = g.subgraph(torch.nonzero(test_mask)[:, 0])
     test_labels = test_g.ndata['label']
+    test_feat = test_g.ndata['feat']
 
     # check cuda
     use_cuda = config["gpu"] >= 0 and torch.cuda.is_available()
@@ -91,7 +91,6 @@ def main(args):
         batch_size = config["batch_size"],
         drop_last=True,
         num_workers=config["num_workers"],
-        pin_memory=True,
         persistent_workers=config["num_workers"]>0,
     )
 
@@ -119,7 +118,7 @@ def main(args):
             # batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"]).to(device)
             # Hack to track the node idx for NodePred layer (SAGE) not the same as block or input nodes
             # batch_labels = labels[sub_g.ndata['idx']].to(device)
-            # blocks = [block.int().to(device) for block in blocks]
+            blocks = [block.int().to(device) for block in blocks]
             batch_labels = blocks[-1].dstdata["label"]
             batch_inputs = blocks[0].srcdata["feat"]
             # The features for the loaded subgraph
@@ -145,7 +144,7 @@ def main(args):
         if epoch > 5:
             dur.append(t1 - t0)
         with torch.no_grad():
-            pred = model.inference(val_g, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
+            pred = model.inference(val_g, node_features=val_feat, labels=val_labels, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
             val_fscore = f1_score(val_labels.cpu().numpy(), torch.argmax(pred, dim=1).cpu().numpy(), average='weighted')
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
@@ -159,7 +158,7 @@ def main(args):
         if epoch%5==0 and epoch != 0:
             model.eval()
             with torch.no_grad():
-                pred = model.inference(test_g, device=device, batch_size=config["batch_size"],
+                pred = model.inference(test_g, node_features=test_feat, labels=test_labels, device=device, batch_size=config["batch_size"],
                                        num_workers=config["num_workers"])
                 test_loss = F.cross_entropy(pred, test_labels)
                 test_acc = (torch.argmax(pred, dim=1) == test_labels.long()).float().sum() / len(pred)
@@ -181,7 +180,7 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
-    argparser.add_argument('--num-epochs', type=int, default=200)
+    argparser.add_argument('--num-epochs', type=int, default=20)
     argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
     argparser.add_argument('--lr', type=float, default=1e-2)
@@ -190,7 +189,7 @@ if __name__ == '__main__':
                            help="Weight for L2 loss")
     argparser.add_argument("--fan-out", default=[5, 10])
     argparser.add_argument('--shuffle', type=int, default=True)
-    argparser.add_argument("--batch-size", type=int, default=1024)
+    argparser.add_argument("--batch-size", type=int, default=128)
     argparser.add_argument("--num-workers", type=int, default=0)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
@@ -205,6 +204,7 @@ if __name__ == '__main__':
     args = argparser.parse_args()
 
     wandb.login()
+
 
     print(args)
     main(args)
