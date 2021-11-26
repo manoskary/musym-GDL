@@ -271,15 +271,14 @@ class GraphSMOTE(nn.Module):
 		return x, y.type(torch.long), loss
 
 	#TODO fix that.
-	def inference(self, g, device, batch_size, num_workers=0):
+	def inference(self, g, node_features, labels, device, batch_size, num_workers=0):
 		g.ndata['idx'] = torch.tensor(range(g.number_of_nodes()))
-		node_features = g.ndata['feat']
-		labels = g.ndata["label"]
 		sampler = dgl.dataloading.MultiLayerFullNeighborSampler(self.n_layers)
 		dataloader = dgl.dataloading.EdgeDataLoader(
 			g,
 			torch.arange(g.number_of_edges()),
 			sampler,
+			device=device,
 			batch_size=batch_size,
 			shuffle=False,
 			drop_last=False,
@@ -289,7 +288,7 @@ class GraphSMOTE(nn.Module):
 		for input_nodes, sub_g, blocks in tqdm(dataloader, position=0, leave=True):
 			blocks = [block.int().to(device) for block in blocks]
 			batch_inputs = node_features[input_nodes].to(device)
-			batch_labels = labels[input_nodes].to(device)
+			batch_labels = labels[sub_g.ndata["idx"]].to(device)
 
 			# feat_inputs = sub_g.ndata["feat"].to(device)
 
