@@ -86,6 +86,7 @@ def main(args):
         train_g,
         eids,
         sampler,
+        device=device,
         shuffle=config["shuffle"],
         batch_size = config["batch_size"],
         drop_last=True,
@@ -118,7 +119,7 @@ def main(args):
             # batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"]).to(device)
             # Hack to track the node idx for NodePred layer (SAGE) not the same as block or input nodes
             # batch_labels = labels[sub_g.ndata['idx']].to(device)
-            blocks = [block.int().to(device) for block in blocks]
+            # blocks = [block.int().to(device) for block in blocks]
             batch_labels = blocks[-1].dstdata["label"]
             batch_inputs = blocks[0].srcdata["feat"]
             # The features for the loaded subgraph
