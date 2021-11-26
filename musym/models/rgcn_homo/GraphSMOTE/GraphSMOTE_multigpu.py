@@ -100,21 +100,21 @@ def run(rank, n_gpus, config, data):
             optimizer.step()
             if step >= 50:
                 break
-        if n_gpus > 1:
-            torch.distributed.barrier()
-        if isinstance(model, DistributedDataParallel):
-            eval_model = model.module
-        else:
-            eval_model = model
-        with torch.no_grad():
-            main_device = 0
-            eval_model = eval_model.to(main_device)
-            pred = eval_model.inference(val_g, node_features=val_nfeat, labels=val_labels, device=0, batch_size=config["batch_size"], num_workers=config["num_workers"])
-            val_fscore = f1_score(val_labels.numpy(), torch.argmax(pred, dim=1).detach().numpy(),
-                                  average='weighted')
-            val_loss = F.cross_entropy(pred, val_labels)
-            val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
-        print("Epoch {:05d} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f}".format(epoch, val_acc, val_loss, val_fscore))
+    if n_gpus > 1:
+        torch.distributed.barrier()
+    if isinstance(model, DistributedDataParallel):
+        eval_model = model.module
+    else:
+        eval_model = model
+    with torch.no_grad():
+        main_device = 0
+        eval_model = eval_model.to(main_device)
+        pred = eval_model.inference(val_g, node_features=val_nfeat, labels=val_labels, device=0, batch_size=config["batch_size"], num_workers=config["num_workers"])
+        val_fscore = f1_score(val_labels.numpy(), torch.argmax(pred, dim=1).detach().numpy(),
+                              average='weighted')
+        val_loss = F.cross_entropy(pred, val_labels)
+        val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
+    print("Epoch {:05d} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f}".format(epoch, val_acc, val_loss, val_fscore))
 
 
 
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=-1,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
-    argparser.add_argument('--num-epochs', type=int, default=100)
+    argparser.add_argument('--num-epochs', type=int, default=5)
     argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
     argparser.add_argument('--lr', type=float, default=1e-2)
