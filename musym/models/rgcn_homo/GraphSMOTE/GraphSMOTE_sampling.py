@@ -24,8 +24,8 @@ def main(args):
     config["log"] = False if config["unlog"] else True
 
     # --------------- Dataset Loading -------------------------
-    # g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
-    g, n_classes = load_imbalanced_local("cora")
+    g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
+    # g, n_classes = load_imbalanced_local("cora")
 
     if "train_mask" in g.ndata.keys() and "val_mask" in g.ndata.keys() and "test_mask" in g.ndata.keys():
         train_mask = g.ndata['train_mask']
