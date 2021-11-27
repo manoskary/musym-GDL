@@ -18,6 +18,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 from models import GraphSMOTE
 from tqdm import tqdm
+import wandb
 
 from sklearn.metrics import f1_score
 from musym.utils import load_and_save
@@ -60,10 +61,11 @@ def run(rank, n_gpus, config, data):
         train_eids,
         graph_sampler,
         device=cuda,
+        use_ddp=True,
         batch_size=config["batch_size"],
         shuffle=True,
         drop_last=False,
-        num_workers=config["num_workers"],
+        num_workers=0,
     )
 
     # Define model and optimizer
@@ -115,7 +117,7 @@ def run(rank, n_gpus, config, data):
         val_loss = F.cross_entropy(pred, val_labels)
         val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
     print("Epoch {:05d} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f}".format(epoch, val_acc, val_loss, val_fscore))
-
+    wandb.log({"val_fscore" : val_fscore, "val_loss":val_loss, "val_acc":val_acc})
 
 
 
@@ -173,6 +175,9 @@ def main(args):
     val_g.create_formats_()
     test_g.create_formats_()
 
+    # --------------------- Init WANDB ---------------------------------
+    wandb.init(project="SMOTE", group="GraphSMOTE-multigpu", job_type="Cadence-Detection", config=config)
+
     # Pack data
     data = n_classes, train_g, val_g, test_g
 
@@ -195,7 +200,7 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=-1,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
-    argparser.add_argument('--num-epochs', type=int, default=5)
+    argparser.add_argument('--num-epochs', type=int, default=50)
     argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
     argparser.add_argument('--lr', type=float, default=1e-2)
@@ -205,7 +210,7 @@ if __name__ == '__main__':
     argparser.add_argument("--fan-out", default=[5, 10])
     argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument("--batch-size", type=int, default=1024)
-    argparser.add_argument("--num-workers", type=int, default=4)
+    argparser.add_argument("--num-workers", type=int, default=0)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
                                 "on GPU when using it to save time for data copy. This may "
@@ -218,6 +223,9 @@ if __name__ == '__main__':
     argparser.add_argument("--unlog", action="store_true", help="Unbinds wandb.")
     args = argparser.parse_args()
     args.server_ip = "140.78.124.136"
+
+
+    wandb.login()
 
     print(args)
     main(args)
