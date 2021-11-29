@@ -97,13 +97,7 @@ def track_acc(data, config=None):
         }
 
     # ------------------------------- Logging INIT ----------------------------------
-    wandb.init(
-        project="bench-GNN",
-        group=data,
-        job_type="GraphSMOTE_sampling",
-        config=config,
-        reinit=True
-    )
+    wandb.init(project="bench-GNN", group=data, job_type="GraphSMOTE_sampling", config=config, reinit=True)
 
 
     train_g, train_nfeat, train_labels, test_g, test_nfeat, test_labels = partition_graph(g)
