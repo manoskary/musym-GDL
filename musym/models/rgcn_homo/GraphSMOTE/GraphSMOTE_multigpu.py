@@ -19,14 +19,21 @@ from torch.nn.parallel import DistributedDataParallel
 from models import GraphSMOTE
 from tqdm import tqdm
 import wandb
+from ray.tune.integration.wandb import wandb_mixin
 
 from sklearn.metrics import f1_score
 from musym.utils import load_and_save
 
-
+@wandb_mixin
 def run(rank, n_gpus, config, data):
+    # --------------------- Init WANDB ---------------------------------
+    if rank == 0 :
+        wandb.init(project="SMOTE", group="GraphSMOTE-multigpu", job_type="Cadence-Detection",
+                   config=config)  # , settings=wandb.Settings(start_method="spawn")
+
     dev_id = proc_id = rank
     torch.cuda.set_device(dev_id)
+    device = torch.device('cuda:' + str(dev_id))
 
     # Unpack Data
     n_classes, train_g, val_g, test_g = data
@@ -54,18 +61,17 @@ def run(rank, n_gpus, config, data):
         fanouts = config["fan_out"]
 
     # Create PyTorch DataLoader for constructing blocks
-    cuda = torch.device('cuda')
     graph_sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
     dataloader = dgl.dataloading.EdgeDataLoader(
         train_g,
         train_eids,
         graph_sampler,
-        device=cuda,
+        device=device,
         use_ddp=True,
         batch_size=config["batch_size"],
         shuffle=True,
         drop_last=False,
-        num_workers=0,
+        num_workers=config["num_workers"]*n_gpus,
     )
 
     # Define model and optimizer
@@ -89,10 +95,9 @@ def run(rank, n_gpus, config, data):
                 tic_step = time.time()
 
             # Load the input features as well as output labels
-            blocks = [block.int().to(dev_id) for block in blocks]
-            batch_inputs = train_nfeat[input_nodes].to(dev_id)
-            batch_labels = train_labels[sub_g.ndata["idx"]].to(dev_id)
-            adj = sub_g.adj(ctx=dev_id).to_dense()
+            batch_inputs = train_nfeat[input_nodes].to(device)
+            batch_labels = train_labels[sub_g.ndata["idx"]].to(device)
+            adj = sub_g.adj(ctx=dev_id).to_dense().to(device)
 
             # Compute loss and prediction
             pred, upsampl_lab, embed_loss = model(blocks, batch_inputs, adj, batch_labels)
@@ -102,29 +107,31 @@ def run(rank, n_gpus, config, data):
             optimizer.step()
             if step >= 50:
                 break
-    if n_gpus > 1:
-        torch.distributed.barrier()
-    if isinstance(model, DistributedDataParallel):
-        eval_model = model.module
-    else:
-        eval_model = model
-    with torch.no_grad():
-        main_device = 0
-        eval_model = eval_model.to(main_device)
-        pred = eval_model.inference(val_g, node_features=val_nfeat, labels=val_labels, device=0, batch_size=config["batch_size"], num_workers=config["num_workers"])
-        val_fscore = f1_score(val_labels.numpy(), torch.argmax(pred, dim=1).detach().numpy(),
-                              average='weighted')
-        val_loss = F.cross_entropy(pred, val_labels)
-        val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
-    print("Epoch {:05d} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f}".format(epoch, val_acc, val_loss, val_fscore))
-    wandb.log({"val_fscore" : val_fscore, "val_loss":val_loss, "val_acc":val_acc})
+        if n_gpus > 1:
+            torch.distributed.barrier()
+        if rank == 0:
+            if isinstance(model, DistributedDataParallel):
+                eval_model = model.module
+            else:
+                eval_model = model
+            with torch.no_grad():
+                main_device = torch.device('cuda:' + str(dev_id))
+                torch.cuda.set_device(0)
+                eval_model = eval_model.to(main_device)
+                pred = eval_model.inference(val_g, node_features=val_nfeat, labels=val_labels, device=0, batch_size=config["batch_size"], num_workers=config["num_workers"])
+                val_fscore = f1_score(val_labels.numpy(), torch.argmax(pred, dim=1).detach().numpy(),
+                                      average='weighted')
+                val_loss = F.cross_entropy(pred, val_labels)
+                val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
+            print("Epoch {:05d} | Val Acc : {:.4f} | Val CE Loss: {:.4f}| Val f1_score: {:4f}".format(epoch, val_acc, val_loss, val_fscore))
+            wandb.log({"val_fscore" : val_fscore, "val_loss":val_loss, "val_acc":val_acc})
 
 
 
 def init_process(rank, world_size, fn, config, data, backend='nccl'):
     """ Initialize the distributed environment. """
     os.environ['MASTER_ADDR'] = "140.78.124.136"
-    os.environ['MASTER_PORT'] = '29500'
+    os.environ['MASTER_PORT'] = config["MASTER_PORT"]
     torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
     fn(rank, world_size, config, data)
 
@@ -175,15 +182,14 @@ def main(args):
     val_g.create_formats_()
     test_g.create_formats_()
 
-    # --------------------- Init WANDB ---------------------------------
-    wandb.init(project="SMOTE", group="GraphSMOTE-multigpu", job_type="Cadence-Detection", config=config)
+
 
     # Pack data
     data = n_classes, train_g, val_g, test_g
 
 
     processes = []
-    mp.set_start_method("spawn")
+    # mp.set_start_method("spawn")
     for rank in range(n_gpus):
         p = mp.Process(target=init_process, args=(rank, n_gpus, run, config, data))
         p.start()
@@ -221,10 +227,11 @@ if __name__ == '__main__':
     argparser.add_argument("--temperature", type=float, default=0.2)
     argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
     argparser.add_argument("--unlog", action="store_true", help="Unbinds wandb.")
+    argparser.add_argument("--MASTER-PORT", type=str, default="2900")
+    argparser.add_argument("--server_ip", type=str, default="140.78.124.136")
     args = argparser.parse_args()
-    args.server_ip = "140.78.124.136"
 
-
+    mp.set_start_method("spawn", force=True)
     wandb.login()
 
     print(args)

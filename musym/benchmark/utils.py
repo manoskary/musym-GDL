@@ -12,6 +12,7 @@ import dgl
 import torch
 import time
 from ogb.nodeproppred import DglNodePropPredDataset
+from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
 from functools import partial, reduce, wraps
 
@@ -227,6 +228,16 @@ def load_ogb_mag():
     return OGBDataset(hg, num_classes, 'paper')
 
 
+def load_blog_catalog():
+    g, n_classes = load_imbalanced_local("BlogCatalog")
+    return OGBDataset(g, n_classes)
+
+
+def load_cora_imbalanced():
+    g, n_classes = load_imbalanced_local("cora")
+    return OGBDataset(g, n_classes)
+
+
 class PinsageDataset:
     def __init__(self, g, user_ntype, item_ntype, textset):
         self._g = g
@@ -317,12 +328,16 @@ def process_data(name):
         return load_ogb_mag()
     elif name == 'nowplaying_rs':
         return load_nowplaying_rs()
+    elif name == "BlogCatalog":
+        return load_blog_catalog()
+    elif name == "CoraImbalanced":
+        return load_cora_imbalanced()
     else:
         raise ValueError('Invalid dataset name:', name)
 
 
 def get_bench_device():
-    device = os.environ.get('DGL_BENCH_DEVICE', 'cpu')
+    device = os.environ.get('DGL_BENCH_DEVICE', 'gpu')
     if device.lower() == "gpu":
         return "cuda:0"
     else:

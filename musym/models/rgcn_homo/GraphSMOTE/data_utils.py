@@ -1,3 +1,4 @@
+import os.path
 import random
 import torch
 import numpy as np
@@ -46,6 +47,7 @@ def load_cora_local(path="data/cora/", dataset="cora"):
     #output: adj, features, labels are all torch.tensor, in the dense form
     #-------------------------------------------------------
 
+    path = os.path.join(os.path.dirname(__file__), path)
     print('Loading {} dataset...'.format(dataset))
 
     idx_features_labels = np.genfromtxt("{}{}.content".format(path, dataset),

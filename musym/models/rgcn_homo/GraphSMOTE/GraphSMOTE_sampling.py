@@ -118,9 +118,8 @@ def main(args):
             # batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"]).to(device)
             # Hack to track the node idx for NodePred layer (SAGE) not the same as block or input nodes
             # batch_labels = labels[sub_g.ndata['idx']].to(device)
-            blocks = [block.int().to(device) for block in blocks]
-            batch_labels = blocks[-1].dstdata["label"]
-            batch_inputs = blocks[0].srcdata["feat"]
+            batch_labels = node_features[input_nodes]
+            batch_inputs = labels[sub_g.ndata["idx"]]
             # The features for the loaded subgraph
             # feat_inputs = sub_g.ndata["feat"].to(device)
             # The adjacency matrix of the subgraph
@@ -129,7 +128,7 @@ def main(args):
                 subgraph_indices = torch.vstack(sub_g.edges())
                 adj = torch.sparse.FloatTensor(subgraph_indices, sub_g.edata["w"], subgraph_shape).to_dense().to(device)
             else:
-                adj = sub_g.adj(ctx=device).to_dense()
+                adj = sub_g.adj(ctx=device).to_dense().to(device)
 
             # Prediction of the GraphSMOTE model
             pred, upsampl_lab, embed_loss = model(blocks, batch_inputs, adj, batch_labels)
