@@ -1,6 +1,7 @@
 import dgl
 import torch
 import torch.nn.functional as F
+import torch.distributed as dist
 import argparse
 import glob
 import os
@@ -11,6 +12,18 @@ from data_utils import load_imbalanced_local
 from torchmetrics import Accuracy
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
+from musym.utils import load_and_save
+
+
+class MyLoader(dgl.dataloading.EdgeDataLoader):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def set_epoch(self, epoch):
+        if self.use_scalar_batcher:
+            self.scalar_batcher.set_epoch(epoch)
+        else:
+            self.dist_sampler.set_epoch(epoch)
 
 
 class SAGELightning(LightningModule):
@@ -71,6 +84,8 @@ class DataModule(LightningDataModule):
             g, n_classes = load_imbalanced_local("cora")
         elif dataset_name == 'BlogCatalog':
             g, n_classes = load_imbalanced_local("BlogCatalog")
+        elif dataset_name == "cad":
+            g, n_classes = load_and_save("cad_basis_homo", os.path.abspath("../data/"))
         else:
             raise ValueError('unknown dataset')
 
@@ -102,7 +117,7 @@ class DataModule(LightningDataModule):
         self.n_classes = n_classes
 
     def train_dataloader(self):
-        return dgl.dataloading.EdgeDataLoader(
+        return MyLoader(
             self.train_g,
             self.train_eld,
             self.sampler,
@@ -110,12 +125,12 @@ class DataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             drop_last=False,
-            use_ddp=True,
+            # use_ddp=True,
             num_workers=self.num_workers,
             )
 
     def val_dataloader(self):
-        return dgl.dataloading.EdgeDataLoader(
+        return MyLoader(
             self.val_g,
             self.val_eid,
             self.sampler,
@@ -123,7 +138,7 @@ class DataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             drop_last=False,
-            use_ddp=True,
+            # use_ddp=True,
             num_workers=self.num_workers)
 
 
@@ -144,13 +159,25 @@ def evaluate(model, g, device):
     return test_acc(torch.softmax(pred, 1), labels.to(pred.device))
 
 
+
+# def setup(rank, world_size):
+#     os.environ['MASTER_ADDR'] = 'localhost'
+#     os.environ['MASTER_PORT'] = '12355'
+#
+#     # initialize the process group
+#     dist.init_process_group("gloo", rank=rank, world_size=world_size)
+#
+# def cleanup():
+#     dist.destroy_process_group()
+
+
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--gpu', type=int, default=-1,
+    argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
-    argparser.add_argument('--dataset', type=str, default='cora')
-    argparser.add_argument('--num-epochs', type=int, default=20)
-    argparser.add_argument('--num-hidden', type=int, default=16)
+    argparser.add_argument('--dataset', type=str, default='cad')
+    argparser.add_argument('--num-epochs', type=int, default=50)
+    argparser.add_argument('--num-hidden', type=int, default=32)
     argparser.add_argument('--num-layers', type=int, default=2)
     argparser.add_argument('--fan-out', type=str, default='10,25')
     argparser.add_argument('--batch-size', type=int, default=1000)
