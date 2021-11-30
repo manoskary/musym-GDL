@@ -134,7 +134,7 @@ dmypy.json
 data/
 artifacts/
 musym/models/tests/
-
+lightning_logs/
 
 # Logging Platforms
 
