@@ -89,9 +89,9 @@ class SMOTE(object):
 				if N != 0:
 					candidates = X[y == i]
 					xs = self.generate(candidates, N, self.k)
-					X = torch.cat((X, xs.to(X.get_device())))
+					X = torch.cat((X, xs.to(X.get_device()))) if X.get_device() >= 0 else torch.cat((X, xs))
 					ys = torch.ones(xs.shape[0]) * i
-					y = torch.cat((y, ys.to(y.get_device())))
+					y = torch.cat((y, ys.to(y.get_device()))) if y.get_device() >= 0 else torch.cat((y, ys))
 		return X, y
 
 # Graphsage layer
