@@ -23,10 +23,9 @@ def select_lighning_model(model):
 
 
 def train_lightning_tune(config, num_epochs=10, num_gpus=0, data_dir="~/data"):
-    if config["gpu"] >= 0:
-        device = torch.device('cuda:%d' % config["gpu"])
-    else:
-        device = torch.device('cpu')
+    # check cuda
+    use_cuda = torch.cuda.is_available()
+    device = torch.device('cuda:%d' % torch.cuda.current_device() if use_cuda else 'cpu')
 
     model, datamodule = select_lighning_model(config["model"])
 
@@ -122,3 +121,7 @@ def bench_tune_lighting():
         name="tune_{}_{}".format(config["dataset"], config["model"]) )
 
     print("Best hyperparameters found were: ", analysis.best_config)
+
+
+if __name__ == "__main__":
+    bench_tune_lighting()

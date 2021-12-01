@@ -6,8 +6,8 @@ import argparse
 import glob
 import os
 
-from models import GraphSMOTE
-from data_utils import load_imbalanced_local
+from musym.models.rgcn_homo.GraphSMOTE.models import GraphSMOTE
+from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
 from torchmetrics import Accuracy
 from pytorch_lightning.callbacks import ModelCheckpoint
