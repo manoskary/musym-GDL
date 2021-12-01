@@ -1,6 +1,21 @@
-import os.path
-import argparse
+"""Benchmark script for Graph Neural Networks
+
+Author : Emmanouil Karystinaios
+
+Reference repo : https://github.com/melkisedeath/musym-GDL
+"""
+# ---------------------------- Standarize Testing Condinditions --------------------------------
 import torch
+torch.manual_seed(0)
+import random
+random.seed(0)
+import numpy as np
+np.random.seed(0)
+
+
+import os
+import argparse
+# import torch
 import torch.nn.functional as F
 from ray import tune
 from ray.tune import CLIReporter
@@ -22,15 +37,16 @@ def select_lighning_model(model):
         raise ValueError("model name {} is not recognized or not implement for Pytorch Lightning.".format(model))
 
 
-def train_lightning_tune(config, num_epochs=10, num_gpus=0, data_dir="~/data"):
+def train_lightning_tune(config):
     # check cuda
     use_cuda = torch.cuda.is_available()
     device = torch.device('cuda:%d' % torch.cuda.current_device() if use_cuda else 'cpu')
 
     model, datamodule = select_lighning_model(config["model"])
-
+    fanouts = [int(_) for _ in config["fan_out"].split(',')]
+    config["num_layers"] = len(fanouts)
     datamodule = datamodule(
-        config["dataset"], config["data_cpu"], [int(_) for _ in config["fan_out"].split(',')],
+        config["dataset"], config["data_cpu"], fanouts,
         device, config["batch_size"], config["num_workers"])
     model = model(
         datamodule.in_feats, ["num_hidden"], datamodule.n_classes, config["num_layers"],
@@ -89,9 +105,9 @@ def bench_tune_lighting():
     config = args if isinstance(args, dict) else vars(args)
     gpus_per_trial = args.gpus_per_trial
     config["num_hidden"] = tune.choice([16, 32, 64])
-    config["num_layers"] = tune.choice(["5, 10", "10, 15", "5", "5, 10, 15"])
+    config["num_layers"] = tune.choice(["5,10", "10,15", "5", "5,10,15"])
     config["lr"] = tune.loguniform(1e-4, 1e-1)
-    config["batch_size"] = tune.choice([128, 512, 1024, 2048])
+    config["batch_size"] = tune.choice([256, 512, 1024, 2048])
 
     scheduler = ASHAScheduler(
         max_t=config["num_epochs"],
@@ -103,11 +119,7 @@ def bench_tune_lighting():
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
     analysis = tune.run(
-        tune.with_parameters(
-            train_lightning_tune,
-            num_epochs=config["num_epochs"],
-            num_gpus=gpus_per_trial,
-            data_dir=args.data_dir),
+        train_lightning_tune,
         resources_per_trial={
             "cpu": 1,
             "gpu": gpus_per_trial
