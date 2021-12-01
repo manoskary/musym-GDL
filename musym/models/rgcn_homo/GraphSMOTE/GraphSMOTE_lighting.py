@@ -27,7 +27,7 @@ class MyLoader(dgl.dataloading.EdgeDataLoader):
             self.dist_sampler.set_epoch(epoch)
 
 
-class SAGELightning(LightningModule):
+class GraphSMOTELightning(LightningModule):
     def __init__(self,
                  in_feats,
                  n_hidden,
@@ -205,7 +205,7 @@ if __name__ == '__main__':
     datamodule = DataModule(
         args.dataset, args.data_cpu, [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers)
-    model = SAGELightning(
+    model = GraphSMOTELightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
         F.relu, args.dropout, args.lr)
 
@@ -224,7 +224,7 @@ if __name__ == '__main__':
     print('Evaluating model in', logdir)
     ckpt = glob.glob(os.path.join(logdir, 'checkpoints', '*'))[0]
 
-    model = SAGELightning.load_from_checkpoint(
+    model = GraphSMOTELightning.load_from_checkpoint(
         checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
     test_acc = evaluate(model, datamodule.test_g, device)
     print('Test accuracy:', test_acc)
