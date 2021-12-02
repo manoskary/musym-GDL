@@ -13,7 +13,7 @@ import numpy as np
 np.random.seed(0)
 
 
-import os
+import os, math
 import argparse
 # import torch
 import torch.nn.functional as F
@@ -21,6 +21,7 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 from ray.tune.integration.pytorch_lightning import TuneReportCallback
+from ray.tune.integration.wandb import WandbLoggerCallback
 
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import Trainer
@@ -37,38 +38,39 @@ def select_lighning_model(model):
         raise ValueError("model name {} is not recognized or not implement for Pytorch Lightning.".format(model))
 
 
-def train_lightning_tune(config):
+def train_lightning_tune(config, num_gpus=0):
     # check cuda
-    use_cuda = torch.cuda.is_available()
-    device = torch.device('cuda:%d' % torch.cuda.current_device() if use_cuda else 'cpu')
+    # use_cuda = torch.cuda.is_available()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model, datamodule = select_lighning_model(config["model"])
     fanouts = [int(_) for _ in config["fan_out"].split(',')]
     config["num_layers"] = len(fanouts)
     datamodule = datamodule(
-        config["dataset"], config["data_cpu"], fanouts,
-        device, config["batch_size"], config["num_workers"])
+        dataset_name=config["dataset"], data_cpu=config["data_cpu"], fan_out=fanouts,
+        batch_size=config["batch_size"], num_workers=config["num_workers"])
     model = model(
-        datamodule.in_feats, ["num_hidden"], datamodule.n_classes, config["num_layers"],
+        datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
         F.relu, config["dropout"], config["lr"])
 
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
-    trainer = Trainer(gpus=[config["gpu"]] if config["gpu"] != -1 else None,
-                      accelerator="auto",
-                      strategy="ddp",
-                      auto_scale_batch_size="binsearch",
-                      max_epochs=config["num_epochs"],
-                      logger=WandbLogger(project="SMOTE", group="GraphSMOTE-Lightning", job_type="Cadence-Detection"),
-                      callbacks=[
-                          checkpoint_callback,
-                          TuneReportCallback(
-                              {
-                                  "loss": "ptl/val_loss",
-                                  "mean_accuracy": "ptl/val_acc"
-                              },
-                              on="validation_end")
-                          ])
+    trainer = Trainer(
+        gpus=math.ceil(num_gpus),
+        # accelerator="auto",
+        # strategy="ddp",
+        auto_scale_batch_size="binsearch",
+        max_epochs=config["num_epochs"],
+        logger=WandbLogger(project="SMOTE", group="GraphSMOTE-Lightning", job_type="Cadence-Detection"),
+        callbacks=[
+          checkpoint_callback,
+          TuneReportCallback(
+              {
+                  "loss": "ptl/val_loss",
+                  "mean_accuracy": "ptl/val_acc"
+              },
+              on="validation_end")
+        ])
     trainer.fit(model, datamodule=datamodule)
 
 
@@ -119,7 +121,10 @@ def bench_tune_lighting():
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
     analysis = tune.run(
-        train_lightning_tune,
+        tune.with_parameters(
+            train_lightning_tune,
+            num_gpus=gpus_per_trial,
+            ),
         resources_per_trial={
             "cpu": 1,
             "gpu": gpus_per_trial
@@ -129,6 +134,9 @@ def bench_tune_lighting():
         config=config,
         num_samples=num_samples,
         scheduler=scheduler,
+        callbacks= [
+            # WandbLoggerCallback(project="SMOTE", group="GraphSMOTE-Lightning", job_type="Cadence-Detection")
+            ],
         progress_reporter=reporter,
         name="tune_{}_{}".format(config["dataset"], config["model"]) )
 

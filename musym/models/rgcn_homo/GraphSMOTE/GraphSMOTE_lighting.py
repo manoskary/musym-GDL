@@ -35,7 +35,8 @@ class GraphSMOTELightning(LightningModule):
                  n_layers,
                  activation,
                  dropout,
-                 lr):
+                 lr,
+        ):
         super().__init__()
         self.save_hyperparameters()
         self.module = GraphSMOTE(in_feats, n_hidden, n_classes, n_layers, activation, dropout)
@@ -47,10 +48,10 @@ class GraphSMOTELightning(LightningModule):
 
     def training_step(self, batch, batch_idx):
         input_nodes, sub_g, mfgs = batch
-        mfgs = [mfg.int().to(device) for mfg in mfgs]
+        mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
-        adj = sub_g.adj().to_dense().to(device)
+        adj = sub_g.adj().to_dense().to(self.device)
         batch_pred, upsampl_lab, embed_loss = self.module(mfgs, batch_inputs, adj, batch_labels)
         loss = F.cross_entropy(batch_pred, upsampl_lab) + embed_loss * 0.000001
         self.train_acc(torch.softmax(batch_pred, 1), upsampl_lab)
@@ -59,7 +60,7 @@ class GraphSMOTELightning(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
-        mfgs = [mfg.int().to(device) for mfg in mfgs]
+        mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
         batch_pred = self.module.encoder(mfgs, batch_inputs)
