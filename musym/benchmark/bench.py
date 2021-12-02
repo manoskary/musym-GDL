@@ -34,6 +34,11 @@ def select_lighning_model(model):
         model = GraphSMOTELightning
         datamodule = DataModule
         return model, datamodule
+    elif model == "SAGE":
+        from musym.benchmark.model_acc.bench_sage_lightning import SAGELightning, DataModule
+        model = SAGELightning
+        datamodule = DataModule
+        return model, datamodule
     else:
         raise ValueError("model name {} is not recognized or not implement for Pytorch Lightning.".format(model))
 
