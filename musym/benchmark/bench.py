@@ -43,12 +43,13 @@ def train_lightning_tune(config, num_gpus=0):
     # use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model, datamodule = select_lighning_model(config["model"])
     fanouts = [int(_) for _ in config["fan_out"].split(',')]
     config["num_layers"] = len(fanouts)
+
+    model, datamodule = select_lighning_model(config["model"])
     datamodule = datamodule(
         dataset_name=config["dataset"], data_cpu=config["data_cpu"], fan_out=fanouts,
-        batch_size=config["batch_size"], num_workers=config["num_workers"])
+        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device)
     model = model(
         datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
         F.relu, config["dropout"], config["lr"])
@@ -66,8 +67,8 @@ def train_lightning_tune(config, num_gpus=0):
           checkpoint_callback,
           TuneReportCallback(
               {
-                  "loss": "ptl/val_loss",
-                  "mean_accuracy": "ptl/val_acc"
+                  "loss": "val_loss",
+                  "mean_accuracy": "val_acc"
               },
               on="validation_end")
         ])
@@ -102,9 +103,11 @@ def bench_tune_lighting():
     config = args if isinstance(args, dict) else vars(args)
     gpus_per_trial = args.gpus_per_trial
     config["num_hidden"] = tune.choice([16, 32, 64])
-    config["num_layers"] = tune.choice(["5,10", "10,15", "5", "5,10,15"])
+    config["fan_out"] = tune.choice(["5,10", "10,15", "5", "5,10,15"])
     config["lr"] = tune.loguniform(1e-4, 1e-1)
-    config["batch_size"] = tune.choice([256, 512, 1024, 2048])
+    config["batch_size"] = tune.choice([512, 1024, 2048])
+
+
 
     scheduler = ASHAScheduler(
         max_t=config["num_epochs"],

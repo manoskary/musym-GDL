@@ -70,12 +70,23 @@ class GraphSMOTELightning(LightningModule):
         else:
             pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
         batch_pred = self.module.classifier(pred_adj, batch_pred)
+        # loss = self.cross_entropy_loss(batch_pred, batch_labels)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val_loss", F.cross_entropy(batch_pred, batch_labels), on_step=True, on_epoch=True)
+
+    # def validation_epoch_end(self, outputs: EPOCH_OUTPUT) -> None:
+    #     avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
+    #     avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
+    #     self.log("ptl/val_loss", avg_loss)
+    #     self.log("ptl/val_accuracy", avg_acc)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
+
+    def cross_entropy_loss(self, logits, labels):
+        return F.nll_loss(logits, labels)
 
 
 class DataModule(LightningDataModule):
