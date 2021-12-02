@@ -54,12 +54,12 @@ def train_lightning_tune(config, num_gpus=0):
         F.relu, config["dropout"], config["lr"])
 
     # Train
-    checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
+    checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
     trainer = Trainer(
         gpus=math.ceil(num_gpus),
         # accelerator="auto",
         # strategy="ddp",
-        auto_scale_batch_size="binsearch",
+        # auto_scale_batch_size="binsearch",
         max_epochs=config["num_epochs"],
         logger=WandbLogger(project="SMOTE", group="GraphSMOTE-Lightning", job_type="Cadence-Detection"),
         callbacks=[
@@ -80,15 +80,10 @@ def bench_tune_lighting():
     argparser.add_argument('--dataset', type=str, default='cad')
     argparser.add_argument('--model', type=str, default='GraphSMOTE')
     argparser.add_argument('--num-epochs', type=int, default=50)
-    argparser.add_argument('--num-hidden', type=int, default=32)
-    argparser.add_argument('--num-layers', type=int, default=2)
-    argparser.add_argument('--num-samples', type=int, default=10)
+    argparser.add_argument('--num-samples', type=int, default=1000)
     argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
-    argparser.add_argument('--fan-out', type=str, default='10,25')
-    argparser.add_argument('--batch-size', type=int, default=1000)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
-    argparser.add_argument('--lr', type=float, default=0.003)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--num-workers', type=int, default=4,
                            help="Number of sampling processes. Use 0 for no extra process.")
