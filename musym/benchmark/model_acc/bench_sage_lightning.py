@@ -1,6 +1,6 @@
 import dgl
 import numpy as np
-import torch
+import torch as torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -47,7 +47,7 @@ class SAGELightning(LightningModule):
         batch_labels = mfgs[-1].dstdata['label']
         batch_pred = self.module(mfgs, batch_inputs)
         loss = F.cross_entropy(batch_pred, batch_labels)
-        self.train_acc(th.softmax(batch_pred, 1), batch_labels)
+        self.train_acc(torch.softmax(batch_pred, 1), batch_labels)
         self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=False)
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True)
         return loss
@@ -59,7 +59,7 @@ class SAGELightning(LightningModule):
         batch_labels = mfgs[-1].dstdata['label']
         batch_pred = self.module(mfgs, batch_inputs)
         loss = F.cross_entropy(batch_pred, batch_labels)
-        self.val_acc(th.softmax(batch_pred, 1), batch_labels)
+        self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
         self.val_precision(torch.softmax(batch_pred, 1), batch_labels)
         self.val_recall(torch.softmax(batch_pred, 1), batch_labels)
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
@@ -68,13 +68,13 @@ class SAGELightning(LightningModule):
         self.log("val_recall", self.val_recall, on_step=True, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
-        optimizer = th.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
 
 
 class DataModule(LightningDataModule):
     def __init__(self, dataset_name, data_cpu=False, fan_out=[10, 25],
-                 device=th.device('cpu'), batch_size=1000, num_workers=4):
+                 device=torch.device('cpu'), batch_size=1000, num_workers=4):
         super().__init__()
         if dataset_name == 'cora':
             g, n_classes = load_imbalanced_local("cora")
@@ -85,13 +85,13 @@ class DataModule(LightningDataModule):
         else:
             raise ValueError('unknown dataset')
 
-        train_nid = th.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
-        val_nid = th.nonzero(g.ndata['val_mask'], as_tuple=True)[0]
-        test_nid = th.nonzero(g.ndata['test_mask'], as_tuple=True)[0]
+        train_nid = torch.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
+        val_nid = torch.nonzero(g.ndata['val_mask'], as_tuple=True)[0]
+        test_nid = torch.nonzero(g.ndata['test_mask'], as_tuple=True)[0]
 
         sampler = dgl.dataloading.MultiLayerNeighborSampler([int(_) for _ in fan_out])
 
-        dataloader_device = th.device('cpu')
+        dataloader_device = torch.device('cpu')
         if not data_cpu:
             train_nid = train_nid.to(device)
             val_nid = val_nid.to(device)
@@ -142,11 +142,11 @@ def evaluate(model, g, val_nid, device):
     model.eval()
     nfeat = g.ndata['feat']
     labels = g.ndata['label']
-    with th.no_grad():
+    with torch.no_grad():
         pred = model.module.inference(g, nfeat, device, args.batch_size, args.num_workers)
     model.train()
     test_acc = Accuracy()
-    return test_acc(th.softmax(pred[val_nid], -1), labels[val_nid].to(pred.device))
+    return test_acc(torch.softmax(pred[val_nid], -1), labels[val_nid].to(pred.device))
 
 
 if __name__ == '__main__':
@@ -175,9 +175,9 @@ if __name__ == '__main__':
     args = argparser.parse_args()
 
     if args.gpu >= 0:
-        device = th.device('cuda:%d' % args.gpu)
+        device = torch.device('cuda:%d' % args.gpu)
     else:
-        device = th.device('cpu')
+        device = torch.device('cpu')
 
     datamodule = DataModule(
         args.dataset, args.data_cpu, [int(_) for _ in args.fan_out.split(',')],
