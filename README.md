@@ -10,21 +10,26 @@ Cadence and Voice Leading Detection in Symbolic Classical Music is a challenging
 
 #### A typical Heterogenous graph modelling of the musical score
 
-<img src="static/graph_representation.png" alt="score2graph_representation" style="zoom:50%;" />
+<img src="static/heterogeneous_score_graph.png" alt="score2graph_representation" style="zoom:50%;" />
 
-<img src="static\node_attributes.png" alt="node_attributes" style="zoom:50%;" />
+
+
+#### Equivalent Homogenous graph modelling for the musical score
+
+<img src="static/homogeneous_score_graph.png" alt="score2graph_representation" style="zoom:50%;" />
 
 
 
 ## Dependencies
 
 - pytorch  1+
+- dgl v0.7
+- pytorch-lightning 1.3.4
+- wandb
+- ray
+- pyro-ppl
 
-- dgl v0.6
 
-- pandas
-
-  
 
 ### Quickstart
 
@@ -47,7 +52,7 @@ conda activate musym
 ### Run a experiment
 
 ```shell
-cd musym/models/rgcn_homo
-python entity_classify.py -d cora --gpu 0
+cd musym/benchmark/
+python bench.py --model SAGE --dataset cora
 ```
 
