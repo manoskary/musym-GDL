@@ -9,11 +9,12 @@ import os
 from musym.models.rgcn_homo.GraphSMOTE.models import GraphSMOTE
 from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
-from torchmetrics import Accuracy
+from torchmetrics import Accuracy, Precision, Recall, Metric
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from musym.utils import load_and_save
+
 
 
 class MyLoader(dgl.dataloading.EdgeDataLoader):
@@ -45,6 +46,10 @@ class GraphSMOTELightning(LightningModule):
         # https://torchmetrics.readthedocs.io/en/latest/pages/lightning.html
         self.train_acc = Accuracy()
         self.val_acc = Accuracy()
+        self.val_precision = Precision()
+        self.val_recall = Recall()
+        self.train_loss = torch.nn.CrossEntropyLoss()
+        self.val_loss = torch.nn.CrossEntropyLoss()
 
     def training_step(self, batch, batch_idx):
         input_nodes, sub_g, mfgs = batch
@@ -53,8 +58,9 @@ class GraphSMOTELightning(LightningModule):
         batch_labels = mfgs[-1].dstdata['label']
         adj = sub_g.adj().to_dense().to(self.device)
         batch_pred, upsampl_lab, embed_loss = self.module(mfgs, batch_inputs, adj, batch_labels)
-        loss = F.cross_entropy(batch_pred, upsampl_lab) + embed_loss * 0.000001
+        loss = self.train_loss(batch_pred, upsampl_lab) + embed_loss * 0.000001
         self.train_acc(torch.softmax(batch_pred, 1), upsampl_lab)
+        self.log('train_loss', self.train_loss, prog_bar=False, on_step=True, on_epoch=False)
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=False)
         return loss
 
@@ -72,8 +78,12 @@ class GraphSMOTELightning(LightningModule):
         batch_pred = self.module.classifier(pred_adj, batch_pred)
         # loss = self.cross_entropy_loss(batch_pred, batch_labels)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
+        self.val_loss(batch_pred, batch_labels)
+        self.val_precision(torch.softmax(batch_pred, 1), batch_labels)
+        self.val_recall(torch.softmax(batch_pred, 1), batch_labels)
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
-        self.log("val_loss", F.cross_entropy(batch_pred, batch_labels), on_step=True, on_epoch=True)
+        self.log("val_loss", self.val_precision, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val_loss", self.val_recall, on_step=True, on_epoch=True, sync_dist=True)
 
     # def validation_epoch_end(self, outputs: EPOCH_OUTPUT) -> None:
     #     avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()

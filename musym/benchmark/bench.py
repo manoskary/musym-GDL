@@ -67,8 +67,8 @@ def train_lightning_tune(config, num_gpus=0):
           checkpoint_callback,
           TuneReportCallback(
               {
-                  "loss": "val_loss",
-                  "mean_accuracy": "val_acc"
+                  "loss": "val_loss_epoch",
+                  "mean_accuracy": "val_acc_epoch"
               },
               on="validation_end")
         ])
