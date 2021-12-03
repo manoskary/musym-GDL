@@ -14,12 +14,11 @@ import os
 from musym.models.rgcn_homo.models import SAGE
 from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
-from torchmetrics import Accuracy, Precision, Recall
+from torchmetrics import Accuracy, F1
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from musym.utils import load_and_save
-
 
 class SAGELightning(LightningModule):
     def __init__(self,
@@ -37,8 +36,7 @@ class SAGELightning(LightningModule):
 
         self.train_acc = Accuracy()
         self.val_acc = Accuracy()
-        self.val_precision = Precision()
-        self.val_recall = Recall()
+        self.val_fscore = F1(n_classes, average="macro")
 
     def training_step(self, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
@@ -58,15 +56,12 @@ class SAGELightning(LightningModule):
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
         batch_pred = self.module(mfgs, batch_inputs)
-        batch_pred = self.module(mfgs, batch_inputs)
         loss = F.cross_entropy(batch_pred, batch_labels)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
-        self.val_precision(torch.softmax(batch_pred, 1), batch_labels)
-        self.val_recall(torch.softmax(batch_pred, 1), batch_labels)
+        self.val_fscore(torch.softmax(batch_pred, 1), batch_labels)
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
-        self.log("val_precision", self.val_precision, on_step=True, on_epoch=True, sync_dist=True)
-        self.log("val_recall", self.val_recall, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)

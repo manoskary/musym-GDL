@@ -73,7 +73,9 @@ def train_lightning_tune(config, num_gpus=0):
           TuneReportCallback(
               {
                   "loss": "val_loss_epoch",
-                  "mean_accuracy": "val_acc_epoch"
+                  "mean_accuracy": "val_acc_epoch",
+                  "val_fscore" : "val_fscore_epoch",
+                  # "Train Accuracy" : "train_acc_epoch"
               },
               on="validation_end")
         ])

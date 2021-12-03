@@ -101,7 +101,7 @@ def main(args):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
-    criterion = nn.CrossEntropyLoss(weight=loss_weight)
+    criterion = nn.CrossEntropyLoss()
 
     wandb.watch(model, log_freq=1000)
     # training loop
@@ -140,7 +140,9 @@ def main(args):
             optimizer.step()
             t1 = time.time()
             train_acc += acc
-            train_fscore += f1_score(batch_labels.detach().cpu().numpy(), torch.argmax(pred, dim=1)[:len(batch_labels)].detach().cpu().numpy(), average='macro')
+            temp_fscore = f1_score(batch_labels.detach().cpu().numpy(), torch.argmax(pred, dim=1)[:len(batch_labels)].detach().cpu().numpy(), average='macro')
+            print("Step {:05d} | F score Macro : {:.4f} | Loss : {:.4f} |".format(step, temp_fscore, loss))
+            train_fscore += temp_fscore
         if epoch > 5:
             dur.append(t1 - t0)
         with torch.no_grad():
@@ -190,7 +192,7 @@ if __name__ == '__main__':
     argparser.add_argument("--fan-out", default=[5, 10])
     argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument("--batch-size", type=int, default=128)
-    argparser.add_argument("--num-workers", type=int, default=0)
+    argparser.add_argument("--num-workers", type=int, default=8)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
                                 "on GPU when using it to save time for data copy. This may "

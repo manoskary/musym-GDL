@@ -37,6 +37,7 @@ class GraphSMOTELightning(LightningModule):
                  activation,
                  dropout,
                  lr,
+                 loss_weight = None
         ):
         super().__init__()
         self.save_hyperparameters()
@@ -44,8 +45,8 @@ class GraphSMOTELightning(LightningModule):
         self.lr = lr
         self.train_acc = Accuracy()
         self.val_acc = Accuracy()
-        self.val_precision = Precision()
-        self.val_recall = Recall()
+        self.val_fscore = F1(n_classes, average="macro")
+        self.train_loss = torch.nn.CrossEntropyLoss(weight=loss_weight) if loss_weight else torch.nn.CrossEntropyLoss()
 
     def training_step(self, batch, batch_idx):
         input_nodes, sub_g, mfgs = batch
@@ -54,9 +55,9 @@ class GraphSMOTELightning(LightningModule):
         batch_labels = mfgs[-1].dstdata['label']
         adj = sub_g.adj().to_dense().to(self.device)
         batch_pred, upsampl_lab, embed_loss = self.module(mfgs, batch_inputs, adj, batch_labels)
-        loss = F.cross_entropy(batch_pred, upsampl_lab) + embed_loss * 0.000001
+        loss = self.train_loss(batch_pred, upsampl_lab) + embed_loss * 0.000001
         self.train_acc(torch.softmax(batch_pred, 1), upsampl_lab)
-        self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=False)
+        self.log('train_loss', loss.item(), prog_bar=True, on_step=True, on_epoch=False)
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True)
         return loss
 
@@ -79,8 +80,7 @@ class GraphSMOTELightning(LightningModule):
         self.val_recall(torch.softmax(batch_pred, 1), batch_labels)
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
-        self.log("val_precision", self.val_precision, on_step=True, on_epoch=True, sync_dist=True)
-        self.log("val_recall", self.val_recall, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)
 
     # def validation_epoch_end(self, outputs: EPOCH_OUTPUT) -> None:
     #     avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
