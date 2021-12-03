@@ -42,7 +42,7 @@ class SAGELightning(LightningModule):
 
     def training_step(self, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
-        mfgs = [mfg.int().to(device) for mfg in mfgs]
+        mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
         batch_pred = self.module(mfgs, batch_inputs)
@@ -54,9 +54,10 @@ class SAGELightning(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
-        mfgs = [mfg.int().to(device) for mfg in mfgs]
+        mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
+        batch_pred = self.module(mfgs, batch_inputs)
         batch_pred = self.module(mfgs, batch_inputs)
         loss = F.cross_entropy(batch_pred, batch_labels)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
@@ -118,7 +119,7 @@ class DataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             drop_last=False,
-            num_workers=self.num_workers)
+            num_workers=0)
 
     def val_dataloader(self):
         return dgl.dataloading.NodeDataLoader(
@@ -129,7 +130,7 @@ class DataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             drop_last=False,
-            num_workers=self.num_workers)
+            num_workers=0)
 
 
 def evaluate(model, g, val_nid, device):

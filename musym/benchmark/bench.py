@@ -67,7 +67,7 @@ def train_lightning_tune(config, num_gpus=0):
         # strategy="ddp",
         # auto_scale_batch_size="binsearch",
         max_epochs=config["num_epochs"],
-        logger=WandbLogger(project="SMOTE", group="GraphSMOTE-Lightning", job_type="Cadence-Detection"),
+        # logger=WandbLogger(project="SMOTE", group="{}-Lightning.format(config["model"])", job_type="Cadence-Detection"),
         callbacks=[
           checkpoint_callback,
           TuneReportCallback(
@@ -138,7 +138,7 @@ def bench_tune_lighting():
         num_samples=num_samples,
         scheduler=scheduler,
         callbacks= [
-            # WandbLoggerCallback(project="SMOTE", group="GraphSMOTE-Lightning", job_type="Cadence-Detection")
+            WandbLoggerCallback(project="SMOTE", group="{}-Lightning".format(config["model"]), job_type="Cadence-Detection")
             ],
         progress_reporter=reporter,
         name="tune_{}_{}".format(config["dataset"], config["model"]) )

@@ -228,7 +228,6 @@ class Encoder(nn.Module):
 		self.activation = activation
 		self.dropout = nn.Dropout(dropout)
 		self.layers = nn.ModuleList()
-		# Probably should change nework to GraphSAGE
 		self.layers.append(dglnn.SAGEConv(self.in_feats, self.n_hidden, aggregator_type="pool"))
 		for i in range(n_layers - 1):
 			self.layers.append(dglnn.SAGEConv(self.n_hidden, self.n_hidden, aggregator_type="pool"))
