@@ -57,6 +57,7 @@ def main(args):
     labels = train_g.ndata['label']
     eids = torch.arange(train_g.number_of_edges())
     node_features = train_g.ndata['feat']
+    loss_weight = torch.tensor([1 - (torch.count_nonzero(labels == i) /len(labels))  for i in range(labels.max()+1)])
 
     # Validation and Testing
     val_g = g.subgraph(torch.nonzero(val_mask)[:, 0])
@@ -100,7 +101,7 @@ def main(args):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(weight=loss_weight)
 
     wandb.watch(model, log_freq=1000)
     # training loop
@@ -118,8 +119,8 @@ def main(args):
             # batch_edge_weights = dgl.nn.EdgeWeightNorm(sub_g.edata["w"]).to(device)
             # Hack to track the node idx for NodePred layer (SAGE) not the same as block or input nodes
             # batch_labels = labels[sub_g.ndata['idx']].to(device)
-            batch_labels = node_features[input_nodes]
-            batch_inputs = labels[sub_g.ndata["idx"]]
+            batch_inputs = node_features[input_nodes].to(device)
+            batch_labels = labels[sub_g.ndata["idx"]].to(device)
             # The features for the loaded subgraph
             # feat_inputs = sub_g.ndata["feat"].to(device)
             # The adjacency matrix of the subgraph
@@ -139,12 +140,12 @@ def main(args):
             optimizer.step()
             t1 = time.time()
             train_acc += acc
-            train_fscore += f1_score(batch_labels.detach().cpu().numpy(), torch.argmax(pred, dim=1)[:len(batch_labels)].detach().cpu().numpy(), average='weighted')
+            train_fscore += f1_score(batch_labels.detach().cpu().numpy(), torch.argmax(pred, dim=1)[:len(batch_labels)].detach().cpu().numpy(), average='macro')
         if epoch > 5:
             dur.append(t1 - t0)
         with torch.no_grad():
             pred = model.inference(val_g, node_features=val_feat, labels=val_labels, device=device, batch_size=config["batch_size"], num_workers=config["num_workers"])
-            val_fscore = f1_score(val_labels.cpu().numpy(), torch.argmax(pred, dim=1).cpu().numpy(), average='weighted')
+            val_fscore = f1_score(val_labels.cpu().numpy(), torch.argmax(pred, dim=1).cpu().numpy(), average='macro')
             val_loss = F.cross_entropy(pred, val_labels)
             val_acc = (torch.argmax(pred, dim=1) == val_labels.long()).float().sum() / len(pred)
             # if val_fscore > prev_fscore:
