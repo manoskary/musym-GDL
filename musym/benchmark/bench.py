@@ -39,6 +39,16 @@ def select_lighning_model(model):
         model = SAGELightning
         datamodule = DataModule
         return model, datamodule
+    elif model == "SMOTE":
+        from musym.benchmark.model_acc.bench_smote_lightning import SmoteLightning, DataModule
+        model = SmoteLightning
+        datamodule = DataModule
+        return model, datamodule
+    elif model == "SMOTEmbed":
+        from musym.benchmark.model_acc.bench_smotembed_lightning import SmoteEmbedLightning, DataModule
+        model = SmoteEmbedLightning
+        datamodule = DataModule
+        return model, datamodule
     else:
         raise ValueError("model name {} is not recognized or not implement for Pytorch Lightning.".format(model))
 
@@ -148,5 +158,67 @@ def bench_tune_lighting():
     print("Best hyperparameters found were: ", analysis.best_config)
 
 
-if __name__ == "__main__":
-    bench_tune_lighting()
+
+def bench_lightning():
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('--dataset', type=str, default='cad')
+    argparser.add_argument('--model', type=str, default='GraphSMOTE')
+    argparser.add_argument('--num-epochs', type=int, default=50)
+    argparser.add_argument("--fan-out", type=str, default="5, 10")
+    argparser.add_argument("--lr", type=float, default=1e-4)
+    argparser.add_argument("--batch-size", type=int, default=1024)
+    argparser.add_argument("--num-hidden", type=int, default=64)
+    argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
+    argparser.add_argument('--log-every', type=int, default=20)
+    argparser.add_argument('--eval-every', type=int, default=5)
+    argparser.add_argument('--dropout', type=float, default=0.5)
+    argparser.add_argument('--num-workers', type=int, default=4,
+                           help="Number of sampling processes. Use 0 for no extra process.")
+    argparser.add_argument('--inductive', action='store_true',
+                           help="Inductive learning setting")
+    argparser.add_argument('--data-cpu', action='store_true',
+                           help="By default the script puts the graph, node features and labels "
+                                "on GPU when using it to save time for data copy. This may "
+                                "be undesired if they cannot fit in GPU memory at once. "
+                                "This flag disables that.")
+    args = argparser.parse_args()
+    args.data_dir = os.path.join(os.path.dirname(__file__), "data")
+
+    num_samples = args.num_samples
+    # --------------- Standarize Configuration ---------------------
+    config = args if isinstance(args, dict) else vars(args)
+    config["num_hidden"] = tune.choice([16, 32, 64])
+    config["fan_out"] = tune.choice(["5,10", "10,15", "5", "5,10,15"])
+    config["lr"] = tune.loguniform(1e-4, 1e-1)
+    config["batch_size"] = tune.choice([512, 1024, 2048])
+
+    # check cuda
+    # use_cuda = torch.cuda.is_available()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    fanouts = [int(_) for _ in config["fan_out"].split(',')]
+    config["num_layers"] = len(fanouts)
+
+    model, datamodule = select_lighning_model(config["model"])
+    datamodule = datamodule(
+        dataset_name=config["dataset"], data_cpu=config["data_cpu"], fan_out=fanouts,
+        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device)
+    model = model(
+        datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
+        F.relu, config["dropout"], config["lr"])
+
+    # Train
+    checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
+    trainer = Trainer(
+        gpus=math.ceil(num_gpus),
+        # accelerator="auto",
+        # strategy="ddp",
+        # auto_scale_batch_size="binsearch",
+        max_epochs=config["num_epochs"],
+        logger=WandbLogger(project="Bench-SMOTE", group=config["dataset"], job_type="{}-Lightning".format(config["model"])),
+        callbacks=[
+            checkpoint_callback,
+        ])
+    trainer.fit(model, datamodule=datamodule)
+
+    print("Best hyperparameters found were: ", analysis.best_config)

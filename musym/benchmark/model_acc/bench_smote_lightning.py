@@ -6,7 +6,7 @@ import argparse
 import glob
 import os
 
-from musym.models.rgcn_homo.GraphSMOTE.models import GraphSMOTE
+from musym.models.rgcn_homo.GraphSMOTE.models import SMOTE2Graph
 from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
 from torchmetrics import Accuracy, Precision, Recall
@@ -28,7 +28,7 @@ class MyLoader(dgl.dataloading.EdgeDataLoader):
             self.dist_sampler.set_epoch(epoch)
 
 
-class GraphSMOTELightning(LightningModule):
+class SmoteLightning(LightningModule):
     def __init__(self,
                  in_feats,
                  n_hidden,
@@ -39,9 +39,9 @@ class GraphSMOTELightning(LightningModule):
                  lr,
                  loss_weight = None
         ):
-        super(GraphSMOTELightning, self).__init__()
+        super(SmoteLightning, self).__init__()
         self.save_hyperparameters()
-        self.module = GraphSMOTE(in_feats, n_hidden, n_classes, n_layers, activation, dropout)
+        self.module = SMOTE2Graph(in_feats, n_hidden, n_classes, n_layers, activation, dropout)
         self.lr = lr
         self.train_acc = Accuracy()
         self.val_acc = Accuracy()
@@ -221,7 +221,7 @@ if __name__ == '__main__':
     datamodule = DataModule(
         args.dataset, args.data_cpu, [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers)
-    model = GraphSMOTELightning(
+    model = SmoteLightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
         F.relu, args.dropout, args.lr)
 
@@ -229,7 +229,7 @@ if __name__ == '__main__':
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
     trainer = Trainer(gpus=[args.gpu] if args.gpu != -1 else None,
                       max_epochs=args.num_epochs,
-                      logger=WandbLogger(project="SMOTE", group="GraphSMOTE-Lightning", job_type="Cadence-Detection"),
+                      logger=WandbLogger(project="SMOTE", group="Smote-Lightning", job_type="Cadence-Detection"),
                       callbacks=[checkpoint_callback])
     trainer.fit(model, datamodule=datamodule)
 
@@ -240,7 +240,7 @@ if __name__ == '__main__':
     print('Evaluating model in', logdir)
     ckpt = glob.glob(os.path.join(logdir, 'checkpoints', '*'))[0]
 
-    model = GraphSMOTELightning.load_from_checkpoint(
+    model = SmoteLightning.load_from_checkpoint(
         checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
     test_acc = evaluate(model, datamodule.test_g, device)
     print('Test accuracy:', test_acc)
