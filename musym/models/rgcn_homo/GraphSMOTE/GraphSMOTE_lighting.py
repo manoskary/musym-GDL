@@ -9,7 +9,7 @@ import os
 from musym.models.rgcn_homo.GraphSMOTE.models import GraphSMOTE
 from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
-from torchmetrics import Accuracy, Precision, Recall
+from torchmetrics import Accuracy, F1
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
@@ -76,8 +76,7 @@ class GraphSMOTELightning(LightningModule):
         # loss = self.cross_entropy_loss(batch_pred, batch_labels)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
-        self.val_precision(torch.softmax(batch_pred, 1), batch_labels)
-        self.val_recall(torch.softmax(batch_pred, 1), batch_labels)
+        self.val_fscore(torch.softmax(batch_pred, 1), batch_labels)
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
         self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)

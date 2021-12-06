@@ -9,7 +9,7 @@ import os
 from musym.models.rgcn_homo.GraphSMOTE.models import SMOTE2Graph
 from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
-from torchmetrics import Accuracy, Precision, Recall
+from torchmetrics import Accuracy, F1
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
@@ -61,32 +61,21 @@ class SmoteLightning(LightningModule):
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True)
         return loss
 
+    # TODO fix dependency with neighbohrs this is not working
     def validation_step(self, batch, batch_idx):
-        input_nodes, output_nodes, mfgs = batch
+        input_nodes, sub_g, mfgs = batch
         mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
-        batch_pred = self.module.encoder(mfgs, batch_inputs)
-        pred_adj = self.module.decoder(batch_pred)
-        if pred_adj.get_device() >= 0 :
-            pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
-        else:
-            pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
-        batch_pred = self.module.classifier(pred_adj, batch_pred)
+        adj = mfgs[0].adj().to_dense().to(self.device)
+        batch_pred = self.module.classifier(adj, batch_inputs)
         # loss = self.cross_entropy_loss(batch_pred, batch_labels)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
-        self.val_precision(torch.softmax(batch_pred, 1), batch_labels)
-        self.val_recall(torch.softmax(batch_pred, 1), batch_labels)
+        self.val_fscore(torch.softmax(batch_pred, 1), batch_labels)
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
         self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)
-
-    # def validation_epoch_end(self, outputs: EPOCH_OUTPUT) -> None:
-    #     avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
-    #     avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
-    #     self.log("ptl/val_loss", avg_loss)
-    #     self.log("ptl/val_accuracy", avg_acc)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)

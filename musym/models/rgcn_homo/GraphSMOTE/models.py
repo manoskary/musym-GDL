@@ -248,7 +248,7 @@ class Encoder(nn.Module):
 		return adj
 
 
-class SMOTE2Graph(nn.Module):
+class GraphSMOTE(nn.Module):
 	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1):
 		super(GraphSMOTE, self).__init__()
 		self.n_layers = n_layers
@@ -301,21 +301,19 @@ class SMOTE2Graph(nn.Module):
 		return y
 
 
-class SMOTEmbed(nn.Module):
+class SMOTE2Graph(nn.Module):
 	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1):
 		super(SMOTE2Graph, self).__init__()
 		self.n_layers = n_layers
 		self.n_classes = n_classes
-		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
 		self.decoder = SageDecoder(n_hidden, dropout)
-		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
+		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=n_layers, activation=activation, dropout=dropout)
 		self.smote = SMOTE(dims=in_feats, k=3)
 		self.decoder_loss = EdgeLoss()
 
 	def forward(self, blocks, input_feats, adj, batch_labels):
 		x = input_feats
 		x, y = self.smote.fit_generate(x, batch_labels)
-		x = self.encoder(blocks, x)
 		pred_adj = self.decoder(x)
 		loss = self.decoder_loss(pred_adj, adj)
 		pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()))
@@ -338,4 +336,4 @@ class SMOTEmbed(nn.Module):
 		x = self.encoder(blocks, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
 		x = self.classifier(x)
-		return x, y.type(torch.long), loss
+		return x, y.type(torch.long)

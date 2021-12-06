@@ -161,6 +161,7 @@ def bench_tune_lighting():
 
 def bench_lightning():
     argparser = argparse.ArgumentParser()
+    argparser.add_argument('--gpu', type=int, default=0)
     argparser.add_argument('--dataset', type=str, default='cad')
     argparser.add_argument('--model', type=str, default='GraphSMOTE')
     argparser.add_argument('--num-epochs', type=int, default=50)
@@ -184,17 +185,12 @@ def bench_lightning():
     args = argparser.parse_args()
     args.data_dir = os.path.join(os.path.dirname(__file__), "data")
 
-    num_samples = args.num_samples
     # --------------- Standarize Configuration ---------------------
     config = args if isinstance(args, dict) else vars(args)
-    config["num_hidden"] = tune.choice([16, 32, 64])
-    config["fan_out"] = tune.choice(["5,10", "10,15", "5", "5,10,15"])
-    config["lr"] = tune.loguniform(1e-4, 1e-1)
-    config["batch_size"] = tune.choice([512, 1024, 2048])
 
     # check cuda
-    # use_cuda = torch.cuda.is_available()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = torch.cuda.is_available() and config["gpu"] >= 0
+    device = torch.device('cuda:%d' % config["gpu"] if use_cuda else "cpu")
 
     fanouts = [int(_) for _ in config["fan_out"].split(',')]
     config["num_layers"] = len(fanouts)
@@ -210,7 +206,7 @@ def bench_lightning():
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
     trainer = Trainer(
-        gpus=math.ceil(num_gpus),
+        gpus=config["gpu"],
         # accelerator="auto",
         # strategy="ddp",
         # auto_scale_batch_size="binsearch",
@@ -221,4 +217,7 @@ def bench_lightning():
         ])
     trainer.fit(model, datamodule=datamodule)
 
-    print("Best hyperparameters found were: ", analysis.best_config)
+
+
+if __name__ == "__main__":
+    bench_lightning()

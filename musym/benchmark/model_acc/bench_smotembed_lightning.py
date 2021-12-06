@@ -43,9 +43,9 @@ class SmoteEmbedLightning(LightningModule):
         mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
-        batch_pred = self.module(mfgs, batch_inputs, batch_labels)
-        loss = F.cross_entropy(batch_pred, batch_labels)
-        self.train_acc(torch.softmax(batch_pred, 1), batch_labels)
+        batch_pred, upsampl_lab = self.module(mfgs, batch_inputs, batch_labels)
+        loss = F.cross_entropy(batch_pred, upsampl_lab)
+        self.train_acc(torch.softmax(batch_pred, 1), upsampl_lab)
         self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=False)
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True)
         return loss
