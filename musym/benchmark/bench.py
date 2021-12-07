@@ -73,9 +73,6 @@ def train_lightning_tune(config, num_gpus=0):
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
     trainer = Trainer(
         gpus=math.ceil(num_gpus),
-        # accelerator="auto",
-        # strategy="ddp",
-        # auto_scale_batch_size="binsearch",
         max_epochs=config["num_epochs"],
         # logger=WandbLogger(project="SMOTE", group="{}-Lightning.format(config["model"])", job_type="Cadence-Detection"),
         callbacks=[
@@ -207,9 +204,6 @@ def bench_lightning():
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
     trainer = Trainer(
         gpus=config["gpu"],
-        # accelerator="auto",
-        # strategy="ddp",
-        # auto_scale_batch_size="binsearch",
         max_epochs=config["num_epochs"],
         logger=WandbLogger(project="Bench-SMOTE", group=config["dataset"], job_type="{}-Lightning".format(config["model"])),
         callbacks=[
