@@ -100,8 +100,8 @@ class DataModule(LightningDataModule):
             g, n_classes = load_imbalanced_local("cora")
         elif dataset_name == 'BlogCatalog':
             g, n_classes = load_imbalanced_local("BlogCatalog")
-        elif dataset_name == "twitter":
-            g, n_classes = load_imbalanced_local("twitter")
+        elif dataset_name == "reddit":
+            g, n_classes = load_imbalanced_local("reddit")
         elif dataset_name == "cad":
             g, n_classes = load_and_save("cad_basis_homo", os.path.abspath("../data/"))
         else:

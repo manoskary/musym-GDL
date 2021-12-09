@@ -116,8 +116,8 @@ def bench_tune_lighting():
     # --------------- Standarize Configuration ---------------------
     config = args if isinstance(args, dict) else vars(args)
     gpus_per_trial = args.gpus_per_trial
-    config["num_hidden"] = tune.choice([16, 32, 64])
-    config["fan_out"] = tune.choice(["5,10", "10,15", "5", "5,10,15"])
+    config["num_hidden"] = tune.choice([32, 64])
+    config["fan_out"] = tune.choice(["5,10", "5,10,15"])
     config["lr"] = tune.loguniform(1e-4, 1e-1)
     config["batch_size"] = tune.choice([512, 1024, 2048])
 
@@ -147,7 +147,7 @@ def bench_tune_lighting():
         num_samples=num_samples,
         scheduler=scheduler,
         callbacks= [
-            WandbLoggerCallback(project="SMOTE", group="{}-Lightning".format(config["model"]), job_type="Cadence-Detection")
+            WandbLoggerCallback(project="SMOTE", group="{}-Lightning".format(config["model"]), job_type=config["dataset"])
             ],
         progress_reporter=reporter,
         name="tune_{}_{}".format(config["dataset"], config["model"]) )

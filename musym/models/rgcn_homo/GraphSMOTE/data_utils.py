@@ -113,61 +113,17 @@ def load_data_Blog():#
     return g
 
 
-def load_data_twitter():
-    pathjoin = lambda x: os.path.join(os.path.dirname(__file__), os.path.normpath(x))
-    adj_path = pathjoin('data/twitter/twitter.csv')
-    fake_id_path = pathjoin('data/twitter/twitter_fake_ids.csv')
-
-    adj = np.loadtxt(adj_path, delimiter=',', skiprows=1)  # (total: 16011444 edges, 5384162 nodes)
-    adj = adj.astype(int)
-    adj = np.array(adj, dtype=int)
-    fake_node = np.genfromtxt(fake_id_path, delimiter=',', skip_header=1, usecols=(0), dtype=int)  # (12437)
-
-
-    '''generated edgelist for deepwalk for embedding
-    np.savetxt('data/twitter/twitter_edges', adj,fmt='%d')
-    '''
-
-    # process adj:
-    adj[adj > 50000] = 0  # save top 50000 node, start from 1
-    adj = sp.coo_matrix((np.ones(len(adj)), (adj[:, 0], adj[:, 1])), shape=(adj.max() + 1, adj.max() + 1),
-                        dtype=np.float32)
-    adj = np.array(adj.todense())
-    adj = adj[1:, 1:]
-    # adj = adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
-    adj = sp.coo_matrix(adj)
-
-    fake_node = np.sort(fake_node)
-    fake_node = fake_node[fake_node <= 50000]
-    fake_id = fake_node - 1
-
-    # process label:
-    labels = np.zeros((50000,), dtype=int)
-    labels[fake_id] = 1
-
-    # filtering out outliers:
-    node_degree = adj.sum(axis=1)
-    chosen_idx = np.arange(50000)[node_degree >= 4]
-
-    # embed need to be read sequentially, due to the size
-    embed = np.genfromtxt(pathjoin('data/twitter/twitter.embeddings_64'), max_rows=50000)
-    feature = np.zeros((embed.shape[0], embed.shape[1] - 1))
-    feature[embed[:, 0].astype(int), :] = embed[:, 1:]
-    features = normalize(feature)
-
-    adj = adj[chosen_idx, :][:, chosen_idx]  # shape:
-    labels = labels[chosen_idx]  # shape:
-    features = features[chosen_idx]
-
-    features = torch.FloatTensor(np.array(features.todense()))
-    labels = torch.LongTensor(labels)
-
-    utils.print_edges_num(adj.todense(), labels)
-
-    g = dgl.from_scipy(adj, eweight_name="w")
-    g.ndata["label"] = torch.LongTensor(labels)
-    g.ndata["feat"] = torch.FloatTensor(features)
-
+def load_data_reddit():
+    dataset = dgl.data.RedditDataset()
+    g = dataset[0]
+    print(
+        "The Reddit Dataset : \n num classes = {} \n feature size = {} \n Num nodes = {} ".format(
+            dataset.num_classes,
+            g.ndata["feat"].shape[1],
+            g.num_nodes()
+        )
+    )
+    print()
     return g
 
 
@@ -266,9 +222,9 @@ def load_imbalanced_local(name):
         g = load_data_Blog()
         im_class_num = 14  # set it to be the number less than 100
         class_sample_num = 20
-    elif name == "twitter":
-        g = load_data_twitter()
-        im_class_num = 1
+    elif name == "reddit":
+        g = load_data_reddit()
+        im_class_num = 5
         class_sample_num = 20  # not used
     else:
         raise ValueError("Unknown dataset name")
@@ -297,7 +253,7 @@ def load_imbalanced_local(name):
 
 
 if __name__ == '__main__':
-    g, n_classes = load_imbalanced_local("twitter")
+    g, n_classes = load_imbalanced_local("reddit")
     g, n_classes = load_imbalanced_local("cora")
     g, n_classes = load_imbalanced_local("BlogCatalog")
 
