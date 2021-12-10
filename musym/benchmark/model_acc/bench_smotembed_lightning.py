@@ -14,7 +14,7 @@ import os
 from musym.models.rgcn_homo.GraphSMOTE.models import SMOTEmbed
 from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
-from torchmetrics import Accuracy, F1
+from torchmetrics import Accuracy, F1, AUROC
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
@@ -37,6 +37,7 @@ class SmoteEmbedLightning(LightningModule):
         self.train_acc = Accuracy()
         self.val_acc = Accuracy()
         self.val_fscore = F1(n_classes, average="macro")
+        self.val_auroc = AUROC(num_classes=n_classes, average="macro")
 
     def training_step(self, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
@@ -59,9 +60,11 @@ class SmoteEmbedLightning(LightningModule):
         loss = F.cross_entropy(batch_pred, batch_labels)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
         self.val_fscore(torch.softmax(batch_pred, 1), batch_labels)
+        self.val_auroc(torch.softmax(batch_pred, 1), batch_labels)
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
         self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val_auroc", self.val_auroc, on_step=True, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)

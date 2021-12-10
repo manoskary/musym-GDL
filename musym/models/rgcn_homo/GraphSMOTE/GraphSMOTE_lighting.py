@@ -9,7 +9,7 @@ import os
 from musym.models.rgcn_homo.GraphSMOTE.models import GraphSMOTE
 from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
-from torchmetrics import Accuracy, F1
+from torchmetrics import Accuracy, F1, AUROC
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
@@ -46,6 +46,7 @@ class GraphSMOTELightning(LightningModule):
         self.train_acc = Accuracy()
         self.val_acc = Accuracy()
         self.val_fscore = F1(n_classes, average="macro")
+        self.val_auroc = AUROC(num_classes=n_classes, average="macro")
         self.train_loss = torch.nn.CrossEntropyLoss(weight=loss_weight) if loss_weight else torch.nn.CrossEntropyLoss()
 
     def training_step(self, batch, batch_idx):
@@ -77,9 +78,11 @@ class GraphSMOTELightning(LightningModule):
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
         self.val_fscore(torch.softmax(batch_pred, 1), batch_labels)
+        self.val_auroc(torch.softmax(batch_pred, 1), batch_labels)
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
         self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val_auroc", self.val_auroc, on_step=True, on_epoch=True, sync_dist=True)
 
     # def validation_epoch_end(self, outputs: EPOCH_OUTPUT) -> None:
     #     avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()

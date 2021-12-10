@@ -96,6 +96,7 @@ def bench_tune_lighting():
     argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
+    argparser.add_argument("--init-weights", action='store_true', help="Initialize the graph weights")
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--num-workers', type=int, default=4,
                            help="Number of sampling processes. Use 0 for no extra process.")
