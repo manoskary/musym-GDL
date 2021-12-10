@@ -83,7 +83,8 @@ class SMOTE(object):
 		# get occurence of the dominant class
 		n_occ = int(occ[dominant_class].item())
 		for i in range(len(occ)):
-			if i != dominant_class:
+			# For Mini-Batch Training exclude examples with less than k occurances in the mini banch.
+			if i != dominant_class and occ[i] >= self.k:
 				# calculate the amount of synthetic data to generate
 				N = (n_occ - occ[i]) * 100 / occ[i]
 				if N != 0:

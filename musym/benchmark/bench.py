@@ -26,29 +26,27 @@ from ray.tune.integration.wandb import WandbLoggerCallback
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger
+from musym.benchmark.utils import DataModule
+
+
 
 
 def select_lighning_model(model):
     if model == "GraphSMOTE":
         from musym.models.rgcn_homo.GraphSMOTE.GraphSMOTE_lighting import GraphSMOTELightning, DataModule
         model = GraphSMOTELightning
-        datamodule = DataModule
-        return model, datamodule
+        return model
     elif model == "SAGE":
         from musym.benchmark.model_acc.bench_sage_lightning import SAGELightning, DataModule
         model = SAGELightning
-        datamodule = DataModule
-        return model, datamodule
+        return model
     elif model == "SMOTE":
         from musym.benchmark.model_acc.bench_smote_lightning import SmoteLightning, DataModule
-        model = SmoteLightning
-        datamodule = DataModule
-        return model, datamodule
+        return model
     elif model == "SMOTEmbed":
         from musym.benchmark.model_acc.bench_smotembed_lightning import SmoteEmbedLightning, DataModule
         model = SmoteEmbedLightning
-        datamodule = DataModule
-        return model, datamodule
+        return model
     else:
         raise ValueError("model name {} is not recognized or not implement for Pytorch Lightning.".format(model))
 
@@ -61,10 +59,10 @@ def train_lightning_tune(config, num_gpus=0):
     fanouts = [int(_) for _ in config["fan_out"].split(',')]
     config["num_layers"] = len(fanouts)
 
-    model, datamodule = select_lighning_model(config["model"])
-    datamodule = datamodule(
+    model = select_lighning_model(config["model"])
+    datamodule = DataModule(
         dataset_name=config["dataset"], data_cpu=config["data_cpu"], fan_out=fanouts,
-        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device)
+        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device, init_weights=config["init_weights"])
     model = model(
         datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
         F.relu, config["dropout"], config["lr"])
@@ -82,7 +80,6 @@ def train_lightning_tune(config, num_gpus=0):
                   "loss": "val_loss_epoch",
                   "mean_accuracy": "val_acc_epoch",
                   "val_fscore" : "val_fscore_epoch",
-                  # "Train Accuracy" : "train_acc_epoch"
               },
               on="validation_end")
         ])
@@ -120,8 +117,6 @@ def bench_tune_lighting():
     config["fan_out"] = tune.choice(["5,10", "5,10,15"])
     config["lr"] = tune.loguniform(1e-4, 1e-1)
     config["batch_size"] = tune.choice([512, 1024, 2048])
-
-
 
     scheduler = ASHAScheduler(
         max_t=config["num_epochs"],
@@ -179,6 +174,7 @@ def bench_lightning():
                                 "on GPU when using it to save time for data copy. This may "
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
+    argparser.add_argument("--init-weights", action='store_true', help="Initialize the graph weights")
     args = argparser.parse_args()
     args.data_dir = os.path.join(os.path.dirname(__file__), "data")
 
@@ -192,10 +188,10 @@ def bench_lightning():
     fanouts = [int(_) for _ in config["fan_out"].split(',')]
     config["num_layers"] = len(fanouts)
 
-    model, datamodule = select_lighning_model(config["model"])
-    datamodule = datamodule(
+    model = select_lighning_model(config["model"])
+    datamodule = DataModule(
         dataset_name=config["dataset"], data_cpu=config["data_cpu"], fan_out=fanouts,
-        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device)
+        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device, init_weights=config["init_weights"])
     model = model(
         datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
         F.relu, config["dropout"], config["lr"])
@@ -203,7 +199,7 @@ def bench_lightning():
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
     trainer = Trainer(
-        gpus=config["gpu"],
+        gpus=[config["gpu"]],
         max_epochs=config["num_epochs"],
         logger=WandbLogger(project="Bench-SMOTE", group=config["dataset"], job_type="{}-Lightning".format(config["model"])),
         callbacks=[

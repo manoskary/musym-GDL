@@ -15,6 +15,87 @@ from ogb.nodeproppred import DglNodePropPredDataset
 from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
 
 from functools import partial, reduce, wraps
+from musym.utils import load_and_save
+from pytorch_lightning import LightningDataModule
+
+
+class MyLoader(dgl.dataloading.NodeDataLoader):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def set_epoch(self, epoch):
+        if self.use_scalar_batcher:
+            self.scalar_batcher.set_epoch(epoch)
+        else:
+            self.dist_sampler.set_epoch(epoch)
+
+
+class DataModule(LightningDataModule):
+    def __init__(self, dataset_name, data_cpu=False, fan_out=[10, 25],
+                 device=torch.device('cpu'), batch_size=1000, num_workers=4, init_weights=False):
+        super().__init__()
+        if dataset_name == 'cora':
+            g, n_classes = load_imbalanced_local("cora")
+        elif dataset_name == 'BlogCatalog':
+            g, n_classes = load_imbalanced_local("BlogCatalog")
+        elif dataset_name == "reddit":
+            g, n_classes = load_imbalanced_local("reddit")
+        elif dataset_name == "cad":
+            g, n_classes = load_and_save("cad_basis_homo", os.path.abspath("../data/"))
+        else:
+            raise ValueError('unknown dataset')
+
+        train_nid = torch.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
+        val_nid = torch.nonzero(g.ndata['val_mask'], as_tuple=True)[0]
+        test_nid = torch.nonzero(g.ndata['test_mask'], as_tuple=True)[0]
+
+        if init_weights:
+            w = torch.empty(g.num_edges())
+            torch.nn.init.uniform_(w)
+            g.edata["w"] = w
+
+        sampler = dgl.dataloading.MultiLayerNeighborSampler([int(_) for _ in fan_out])
+
+        dataloader_device = torch.device('cpu')
+        if not data_cpu:
+            train_nid = train_nid.to(device)
+            val_nid = val_nid.to(device)
+            test_nid = test_nid.to(device)
+            g = g.formats(['csc'])
+            g = g.to(device)
+            dataloader_device = device
+
+        self.g = g
+        self.train_nid, self.val_nid, self.test_nid = train_nid, val_nid, test_nid
+        self.sampler = sampler
+        self.device = dataloader_device
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.in_feats = g.ndata['feat'].shape[1]
+        self.n_classes = n_classes
+
+    def train_dataloader(self):
+        return MyLoader(
+            self.g,
+            self.train_nid,
+            self.sampler,
+            device=self.device,
+            batch_size=self.batch_size,
+            shuffle=True,
+            drop_last=False,
+            # use_ddp=True,
+            num_workers=0)
+
+    def val_dataloader(self):
+        return MyLoader(
+            self.g,
+            self.val_nid,
+            self.sampler,
+            device=self.device,
+            batch_size=self.batch_size,
+            shuffle=True,
+            drop_last=False,
+            num_workers=0)
 
 
 def _download(url, path, filename):
@@ -261,52 +342,6 @@ class PinsageDataset:
         return self._g
 
 
-def load_nowplaying_rs():
-    import torchtext
-    # follow examples/pytorch/pinsage/README to create nowplaying_rs.pkl
-    name = 'nowplaying_rs.pkl'
-    dataset_dir = os.path.join(os.getcwd(), 'dataset')
-    os.symlink('/tmp/dataset/', dataset_dir)
-
-    dataset_path = os.path.join(dataset_dir, "nowplaying_rs", name)
-    # Load dataset
-    with open(dataset_path, 'rb') as f:
-        dataset = pickle.load(f)
-
-    g = dataset['train-graph']
-    val_matrix = dataset['val-matrix'].tocsr()
-    test_matrix = dataset['test-matrix'].tocsr()
-    item_texts = dataset['item-texts']
-    user_ntype = dataset['user-type']
-    item_ntype = dataset['item-type']
-    user_to_item_etype = dataset['user-to-item-type']
-    timestamp = dataset['timestamp-edge-column']
-
-    # Assign user and movie IDs and use them as features (to learn an individual trainable
-    # embedding for each entity)
-    g.nodes[user_ntype].data['id'] = torch.arange(
-        g.number_of_nodes(user_ntype))
-    g.nodes[item_ntype].data['id'] = torch.arange(
-        g.number_of_nodes(item_ntype))
-
-    # Prepare torchtext dataset and vocabulary
-    fields = {}
-    examples = []
-    for key, texts in item_texts.items():
-        fields[key] = torchtext.data.Field(
-            include_lengths=True, lower=True, batch_first=True)
-    for i in range(g.number_of_nodes(item_ntype)):
-        example = torchtext.data.Example.fromlist(
-            [item_texts[key][i] for key in item_texts.keys()],
-            [(key, fields[key]) for key in item_texts.keys()])
-        examples.append(example)
-    textset = torchtext.data.Dataset(examples, fields)
-    for key, field in fields.items():
-        field.build_vocab(getattr(textset, key))
-
-    return PinsageDataset(g, user_ntype, item_ntype, textset)
-
-
 def process_data(name):
     if name == 'cora':
         return dgl.data.CoraGraphDataset()
@@ -326,8 +361,6 @@ def process_data(name):
         return load_ogb_product()
     elif name == 'ogbn-mag':
         return load_ogb_mag()
-    elif name == 'nowplaying_rs':
-        return load_nowplaying_rs()
     elif name == "BlogCatalog":
         return load_blog_catalog()
     elif name == "CoraImbalanced":

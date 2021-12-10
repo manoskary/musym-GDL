@@ -17,7 +17,7 @@ from musym.utils import load_and_save
 
 
 
-class MyLoader(dgl.dataloading.EdgeDataLoader):
+class MyLoader(dgl.dataloading.NodeDataLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -49,11 +49,11 @@ class GraphSMOTELightning(LightningModule):
         self.train_loss = torch.nn.CrossEntropyLoss(weight=loss_weight) if loss_weight else torch.nn.CrossEntropyLoss()
 
     def training_step(self, batch, batch_idx):
-        input_nodes, sub_g, mfgs = batch
+        input_nodes, output_nodes, mfgs = batch
         mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
-        adj = sub_g.adj().to_dense().to(self.device)
+        adj = mfgs[-1].adj().to_dense()[:len(batch_labels), :len(batch_labels)].to(self.device)
         batch_pred, upsampl_lab, embed_loss = self.module(mfgs, batch_inputs, adj, batch_labels)
         loss = self.train_loss(batch_pred, upsampl_lab) + embed_loss * 0.000001
         self.train_acc(torch.softmax(batch_pred, 1), upsampl_lab)
@@ -94,7 +94,7 @@ class GraphSMOTELightning(LightningModule):
 
 class DataModule(LightningDataModule):
     def __init__(self, dataset_name, data_cpu=False, fan_out=[10, 25],
-                 device=torch.device('cpu'), batch_size=1000, num_workers=4):
+                 device=torch.device('cpu'), batch_size=1000, num_workers=4, init_weights=False):
         super().__init__()
         if dataset_name == 'cora':
             g, n_classes = load_imbalanced_local("cora")
@@ -107,26 +107,28 @@ class DataModule(LightningDataModule):
         else:
             raise ValueError('unknown dataset')
 
-        train_g = g.subgraph(torch.nonzero(g.ndata["train_mask"], as_tuple=True)[0])
-        train_eid = torch.arange(train_g.number_of_edges())
-        val_g = g.subgraph(torch.nonzero(g.ndata["val_mask"], as_tuple=True)[0])
-        val_eid = torch.arange(val_g.number_of_edges())
-        test_g = g.subgraph(torch.nonzero(g.ndata["test_mask"], as_tuple=True)[0])
-        test_eid = torch.arange(test_g.number_of_edges())
+        train_nid = torch.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
+        val_nid = torch.nonzero(g.ndata['val_mask'], as_tuple=True)[0]
+        test_nid = torch.nonzero(g.ndata['test_mask'], as_tuple=True)[0]
+
+        if init_weights:
+            w = torch.empty(g.num_edges())
+            torch.nn.init.uniform_(w)
+            g.edata["w"] = w
 
         sampler = dgl.dataloading.MultiLayerNeighborSampler([int(_) for _ in fan_out])
 
         dataloader_device = torch.device('cpu')
         if not data_cpu:
-            # train_eid = train_eid.to(device)
-            # val_eid = val_eid.to(device)
-            # test_eid = test_eid.to(device)
+            train_nid = train_nid.to(device)
+            val_nid = val_nid.to(device)
+            test_nid = test_nid.to(device)
             g = g.formats(['csc'])
             g = g.to(device)
             dataloader_device = device
 
-        self.train_g, self.val_g, self.test_g = train_g, val_g, test_g
-        self.train_eld, self.val_eid, self.test_eid = train_eid, val_eid, test_eid
+        self.g = g
+        self.train_nid, self.val_nid, self.test_nid = train_nid, val_nid, test_nid
         self.sampler = sampler
         self.device = dataloader_device
         self.batch_size = batch_size
@@ -136,28 +138,26 @@ class DataModule(LightningDataModule):
 
     def train_dataloader(self):
         return MyLoader(
-            self.train_g,
-            self.train_eld,
+            self.g,
+            self.train_nid,
             self.sampler,
             device=self.device,
             batch_size=self.batch_size,
             shuffle=True,
             drop_last=False,
             # use_ddp=True,
-            num_workers=self.num_workers,
-            )
+            num_workers=0)
 
     def val_dataloader(self):
         return MyLoader(
-            self.val_g,
-            self.val_eid,
+            self.g,
+            self.val_nid,
             self.sampler,
             device=self.device,
             batch_size=self.batch_size,
             shuffle=True,
             drop_last=False,
-            # use_ddp=True,
-            num_workers=self.num_workers)
+            num_workers=0)
 
 
 def evaluate(model, g, device):
