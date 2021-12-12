@@ -235,12 +235,15 @@ class Encoder(nn.Module):
 
 	def forward(self, blocks, inputs):
 		h = inputs
+		self.enc_feat_input = h
 		for l, (conv, block) in enumerate(zip(self.layers, blocks)):
 			h = conv(block, h)
 			if l != len(self.layers) - 1:
 				h = self.activation(h)
 				h = F.normalize(h)
 				h = self.dropout(h)
+			if l == len(self.layers) - 2 and len(self.layers) > 1:
+				self.enc_feat_input = h
 		return h
 
 	def decode(self, h):
@@ -264,6 +267,7 @@ class GraphSMOTE(nn.Module):
 		x = input_feats
 		x = self.encoder(blocks, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
+		# TODO account for dst nodes.
 		pred_adj = self.decoder(x)
 		loss = self.decoder_loss(pred_adj, adj)
 		dum =  torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
