@@ -90,6 +90,7 @@ class SMOTE(object):
 				if N != 0:
 					candidates = X[y == i]
 					xs = self.generate(candidates, N, self.k)
+					# TODO Possibility to add Gaussian noise here for ADASYN approach, important for mini-batch training with respect to the max euclidian distance.
 					X = torch.cat((X, xs.to(X.get_device()))) if X.get_device() >= 0 else torch.cat((X, xs))
 					ys = torch.ones(xs.shape[0]) * i
 					y = torch.cat((y, ys.to(y.get_device()))) if y.get_device() >= 0 else torch.cat((y, ys))
