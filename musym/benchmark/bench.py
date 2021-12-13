@@ -92,7 +92,7 @@ def bench_tune_lighting():
     argparser.add_argument('--dataset', type=str, default='cad')
     argparser.add_argument('--model', type=str, default='GraphSMOTE')
     argparser.add_argument('--num-epochs', type=int, default=50)
-    argparser.add_argument('--num-samples', type=int, default=1000)
+    argparser.add_argument('--num-samples', type=int, default=100)
     argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
