@@ -107,7 +107,7 @@ class SageConvLayer(nn.Module):
 		if self.linear.bias is not None:
 			nn.init.constant_(self.linear.bias, 0.)
 
-	def forward(self, adj, features):
+	def forward(self, adj, features, neigh_feats):
 		"""
 
 		Parameters
@@ -123,12 +123,12 @@ class SageConvLayer(nn.Module):
 		"""
 		if not isinstance(adj, torch.sparse.FloatTensor):
 			if len(adj.shape) == 3:
-				neigh_feature = torch.bmm(adj, features) / (adj.sum(dim=1).reshape((adj.shape[0], adj.shape[1], -1)) + 1)
+				neigh_feature = torch.bmm(adj, neigh_feats) / (adj.sum(dim=1).reshape((adj.shape[0], adj.shape[1], -1)) + 1)
 			else:
-				neigh_feature = torch.mm(adj, features) / (adj.sum(dim=1).reshape(adj.shape[0], -1) + 1)
+				neigh_feature = torch.mm(adj, neigh_feats) / (adj.sum(dim=1).reshape(adj.shape[0], -1) + 1)
 		# For Sparse Adjacency Matrices
 		else:
-			neigh_feature = torch.spmm(adj, features) / (adj.to_dense().sum(dim=1).reshape(adj.shape[0], -1) + 1)
+			neigh_feature = torch.spmm(adj, neigh_feats) / (adj.to_dense().sum(dim=1).reshape(adj.shape[0], -1) + 1)
 
 		# perform conv
 		data = torch.cat([features, neigh_feature], dim=-1)
@@ -167,19 +167,21 @@ class SageClassifier(nn.Module):
 		self.dropout = nn.Dropout(dropout)
 		self.clf = nn.Linear(n_hidden, n_classes)
 		self.layers = nn.ModuleList()
+		self.linear = nn.Linear(n_hidden, n_hidden)
 		self.layers.append(SageConvLayer(self.in_feats, self.n_hidden))
 		for i in range(n_layers - 1):
 			self.layers.append(SageConvLayer(self.n_hidden, self.n_hidden))
 
 	def reset_parameters(self):
 		nn.init.xavier_uniform_(self.clf.weight, gain=nn.init.calculate_gain('relu'))
+		nn.init.xavier_uniform_(self.linear.weight, gain=nn.init.calculate_gain('relu'))
 		if self.clf.bias is not None:
 			nn.init.constant_(self.clf.bias, 0.)
 
-	def forward(self, adj, inputs):
+	def forward(self, adj, inputs, neigh_feats):
 		h = inputs
 		for l, conv in enumerate(self.layers):
-			h = conv(adj, h)
+			h = conv(adj, h, neigh_feats)
 			if l != self.n_layers-1:
 				h = self.activation(h)
 				h = F.normalize(h)
@@ -189,19 +191,23 @@ class SageClassifier(nn.Module):
 
 
 class SageDecoder(nn.Module):
-	def __init__(self, num_hidden, dropout=0.1):
+	def __init__(self, num_hidden, num_feats, dropout=0.1):
 		super(SageDecoder, self).__init__()
 		self.dropout = dropout
 		self.de_weight = nn.Parameter(torch.FloatTensor(num_hidden, num_hidden))
+		self.enc_weight = nn.Parameter(torch.FloatTensor(num_feats, num_hidden))
 		self.reset_parameters()
 
 	def reset_parameters(self):
 		stdv = 1. / math.sqrt(self.de_weight.size(1))
 		self.de_weight.data.uniform_(-stdv, stdv)
+		stdv = 1. / math.sqrt(self.enc_weight.size(1))
+		self.enc_weight.data.uniform_(-stdv, stdv)
 
-	def forward(self, encoded_features):
+	def forward(self, encoded_features, previous_features):
 		out = F.linear(encoded_features, self.de_weight)
-		adj_out = torch.sigmoid(torch.mm(out, out.transpose(-1, -2)))
+		out_prev = F.linear(previous_features, self.enc_weight)
+		adj_out = torch.sigmoid(torch.mm(out, out_prev.transpose(-1, -2)))
 		return adj_out
 
 
@@ -210,7 +216,7 @@ class EdgeLoss(nn.Module):
 		super(EdgeLoss, self).__init__()
 
 	def forward(self, adj_rec, adj_tgt, adj_mask = None):
-		adj_rec = adj_rec[:len(adj_tgt), :len(adj_tgt)]
+		adj_rec = adj_rec[:adj_tgt.shape[0], :adj_tgt.shape[1]]
 		edge_num = adj_tgt.nonzero().shape[0]
 		total_num = adj_tgt.shape[0] ** 2
 		neg_weight = edge_num / (total_num - edge_num)
@@ -235,7 +241,7 @@ class Encoder(nn.Module):
 
 	def forward(self, blocks, inputs):
 		h = inputs
-		self.enc_feat_input = h
+		enc_feat_input = h
 		for l, (conv, block) in enumerate(zip(self.layers, blocks)):
 			h = conv(block, h)
 			if l != len(self.layers) - 1:
@@ -243,8 +249,8 @@ class Encoder(nn.Module):
 				h = F.normalize(h)
 				h = self.dropout(h)
 			if l == len(self.layers) - 2 and len(self.layers) > 1:
-				self.enc_feat_input = h
-		return h
+				enc_feat_input = h
+		return h, enc_feat_input
 
 	def decode(self, h):
 		h = self.dropout(h)
@@ -258,21 +264,26 @@ class GraphSMOTE(nn.Module):
 		self.n_layers = n_layers
 		self.n_classes = n_classes
 		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
-		self.decoder = SageDecoder(n_hidden, dropout)
+		if n_layers > 1:
+			dec_feats = n_hidden
+		else:
+			dec_feats = in_feats
+		self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
+		self.linear = nn.Linear(( n_hidden if n_layers > 1 else in_feats), n_hidden)
 		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
 		self.smote = SMOTE(dims=n_hidden, k=3)
 		self.decoder_loss = EdgeLoss()
 
 	def forward(self, blocks, input_feats, adj, batch_labels):
 		x = input_feats
-		x = self.encoder(blocks, x)
+		x, prev_feats = self.encoder(blocks, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
 		# TODO account for dst nodes.
-		pred_adj = self.decoder(x)
+		pred_adj = self.decoder(x, prev_feats)
 		loss = self.decoder_loss(pred_adj, adj)
 		dum =  torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
 		pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
-		x = self.classifier(pred_adj, x)
+		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
 
 	#TODO fix that.

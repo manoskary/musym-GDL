@@ -67,13 +67,13 @@ class GraphSMOTELightning(LightningModule):
         mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
-        batch_pred = self.module.encoder(mfgs, batch_inputs)
-        pred_adj = self.module.decoder(batch_pred)
+        batch_pred, prev_encs = self.module.encoder(mfgs, batch_inputs)
+        pred_adj = self.module.decoder(batch_pred, prev_encs)
         if pred_adj.get_device() >= 0 :
             pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
         else:
             pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
-        batch_pred = self.module.classifier(pred_adj, batch_pred)
+        batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
         # loss = self.cross_entropy_loss(batch_pred, batch_labels)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
