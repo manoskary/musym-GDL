@@ -56,7 +56,8 @@ class SmoteEmbedLightning(LightningModule):
         mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = mfgs[0].srcdata['feat']
         batch_labels = mfgs[-1].dstdata['label']
-        batch_pred = self.module.classifier(self.module.encoder(mfgs, batch_inputs))
+        h, _ = self.module.encoder(mfgs, batch_inputs)
+        batch_pred = self.module.classifier(h)
         loss = F.cross_entropy(batch_pred, batch_labels)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
         self.val_fscore(torch.softmax(batch_pred, 1), batch_labels)
@@ -183,7 +184,7 @@ if __name__ == '__main__':
     datamodule = DataModule(
         args.dataset, args.data_cpu, [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers)
-    model = SAGELightning(
+    model = SMOTEmbed(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
         F.relu, args.dropout, args.lr)
 

@@ -350,7 +350,7 @@ class SMOTEmbed(nn.Module):
 
 	def forward(self, blocks, input_feats, batch_labels):
 		x = input_feats
-		x = self.encoder(blocks, x)
+		x, _ = self.encoder(blocks, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
 		x = self.classifier(x)
 		return x, y.type(torch.long)
