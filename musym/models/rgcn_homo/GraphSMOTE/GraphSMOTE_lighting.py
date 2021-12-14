@@ -37,17 +37,18 @@ class GraphSMOTELightning(LightningModule):
                  activation,
                  dropout,
                  lr,
-                 loss_weight = None
+                 loss_weight = 0.0001
         ):
         super(GraphSMOTELightning, self).__init__()
         self.save_hyperparameters()
+        self.loss_weight = loss_weight
         self.module = GraphSMOTE(in_feats, n_hidden, n_classes, n_layers, activation, dropout)
         self.lr = lr
         self.train_acc = Accuracy()
         self.val_acc = Accuracy()
         self.val_fscore = F1(n_classes, average="macro")
         self.val_auroc = AUROC(num_classes=n_classes, average="macro")
-        self.train_loss = torch.nn.CrossEntropyLoss(weight=loss_weight) if loss_weight else torch.nn.CrossEntropyLoss()
+        self.train_loss = torch.nn.CrossEntropyLoss()
 
     def training_step(self, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
@@ -56,7 +57,7 @@ class GraphSMOTELightning(LightningModule):
         batch_labels = mfgs[-1].dstdata['label']
         adj = mfgs[-1].adj().to_dense()[:len(batch_labels), :len(batch_labels)].to(self.device)
         batch_pred, upsampl_lab, embed_loss = self.module(mfgs, batch_inputs, adj, batch_labels)
-        loss = self.train_loss(batch_pred, upsampl_lab) + embed_loss * 0.000001
+        loss = self.train_loss(batch_pred, upsampl_lab) + embed_loss * self.loss_weight
         self.train_acc(torch.softmax(batch_pred, 1), upsampl_lab)
         self.log('train_loss', loss.item(), prog_bar=True, on_step=True, on_epoch=False)
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True)
@@ -92,7 +93,15 @@ class GraphSMOTELightning(LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer),
+                "interval": "epoch",
+                "frequency": 1,
+                "monitor": "val_loss"
+            }
+        }
 
 
 class DataModule(LightningDataModule):

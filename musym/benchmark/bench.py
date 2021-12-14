@@ -65,7 +65,7 @@ def train_lightning_tune(config, num_gpus=0):
         batch_size=config["batch_size"], num_workers=config["num_workers"], device=device, init_weights=config["init_weights"])
     model = model(
         datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
-        F.relu, config["dropout"], config["lr"])
+        F.relu, config["dropout"], config["lr"], loss_weight=config["gamma"])
 
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
@@ -91,7 +91,7 @@ def bench_tune_lighting():
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--dataset', type=str, default='cad')
     argparser.add_argument('--model', type=str, default='GraphSMOTE')
-    argparser.add_argument('--num-epochs', type=int, default=50)
+    argparser.add_argument('--num-epochs', type=int, default=100)
     argparser.add_argument('--num-samples', type=int, default=100)
     argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
     argparser.add_argument('--log-every', type=int, default=20)
@@ -114,10 +114,11 @@ def bench_tune_lighting():
     # --------------- Standarize Configuration ---------------------
     config = args if isinstance(args, dict) else vars(args)
     gpus_per_trial = args.gpus_per_trial
-    config["num_hidden"] = tune.choice([32, 64])
+    config["num_hidden"] = tune.choice([32, 64, 128])
     config["fan_out"] = tune.choice(["5,10", "5,10,15"])
-    config["lr"] = tune.loguniform(1e-4, 1e-1)
-    config["batch_size"] = tune.choice([512, 1024, 2048])
+    config["lr"] = tune.loguniform(1e-3, 1e-2)
+    config["gamma"] = tune.loguniform(1e-4, 1e-1) if args.model == "GraphSMOTE" else None
+    config["batch_size"] = tune.choice([1024, 2048, 4096])
 
     scheduler = ASHAScheduler(
         max_t=config["num_epochs"],
@@ -125,7 +126,7 @@ def bench_tune_lighting():
         reduction_factor=2)
 
     reporter = CLIReporter(
-        parameter_columns=["num_hidden", "num_layers", "lr", "batch_size"],
+        parameter_columns=["num_hidden", "fan_out", "gamma", "batch_size"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
     analysis = tune.run(
@@ -159,14 +160,14 @@ def bench_lightning():
     argparser.add_argument('--model', type=str, default='GraphSMOTE')
     argparser.add_argument('--num-epochs', type=int, default=50)
     argparser.add_argument("--fan-out", type=str, default="5, 10")
-    argparser.add_argument("--lr", type=float, default=1e-4)
+    argparser.add_argument("--lr", type=float, default=1e-3)
     argparser.add_argument("--batch-size", type=int, default=1024)
     argparser.add_argument("--num-hidden", type=int, default=64)
     argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
     argparser.add_argument('--dropout', type=float, default=0.5)
-    argparser.add_argument('--num-workers', type=int, default=4,
+    argparser.add_argument('--num-workers', type=int, default=0,
                            help="Number of sampling processes. Use 0 for no extra process.")
     argparser.add_argument('--inductive', action='store_true',
                            help="Inductive learning setting")
