@@ -123,6 +123,8 @@ class SageConvLayer(nn.Module):
 			An embeded feature tensor.
 		"""
 		if not isinstance(adj, torch.sparse.FloatTensor):
+			if len(neigh_feats) != len(features):
+				adj.fill_diagonal_(1)
 			if len(adj.shape) == 3:
 				neigh_feature = torch.bmm(adj, neigh_feats) / (adj.sum(dim=1).reshape((adj.shape[0], adj.shape[1], -1)) + 1)
 			else:
@@ -279,7 +281,6 @@ class GraphSMOTE(nn.Module):
 		x = input_feats
 		x, prev_feats = self.encoder(blocks, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
-		# TODO account for dst nodes.
 		pred_adj = self.decoder(x, prev_feats)
 		loss = self.decoder_loss(pred_adj, adj)
 		dum =  torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
