@@ -10,13 +10,13 @@ Cadence and Voice Leading Detection in Symbolic Classical Music is a challenging
 
 #### A typical Heterogenous graph modelling of the musical score
 
-<img src="static/heterogeneous_score_graph.png" alt="score2graph_representation" style="zoom:50%;" />
+<img src="static/heterogeneous_score_graph.png" alt="score2graph_representation_heterogenous" />
 
 
 
 #### Equivalent Homogenous graph modelling for the musical score
 
-<img src="static/homogeneous_score_graph.png" alt="score2graph_representation" style="zoom:50%;" />
+<img src="static/homogeneous_score_graph.png" alt="score2graph_representation_homogenous" />
 
 
 
