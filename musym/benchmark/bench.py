@@ -102,6 +102,7 @@ def bench_tune_lighting():
     argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
+    argparser.add_argument('--run-name', type=str, default="")
     argparser.add_argument("--init-weights", action='store_true', help="Initialize the graph weights")
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--num-workers', type=int, default=4,
@@ -153,7 +154,7 @@ def bench_tune_lighting():
             WandbLoggerCallback(project="SMOTE", group="{}-Lightning".format(config["model"]), job_type=config["dataset"])
             ],
         progress_reporter=reporter,
-        name="tune_{}_{}".format(config["dataset"], config["model"]) )
+        name="tune_{}_{}_{}".format(config["dataset"], config["model"], config["run_name"]) )
 
     print("Best hyperparameters found were: ", analysis.best_config)
 
