@@ -63,10 +63,14 @@ def train_lightning_tune(config, num_gpus=0):
     datamodule = DataModule(
         dataset_name=config["dataset"], data_cpu=config["data_cpu"], fan_out=fanouts,
         batch_size=config["batch_size"], num_workers=config["num_workers"], device=device, init_weights=config["init_weights"])
-    model = model(
-        datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
-        F.relu, config["dropout"], config["lr"], loss_weight=config["gamma"])
-
+    if config["gamma"] is not None:
+        model = model(
+            datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
+            F.relu, config["dropout"], config["lr"], loss_weight=config["gamma"])
+    else:
+        model = model(
+            datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
+            F.relu, config["dropout"], config["lr"])
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
     trainer = Trainer(
@@ -79,7 +83,9 @@ def train_lightning_tune(config, num_gpus=0):
               {
                   "loss": "val_loss_epoch",
                   "mean_accuracy": "val_acc_epoch",
-                  "val_fscore" : "val_fscore_epoch",
+                  "val_fscore": "val_fscore_epoch",
+                  "val_auroc": "val_auroc_epoch",
+                  "train_acc": "train_acc_epoch",
               },
               on="validation_end")
         ])
@@ -116,7 +122,7 @@ def bench_tune_lighting():
     gpus_per_trial = args.gpus_per_trial
     config["num_hidden"] = tune.choice([32, 64, 128])
     config["fan_out"] = tune.choice(["5,10", "5,10,15"])
-    config["lr"] = tune.loguniform(1e-3, 1e-2)
+    config["lr"] = 0.01
     config["gamma"] = tune.loguniform(1e-4, 1e-1) if args.model == "GraphSMOTE" else None
     config["batch_size"] = tune.choice([1024, 2048, 4096])
 

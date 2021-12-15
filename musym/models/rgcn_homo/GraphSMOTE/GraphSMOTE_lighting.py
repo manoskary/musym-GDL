@@ -96,10 +96,10 @@ class GraphSMOTELightning(LightningModule):
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
-                "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer),
+                "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max"),
                 "interval": "epoch",
                 "frequency": 1,
-                "monitor": "val_loss"
+                "monitor": "val_fscore"
             }
         }
 
@@ -187,7 +187,6 @@ def evaluate(model, g, device):
     model.train()
     test_acc = Accuracy()
     return test_acc(torch.softmax(pred, 1), labels.to(pred.device))
-
 
 
 # def setup(rank, world_size):
