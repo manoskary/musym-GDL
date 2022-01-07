@@ -1,4 +1,5 @@
 import dgl
+import wandb
 from dgl.nn.pytorch import SAGEConv
 import torch
 import torch.nn as nn
@@ -21,7 +22,7 @@ def evaluate(model, g, features, adj, labels, mask):
 
 @utils.benchmark('acc')
 @utils.parametrize('data', ['cora', 'pubmed'])
-def track_acc(data):
+def track_acc(args):
     data = utils.process_data(data)
     device = utils.get_bench_device()
 
@@ -40,7 +41,7 @@ def track_acc(data):
     g = dgl.add_self_loop(g)
 
     # create model
-    model = GraphSMOTE(in_feats, 16, n_classes, 1, F.relu, 0.5)
+    model = GraphSMOTE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)
     loss_fcn = torch.nn.CrossEntropyLoss()
 
     model = model.to(device)
@@ -48,11 +49,11 @@ def track_acc(data):
 
     # optimizer
     optimizer = torch.optim.Adam(model.parameters(),
-                                 lr=1e-2,
+                                 lr=args.lr,
                                  weight_decay=5e-4)
 
     adj = g.adj(ctx=device).to_dense()
-    for epoch in range(200):
+    for epoch in range(args.num_epochs):
         # Compute loss and prediction
         batch_pred, upsampl_lab, embed_loss = model(g, features, adj, labels)
         logits = model(g, features)
@@ -60,9 +61,14 @@ def track_acc(data):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        train_acc = torch.softmax(batch_pred, 1), upsampl_lab
+        wandb.log()
+
+
 
     acc = evaluate(model, g, features, adj, labels, test_mask)
     return acc
+
 
 
 if __name__ == '__main':
