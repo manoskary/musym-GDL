@@ -32,18 +32,18 @@ from musym.benchmark.utils import DataModule
 
 
 def select_lighning_model(model):
-    if model == "GraphSMOTE":
+    if model in ["GraphSMOTE", "graphsmote", "GraphSmote"]:
         from musym.models.rgcn_homo.GraphSMOTE.GraphSMOTE_lighting import GraphSMOTELightning, DataModule
         model = GraphSMOTELightning
         return model
-    elif model == "SAGE":
+    elif model in ["SAGE", "sage", "Sage"]:
         from musym.benchmark.model_acc.bench_sage_lightning import SAGELightning, DataModule
         model = SAGELightning
         return model
-    elif model == "SMOTE":
+    elif model in ["SMOTE", "Smote", "smote"]:
         from musym.benchmark.model_acc.bench_smote_lightning import SmoteLightning, DataModule
         return model
-    elif model == "SMOTEmbed":
+    elif model in ["SMOTEmbed", "smotembed"]:
         from musym.benchmark.model_acc.bench_smotembed_lightning import SmoteEmbedLightning, DataModule
         model = SmoteEmbedLightning
         return model
@@ -70,6 +70,7 @@ def bench_lightning():
     argparser.add_argument("--num-hidden", type=int, default=64)
     argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
     argparser.add_argument('--log-every', type=int, default=20)
+    argparser.add_argument("--project-name", type=str, default="Bench-SMOTE")
     argparser.add_argument('--eval-every', type=int, default=5)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--num-workers', type=int, default=0,
@@ -108,7 +109,7 @@ def bench_lightning():
     trainer = Trainer(
         gpus=[config["gpu"]],
         max_epochs=config["num_epochs"],
-        logger=WandbLogger(project="Bench-SMOTE", group=config["dataset"], job_type="{}-Lightning".format(config["model"])),
+        logger=WandbLogger(project=config["project_name"], group=config["dataset"], job_type=config["model"]),
         callbacks=[
             checkpoint_callback,
         ])
