@@ -214,6 +214,8 @@ if __name__ == '__main__':
     argparser.add_argument('--eval-every', type=int, default=5)
     argparser.add_argument('--lr', type=float, default=0.003)
     argparser.add_argument('--dropout', type=float, default=0.5)
+    argparser.add_argument('--loss-weight', type=float, default=0.0001,
+                           help="regularization loss weight.")
     argparser.add_argument('--num-workers', type=int, default=4,
                            help="Number of sampling processes. Use 0 for no extra process.")
     argparser.add_argument('--inductive', action='store_true',
@@ -235,7 +237,7 @@ if __name__ == '__main__':
         device, args.batch_size, args.num_workers)
     model = GraphSMOTELightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
-        F.relu, args.dropout, args.lr)
+        F.relu, args.dropout, args.lr, args.loss_weight)
 
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)

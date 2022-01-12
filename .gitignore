@@ -132,6 +132,7 @@ dmypy.json
 # Specific folders with artifacts and samples to be produced on the first run
 
 data/
+samples/
 artifacts/
 musym/models/tests/
 lightning_logs/
