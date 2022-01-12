@@ -42,6 +42,8 @@ class DataModule(LightningDataModule):
             g, n_classes = load_imbalanced_local("reddit")
         elif dataset_name == "cad":
             g, n_classes = load_and_save("cad_basis_homo", os.path.abspath("../data/"))
+        elif dataset_name == "ogbn-products":
+            g, n_classes = load_ogb_product()
         else:
             raise ValueError('unknown dataset')
 
@@ -246,7 +248,7 @@ class OGBDataset(object):
 
 def load_ogb_product():
     name = 'ogbn-products'
-    os.symlink('/tmp/dataset/', os.path.join(os.getcwd(), 'dataset'))
+    # os.symlink('/tmp/dataset/', os.path.join(os.getcwd(), 'dataset'))
 
     print('load', name)
     data = DglNodePropPredDataset(name=name)
@@ -271,8 +273,15 @@ def load_ogb_product():
     graph.ndata['train_mask'] = train_mask
     graph.ndata['val_mask'] = val_mask
     graph.ndata['test_mask'] = test_mask
-
-    return OGBDataset(graph, num_labels)
+    print(
+        "The ogbn-products Amazon Co-purchase Dataset : \n num classes = {} \n feature size = {} \n Num nodes = {} ".format(
+            num_labels,
+            in_feats,
+            g.num_nodes()
+        )
+    )
+    print()
+    return graph, num_labels
 
 
 def load_ogb_mag():
