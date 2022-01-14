@@ -242,7 +242,9 @@ def load_imbalanced_local(name):
         else:
             c_train_num.append(class_sample_num)
     idx_train, idx_val, idx_test, class_num_mat = split_arti(labels, c_train_num) if name == "cora" else split_genuine(labels)
-    train_mask = val_mask = test_mask = torch.zeros(g.num_nodes())
+    train_mask = torch.zeros(g.num_nodes())
+    val_mask = torch.zeros(g.num_nodes())
+    test_mask = torch.zeros(g.num_nodes())
     train_mask[idx_train] = 1
     val_mask[idx_val] = 1
     test_mask[idx_test] = 1
@@ -253,7 +255,7 @@ def load_imbalanced_local(name):
 
 
 if __name__ == '__main__':
-    g, n_classes = load_imbalanced_local("reddit")
+    # g, n_classes = load_imbalanced_local("reddit")
     g, n_classes = load_imbalanced_local("cora")
-    g, n_classes = load_imbalanced_local("BlogCatalog")
+    # g, n_classes = load_imbalanced_local("BlogCatalog")
 
