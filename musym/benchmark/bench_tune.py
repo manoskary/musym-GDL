@@ -127,9 +127,9 @@ def bench_tune_lighting():
     gpus_per_trial = args.gpus_per_trial
     config["num_hidden"] = tune.choice([32, 64, 128])
     config["fan_out"] = tune.choice(["5,10", "5,10,15"])
-    config["lr"] = 0.01
+    config["lr"] = tune.loguniform(1e-4, 1e-1)
     config["gamma"] = tune.loguniform(1e-4, 1e-1) if args.model == "GraphSMOTE" else None
-    config["batch_size"] = tune.choice([1024, 2048])
+    config["batch_size"] = tune.choice([512, 1024, 2048])
     config["dropout"] = tune.choice([0.1, 0.3, 0.5])
     config["load_dir"] = os.getcwd()
 
@@ -139,7 +139,7 @@ def bench_tune_lighting():
         reduction_factor=2)
 
     reporter = CLIReporter(
-        parameter_columns=["num_hidden", "fan_out", "gamma", "batch_size", "dropout"],
+        parameter_columns=["num_hidden", "fan_out", "lr", "gamma", "batch_size", "dropout"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
     analysis = tune.run(
