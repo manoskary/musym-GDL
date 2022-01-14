@@ -62,7 +62,8 @@ def train_lightning_tune(config, num_gpus=0):
     model = select_lighning_model(config["model"])
     datamodule = DataModule(
         dataset_name=config["dataset"], data_cpu=config["data_cpu"], fan_out=fanouts,
-        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device, init_weights=config["init_weights"])
+        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device,
+        init_weights=config["init_weights"], load_dir=config["load_dir"])
     if config["gamma"] is not None:
         model = model(
             datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
@@ -128,7 +129,9 @@ def bench_tune_lighting():
     config["fan_out"] = tune.choice(["5,10", "5,10,15"])
     config["lr"] = 0.01
     config["gamma"] = tune.loguniform(1e-4, 1e-1) if args.model == "GraphSMOTE" else None
-    config["batch_size"] = tune.choice([1024, 2048, 4096])
+    config["batch_size"] = tune.choice([1024, 2048])
+    config["dropout"] = tune.choice([0.1, 0.3, 0.5])
+    config["load_dir"] = os.getcwd()
 
     scheduler = ASHAScheduler(
         max_t=config["num_epochs"],
@@ -136,7 +139,7 @@ def bench_tune_lighting():
         reduction_factor=2)
 
     reporter = CLIReporter(
-        parameter_columns=["num_hidden", "fan_out", "gamma", "batch_size"],
+        parameter_columns=["num_hidden", "fan_out", "gamma", "batch_size", "dropout"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
     analysis = tune.run(
@@ -157,7 +160,7 @@ def bench_tune_lighting():
             WandbLoggerCallback(project="SMOTE", group="{}-Lightning".format(config["model"]), job_type=config["dataset"])
             ],
         progress_reporter=reporter,
-        name="tune_{}_{}_{}".format(config["dataset"], config["model"], config["run_name"]) )
+        name="tune_{}_{}_{}".format(config["dataset"], config["model"], config["run_name"]))
 
     print("Best hyperparameters found were: ", analysis.best_config)
 
