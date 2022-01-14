@@ -108,12 +108,14 @@ def bench_lightning():
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
     trainer = Trainer(
         gpus=[config["gpu"]],
+        benchmark=True,
         max_epochs=config["num_epochs"],
         logger=WandbLogger(project=config["project_name"], group=config["dataset"], job_type=config["model"]),
         callbacks=[
             checkpoint_callback,
         ])
     trainer.fit(model, datamodule=datamodule)
+    # trainer.test(model, datamodule=datamodule)
 
 
 

@@ -233,7 +233,7 @@ def load_imbalanced_local(name):
     # for artificial imbalanced setting: only the last im_class_num classes are imbalanced
     c_train_num = []
     imbalance = True
-    im_ratio = 0.5
+    im_ratio = 0.6
     n_classes = labels.max().item() + 1
     for i in range(n_classes):
         if imbalance and i > labels.max().item() - im_class_num:  # only imbalance the last classes

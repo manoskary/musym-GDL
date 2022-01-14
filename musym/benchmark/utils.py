@@ -12,7 +12,7 @@ import dgl
 import torch
 import time
 from ogb.nodeproppred import DglNodePropPredDataset
-from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local
+from musym.models.rgcn_homo.GraphSMOTE.data_utils import load_imbalanced_local, split_genuine
 
 from functools import partial, reduce, wraps
 from musym.utils import load_and_save
@@ -32,7 +32,7 @@ class MyLoader(dgl.dataloading.NodeDataLoader):
 
 class DataModule(LightningDataModule):
     def __init__(self, dataset_name, data_cpu=False, fan_out=[10, 25],
-                 device=torch.device('cpu'), batch_size=1000, num_workers=4, init_weights=False):
+                 device=torch.device('cpu'), batch_size=1000, num_workers=4, init_weights=False, load_dir=None):
         super().__init__()
         if dataset_name == 'cora':
             g, n_classes = load_imbalanced_local("cora")
@@ -43,7 +43,7 @@ class DataModule(LightningDataModule):
         elif dataset_name == "cad":
             g, n_classes = load_and_save("cad_basis_homo", os.path.abspath("../data/"))
         elif dataset_name == "ogbn-products":
-            g, n_classes = load_ogb_product()
+            g, n_classes = load_ogb_product(load_dir)
         else:
             raise ValueError('unknown dataset')
 
@@ -245,13 +245,49 @@ class OGBDataset(object):
     def __getitem__(self, idx):
         return self._g
 
+import os, tempfile
 
-def load_ogb_product():
+def symlink(target, link_name, overwrite=False):
+    '''
+    Create a symbolic link named link_name pointing to target.
+    If link_name exists then FileExistsError is raised, unless overwrite=True.
+    When trying to overwrite a directory, IsADirectoryError is raised.
+    '''
+
+    if not overwrite:
+        os.symlink(target, link_name)
+        return
+
+    # os.replace() may fail if files are on different filesystems
+    link_dir = os.path.dirname(link_name)
+
+    # Create link to target with temporary filename
+    while True:
+        temp_link_name = tempfile.mktemp(dir=link_dir)
+
+        try:
+            os.symlink(target, temp_link_name)
+            break
+        except FileExistsError:
+            pass
+
+    # Replace link_name with temp_link_name
+    try:
+        os.remove()
+        os.replace(temp_link_name, link_name)
+    except:
+        if os.path.islink(temp_link_name):
+            os.remove(temp_link_name)
+        raise
+
+
+
+
+def load_ogb_product(load_dir=None):
     name = 'ogbn-products'
-    # os.symlink('/tmp/dataset/', os.path.join(os.getcwd(), 'dataset'))
-
+    path = os.path.join(load_dir, 'dataset')
     print('load', name)
-    data = DglNodePropPredDataset(name=name)
+    data = DglNodePropPredDataset(name=name, root=path)
     print('finish loading', name)
     splitted_idx = data.get_idx_split()
     graph, labels = data[0]
@@ -263,7 +299,7 @@ def load_ogb_product():
         labels[torch.logical_not(torch.isnan(labels))]))
 
     # Find the node IDs in the training, validation, and test set.
-    train_nid, val_nid, test_nid = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
+    train_nid, val_nid, test_nid, _ = split_genuine(labels)
     train_mask = torch.zeros((graph.number_of_nodes(),), dtype=torch.bool)
     train_mask[train_nid] = True
     val_mask = torch.zeros((graph.number_of_nodes(),), dtype=torch.bool)
@@ -274,13 +310,17 @@ def load_ogb_product():
     graph.ndata['val_mask'] = val_mask
     graph.ndata['test_mask'] = test_mask
     print(
-        "The ogbn-products Amazon Co-purchase Dataset : \n num classes = {} \n feature size = {} \n Num nodes = {} ".format(
+        "The ogbn-products Amazon Co-purchase Dataset : \n num classes = {} \n feature size = {} \n Num nodes = {} \n Train Nodes = {} \n Validation nodes = {} \n Test nodes = {}".format(
             num_labels,
             in_feats,
-            g.num_nodes()
+            graph.num_nodes(),
+            torch.count_nonzero(graph.ndata["train_mask"]),
+            torch.count_nonzero(graph.ndata["val_mask"]),
+            torch.count_nonzero(graph.ndata["test_mask"])
         )
     )
     print()
+
     return graph, num_labels
 
 

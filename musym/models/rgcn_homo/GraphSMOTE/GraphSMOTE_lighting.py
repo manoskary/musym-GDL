@@ -85,11 +85,30 @@ class GraphSMOTELightning(LightningModule):
         self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)
         self.log("val_auroc", self.val_auroc, on_step=True, on_epoch=True, sync_dist=True)
 
-    # def validation_epoch_end(self, outputs: EPOCH_OUTPUT) -> None:
-    #     avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
-    #     avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
-    #     self.log("ptl/val_loss", avg_loss)
-    #     self.log("ptl/val_accuracy", avg_acc)
+    def test_step(self, batch, batch_idx):
+        input_nodes, output_nodes, mfgs = batch
+        mfgs = [mfg.int().to(self.device) for mfg in mfgs]
+        batch_inputs = mfgs[0].srcdata['feat']
+        batch_labels = mfgs[-1].dstdata['label']
+        batch_pred, prev_encs = self.module.encoder(mfgs, batch_inputs)
+        pred_adj = self.module.decoder(batch_pred, prev_encs)
+        if pred_adj.get_device() >= 0 :
+            pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
+        else:
+            pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+        batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
+        # loss = self.cross_entropy_loss(batch_pred, batch_labels)
+        self.test_acc(torch.softmax(batch_pred, 1), batch_labels)
+        loss = F.cross_entropy(batch_pred, batch_labels)
+        self.test_fscore(torch.softmax(batch_pred, 1), batch_labels)
+        self.test_auroc(torch.softmax(batch_pred, 1), batch_labels)
+        output = {
+            'test_loss': loss,
+            'test_acc': self.test_acc,
+            "test_fscore": self.test_fscore,
+            "test_auroc": self.test_auroc
+        }
+        return output
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
@@ -171,6 +190,16 @@ class DataModule(LightningDataModule):
             drop_last=False,
             num_workers=0)
 
+    def test_dataloader(self):
+        return MyLoader(
+            self.g,
+            self.test_nid,
+            self.sampler,
+            device=self.device,
+            batch_size=self.batch_size,
+            shuffle=True,
+            drop_last=False,
+            num_workers=0)
 
 def evaluate(model, g, device):
     """

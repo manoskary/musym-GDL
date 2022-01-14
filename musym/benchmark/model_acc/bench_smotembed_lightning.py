@@ -67,6 +67,25 @@ class SmoteEmbedLightning(LightningModule):
         self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)
         self.log("val_auroc", self.val_auroc, on_step=True, on_epoch=True, sync_dist=True)
 
+    def test_step(self, batch, batch_idx):
+        input_nodes, output_nodes, mfgs = batch
+        mfgs = [mfg.int().to(self.device) for mfg in mfgs]
+        batch_inputs = mfgs[0].srcdata['feat']
+        batch_labels = mfgs[-1].dstdata['label']
+        h, _ = self.module.encoder(mfgs, batch_inputs)
+        batch_pred = self.module.classifier(h)
+        loss = F.cross_entropy(batch_pred, batch_labels)
+        self.test_acc(torch.softmax(batch_pred, 1), batch_labels)
+        self.test_fscore(torch.softmax(batch_pred, 1), batch_labels)
+        self.test_auroc(torch.softmax(batch_pred, 1), batch_labels)
+        output = {
+            'test_loss': loss,
+            'test_acc': self.test_acc,
+            "test_fscore": self.test_fscore,
+            "test_auroc": self.test_auroc
+        }
+        return output
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
@@ -126,6 +145,17 @@ class DataModule(LightningDataModule):
         return dgl.dataloading.NodeDataLoader(
             self.g,
             self.val_nid,
+            self.sampler,
+            device=self.device,
+            batch_size=self.batch_size,
+            shuffle=True,
+            drop_last=False,
+            num_workers=0)
+
+    def test_dataloader(self):
+        return dgl.dataloading.NodeDataLoader(
+            self.g,
+            self.test_nid,
             self.sampler,
             device=self.device,
             batch_size=self.batch_size,
@@ -195,15 +225,4 @@ if __name__ == '__main__':
                       logger=WandbLogger(project="SMOTE", group="Smotembed-Lightning", job_type="Cadence-Detection"),
                       callbacks=[checkpoint_callback])
     trainer.fit(model, datamodule=datamodule)
-
-    # Test
-    dirs = glob.glob('./lightning_logs/*')
-    version = max([int(os.path.split(x)[-1].split('_')[-1]) for x in dirs])
-    logdir = './lightning_logs/version_%d' % version
-    print('Evaluating model in', logdir)
-    ckpt = glob.glob(os.path.join(logdir, 'checkpoints', '*'))[0]
-
-    model = SAGELightning.load_from_checkpoint(
-        checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
-    test_acc = evaluate(model, datamodule.g, datamodule.test_nid, device)
-    print('Test accuracy:', test_acc)
+    trainer.test(model, datamodule=datamodule)
