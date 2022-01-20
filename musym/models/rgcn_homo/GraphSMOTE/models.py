@@ -13,7 +13,7 @@ class SMOTE(object):
 	"""
 	Minority Sampling with SMOTE.
 	"""
-	def __init__(self, distance='euclidian', dims=512, k=5):
+	def __init__(self, distance='euclidian', dims=512, k=2):
 		super(SMOTE, self).__init__()
 		self.newindex = 0
 		self.k = k
@@ -99,34 +99,36 @@ class SMOTE(object):
 
 
 class SMOTE_Bar(SMOTE):
-	def __init__(self):
+	def __init__(self, n_classes):
 		super(SMOTE_Bar, self).__init__()
-
+		self.n_classes = n_classes
+		self.centers = torch.zeros((n_classes, self.dims))
 
 	def fit_generate(self, X, y):
 		# get occurence of each class
 		occ = torch.eye(int(y.max() + 1), int(y.max() + 1))[y].sum(axis=0)
+		self.check_if_fitted(X, y, occ)
 		# get the dominant class
 		dominant_class = torch.argmax(occ)
 		# get occurence of the dominant class
 		n_occ = int(occ[dominant_class].item())
 		for i in range(len(occ)):
 			# For Mini-Batch Training exclude examples with less than k occurances in the mini banch.
-			if i != dominant_class and occ[i] >= self.k:
+			if i != dominant_class and occ[i] > 0:
 				# calculate the amount of synthetic data to generate
 				N = (n_occ - occ[i]) * 100 / occ[i]
 				if N != 0:
-					candidates = X[y == i]
+					candidates = X[y == i] if occ[i] >= self.k else torch.cat(X[y==i], self.centers[i])
 					xs = self.generate(candidates, N, self.k)
-					# TODO Possibility to add Gaussian noise here for ADASYN approach, important for mini-batch training with respect to the max euclidian distance.
 					X = torch.cat((X, xs.to(X.get_device()))) if X.get_device() >= 0 else torch.cat((X, xs))
 					ys = torch.ones(xs.shape[0]) * i
 					y = torch.cat((y, ys.to(y.get_device()))) if y.get_device() >= 0 else torch.cat((y, ys))
 		return X, y
 
-	def memory(self, X):
-		"Stores Minority Class mean."
-		pass
+	def check_if_fitted(self, X, y, occ):
+		for i in range(self.n_classes):
+			if torch.all(self.centers[i] == 0) and occ[i] > 0:
+				self.centers[i] = self.barycenter(X[y==i]).to(X.get_device())
 
 	def barycenter(self, x, y=None):
 		'''
