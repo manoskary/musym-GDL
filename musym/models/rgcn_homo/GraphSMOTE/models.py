@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import math
 from tqdm import tqdm
+import numpy as np
 import torch.nn.functional as F
 import dgl.nn as dglnn
 from random import randint
@@ -95,6 +96,59 @@ class SMOTE(object):
 					ys = torch.ones(xs.shape[0]) * i
 					y = torch.cat((y, ys.to(y.get_device()))) if y.get_device() >= 0 else torch.cat((y, ys))
 		return X, y
+
+
+class SMOTE_Bar(SMOTE):
+	def __init__(self):
+		super(SMOTE_Bar, self).__init__()
+
+
+	def fit_generate(self, X, y):
+		# get occurence of each class
+		occ = torch.eye(int(y.max() + 1), int(y.max() + 1))[y].sum(axis=0)
+		# get the dominant class
+		dominant_class = torch.argmax(occ)
+		# get occurence of the dominant class
+		n_occ = int(occ[dominant_class].item())
+		for i in range(len(occ)):
+			# For Mini-Batch Training exclude examples with less than k occurances in the mini banch.
+			if i != dominant_class and occ[i] >= self.k:
+				# calculate the amount of synthetic data to generate
+				N = (n_occ - occ[i]) * 100 / occ[i]
+				if N != 0:
+					candidates = X[y == i]
+					xs = self.generate(candidates, N, self.k)
+					# TODO Possibility to add Gaussian noise here for ADASYN approach, important for mini-batch training with respect to the max euclidian distance.
+					X = torch.cat((X, xs.to(X.get_device()))) if X.get_device() >= 0 else torch.cat((X, xs))
+					ys = torch.ones(xs.shape[0]) * i
+					y = torch.cat((y, ys.to(y.get_device()))) if y.get_device() >= 0 else torch.cat((y, ys))
+		return X, y
+
+	def memory(self, X):
+		"Stores Minority Class mean."
+		pass
+
+	def barycenter(self, x, y=None):
+		'''
+		Input: x is a Nxd matrix
+			   y is an optional Mxd matirx
+		Output: dist is a NxM matrix where dist[i,j] is the square norm between x[i,:] and y[j,:]
+				if y is not given then use 'y=x'.
+		i.e. dist[i,j] = ||x[i,:]-y[j,:]||^2
+		'''
+		x_norm = (x ** 2).sum(1).view(-1, 1)
+		if y is not None:
+			y_t = torch.transpose(y, 0, 1)
+			y_norm = (y ** 2).sum(1).view(1, -1)
+		else:
+			y_t = torch.transpose(x, 0, 1)
+			y_norm = x_norm.view(1, -1)
+
+		dist = x_norm + y_norm - 2.0 * torch.mm(x, y_t)
+		# Ensure diagonal is zero if x=y
+		# if y is None:
+		#     dist = dist - torch.diag(dist.diag)
+		return torch.clamp(dist, 0.0, np.inf).mean()
 
 # Graphsage layer
 class SageConvLayer(nn.Module):
@@ -288,8 +342,23 @@ class GraphSMOTE(nn.Module):
 		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
 
-	#TODO fix that.
-	def inference(self, g, node_features, labels, device, batch_size, num_workers=0):
+	def inference(self, dataloader, labels, device):
+		prediction = torch.zeros(len(labels), self.n_classes).to(device)
+		with torch.no_grad():
+			for input_nodes, seeds, mfgs in tqdm(dataloader, position=0, leave=True):
+				batch_inputs = mfgs[0].srcdata['feat']
+				batch_labels = mfgs[-1].dstdata['label']
+				batch_pred, prev_encs = self.encoder(mfgs, batch_inputs)
+				pred_adj = self.decoder(batch_pred, prev_encs)
+				if pred_adj.get_device() >= 0:
+					pred_adj = torch.where(pred_adj >= 0.5, pred_adj,
+										   torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
+				else:
+					pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+				prediction[seeds] = self.classifier(pred_adj, batch_pred, prev_encs)
+			return prediction
+
+	def edge_inference(self, g, node_features, labels, device, batch_size, num_workers=0):
 		g.ndata['idx'] = torch.tensor(range(g.number_of_nodes()))
 		sampler = dgl.dataloading.MultiLayerFullNeighborSampler(self.n_layers)
 		dataloader = dgl.dataloading.EdgeDataLoader(
