@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
 import math
-from tqdm import tqdm
 import torch.nn.functional as F
 import dgl.nn as dglnn
 from random import randint
 import random
-import dgl
+import numpy as np
+import pickle
 
 class SMOTE(object):
 	"""
@@ -261,75 +261,123 @@ class Encoder(nn.Module):
 		return adj
 
 
-class Reinforce(object):
+class DQNSolver(nn.Module):
 	"""
-    REINFORCE Agent
+    Convolutional Neural Net with 3 conv layers and two linear layers
     """
+	def __init__(self, input_shape, n_hidden, n_actions):
+		super(DQNSolver, self).__init__()
+		self.layers = nn.ModuleList()
+		self.layers.append(nn.Linear(input_shape, n_hidden))
+		self.layers.append(nn.Linear(n_hidden, n_hidden))
+		self.layers.append(nn.Linear(n_hidden, n_actions))
+		self.reset_parameters()
 
-	def __init__(self, env, alpha=0.001):
-		"""
-        Constructor
-        """
-		self.env = env
-		self.alpha = alpha
-		self.model = None
-		self.optimizer = None
-		self.reset()
+	def reset_parameters(self):
+		for i, l in enumerate(self.layers):
+			nn.init.xavier_uniform_(self.layers[i].weight, gain=nn.init.calculate_gain('relu'))
 
-	def reset(self):
-		"""
-        Reset agent to initial state
-        """
-		self.model = NeuralNetwork(self.env.observation_space.shape[0], 32, self.env.action_space.n)
-		self.optimizer = optim.Adam(self.model.parameters(), lr=self.alpha)
 
-	def choose_action(self, state):
-		"""
-        Select action given a certain state:
-            - compute output of policy network (softmax)
-            - sample from network output
-            - compute action index
+	def forward(self, x):
+		h = x
+		for i, layer in enumerate(self.layers):
+			h = layer(h)
+			if i != len(self.layers)-1:
+				h = F.relu(h)
+		return h
 
-        Returns:
-            @action (integer): index of selected action
-        """
-		# bring state into right format
-		state = Variable(torch.from_numpy(state).float().unsqueeze(0))
-		# get distribution over actions according to our NN-model
-		probs = self.model(state)
-		mod = Categorical(probs)
-		# sample action accordingly, and return it
-		action = mod.sample()
-		return action.data[0]
 
-	def update(self, states, actions, rewards, gamma=0.90):
-		"""
-        Update parameters of agent
-        (in particular the parameters of the policy network)
+class DQNAgent:
+	def __init__(self, state_space, n_hidden, action_space, max_memory_size, gamma, epsilon, deltaK):
 
-        Inputs (has to match the function "generate_episode"):
-            @states (float array): sequence of observed states
-            @actions (float array): sequence of selected actions
-            @rewards (float array): sequence of received rewards
-            @gamma (float): discount factor
-        """
-		g = 0
-		loss = 0
-		states = Variable(torch.from_numpy(states).float())
-		actions = Variable(torch.from_numpy(actions))
+		# Define DQN Layers
+		self.state_space = state_space
+		self.action_space = action_space
 
-		output = self.model(states)
-		pi = torch.gather(output, 1, actions.view(-1, 1))
+		# DQN network
+		self.dqn = DQNSolver(state_space, action_space)
 
-		# reset gradients
+		if self.pretrained:
+			self.dqn.load_state_dict(torch.load("DQN.pt"))
+		self.optimizer = torch.optim.Adam(self.dqn.parameters(), lr=0.001)
+
+		# Create memory
+		self.max_memory_size = max_memory_size
+		if self.pretrained:
+			self.STATE_MEM = torch.load("STATE_MEM.pt")
+			self.ACTION_MEM = torch.load("ACTION_MEM.pt")
+			self.REWARD_MEM = torch.load("REWARD_MEM.pt")
+			self.STATE2_MEM = torch.load("STATE2_MEM.pt")
+			self.DONE_MEM = torch.load("DONE_MEM.pt")
+			with open("ending_position.pkl", 'rb') as f:
+				self.ending_position = pickle.load(f)
+			with open("num_in_queue.pkl", 'rb') as f:
+				self.num_in_queue = pickle.load(f)
+		else:
+			self.STATE_MEM = torch.zeros(max_memory_size, *self.state_space)
+			self.ACTION_MEM = torch.zeros(max_memory_size, 1)
+			self.REWARD_MEM = torch.zeros(max_memory_size, 1)
+			self.STATE2_MEM = torch.zeros(max_memory_size, *self.state_space)
+			self.DONE_MEM = torch.zeros(max_memory_size, 1)
+			self.ending_position = 0
+			self.num_in_queue = 0
+
+		# Learning parameters
+		self.gamma = gamma
+		self.l1 = nn.SmoothL1Loss()  # Also known as Huber loss
+
+	def remember(self, state, action, reward, state2, done):
+		"""Store the experiences in a buffer to use later"""
+		self.STATE_MEM[self.ending_position] = state.float()
+		self.ACTION_MEM[self.ending_position] = action.float()
+		self.REWARD_MEM[self.ending_position] = reward.float()
+		self.STATE2_MEM[self.ending_position] = state2.float()
+		self.DONE_MEM[self.ending_position] = done.float()
+		self.ending_position = (self.ending_position + 1) % self.max_memory_size  # FIFO tensor
+		self.num_in_queue = min(self.num_in_queue + 1, self.max_memory_size)
+
+	def batch_experiences(self):
+		"""Randomly sample 'batch size' experiences"""
+		idx = random.choices(range(self.num_in_queue), k=self.memory_sample_size)
+		STATE = self.STATE_MEM[idx]
+		ACTION = self.ACTION_MEM[idx]
+		REWARD = self.REWARD_MEM[idx]
+		STATE2 = self.STATE2_MEM[idx]
+		DONE = self.DONE_MEM[idx]
+		return STATE, ACTION, REWARD, STATE2, DONE
+
+	def act(self, state):
+		"""Epsilon-greedy action"""
+		if random.random() < self.exploration_rate:
+			return torch.tensor([[random.randrange(self.action_space)]])
+		else:
+			return torch.argmax(self.dqn(state.to(self.device))).unsqueeze(0).unsqueeze(0).cpu()
+
+	def experience_replay(self):
+		if self.memory_sample_size > self.num_in_queue:
+			return
+
+		# Sample a batch of experiences
+		STATE, ACTION, REWARD, STATE2, DONE = self.batch_experiences()
+		STATE = STATE.to(self.device)
+		ACTION = ACTION.to(self.device)
+		REWARD = REWARD.to(self.device)
+		STATE2 = STATE2.to(self.device)
+		DONE = DONE.to(self.device)
+
 		self.optimizer.zero_grad()
+		# Q-Learning target is Q*(S, A) <- r + γ max_a Q(S', a)
+		target = REWARD + torch.mul((self.gamma * self.dqn(STATE2).max(1).values.unsqueeze(1)), 1 - DONE)
+		current = self.dqn(STATE).gather(1, ACTION.long())
 
-		for t in range(len(rewards) - 1, -1, -1):
-			g = rewards[t] + gamma * g
-			loss += -torch.log(pi[t]) * g
+		loss = self.l1(current, target)
+		loss.backward()  # Compute gradients
+		self.optimizer.step()  # Backpropagate error
 
-		loss.backward()
-		self.optimizer.step()
+		self.exploration_rate *= self.exploration_decay
+
+		# Makes sure that exploration rate is always at least 'exploration min'
+		self.exploration_rate = max(self.exploration_rate, self.exploration_min)
 
 
 class GraphMixup(nn.Module):
@@ -344,6 +392,7 @@ class GraphMixup(nn.Module):
 			dec_feats = in_feats
 		self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
 		self.linear = nn.Linear(( n_hidden if n_layers > 1 else in_feats), n_hidden)
+		self.agent = DQNAgent(n_classes, n_hidden, 2, 20, 1, 0.9, 0.05)
 		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
 		self.smote = SMOTE(dims=n_hidden, k=3)
 		self.decoder_loss = EdgeLoss()
@@ -381,15 +430,10 @@ class GraphMixup(nn.Module):
 		states  = []
 		actions = []
 		rewards = []
-
-		state = env.reset()
-
 		for t in range(max_steps):
-			if render:
-				env.render()
 			states.append(state)
 			actions.append(agent.choose_action(state))
-			state, reward, done, _ = env.step(actions[t])
+			state, reward, done, _ = actions[t]
 			rewards.append(reward)
 
 			if done:
