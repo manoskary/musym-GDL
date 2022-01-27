@@ -1,6 +1,7 @@
 import sys
 import os
 from dgl.data.utils import load_info, load_graphs
+from dgl import to_bidirected
 import torch
 from sklearn import metrics
 
@@ -36,8 +37,8 @@ def load_and_save(name, data_dir=None, classname=None):
             dataset = str_to_class(name)(save_path=data_dir)
 
         dataset.save_data()
-        # Load the Homogeneous Graph
-        g = dataset[0]
+        # Load the Homogeneous Graph as an UndirectedGraph
+        g = to_bidirected(dataset[0])
         n_classes = dataset.num_classes
         return g, n_classes
 
