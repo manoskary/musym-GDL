@@ -5,24 +5,18 @@ Author : Emmanouil Karystinaios
 Reference repo : https://github.com/melkisedeath/musym-GDL
 """
 # ---------------------------- Standarize Testing Condinditions --------------------------------
-import torch
-torch.manual_seed(0)
-import random
-random.seed(0)
-import numpy as np
-np.random.seed(0)
-
-
-import os, math
-import argparse
 # import torch
-import torch.nn.functional as F
-from ray import tune
-from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
-from ray.tune.integration.pytorch_lightning import TuneReportCallback
-from ray.tune.integration.wandb import WandbLoggerCallback
+# torch.manual_seed(0)
+# import random
+# random.seed(0)
+# import numpy as np
+# np.random.seed(0)
 
+
+import os
+import argparse
+import torch.nn.functional as F
+import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger
@@ -33,18 +27,18 @@ from musym.benchmark.utils import DataModule
 
 def select_lighning_model(model):
     if model in ["GraphSMOTE", "graphsmote", "GraphSmote"]:
-        from musym.models.rgcn_homo.GraphSMOTE.GraphSMOTE_lighting import GraphSMOTELightning, DataModule
+        from musym.models.rgcn_homo.GraphSMOTE.GraphSMOTE_lighting import GraphSMOTELightning
         model = GraphSMOTELightning
         return model
     elif model in ["SAGE", "sage", "Sage"]:
-        from musym.benchmark.model_acc.bench_sage_lightning import SAGELightning, DataModule
+        from musym.benchmark.model_acc.bench_sage_lightning import SAGELightning
         model = SAGELightning
         return model
     elif model in ["SMOTE", "Smote", "smote"]:
-        from musym.benchmark.model_acc.bench_smote_lightning import SmoteLightning, DataModule
+        from musym.benchmark.model_acc.bench_smote_lightning import SmoteLightning
         return model
     elif model in ["SMOTEmbed", "smotembed"]:
-        from musym.benchmark.model_acc.bench_smotembed_lightning import SmoteEmbedLightning, DataModule
+        from musym.benchmark.model_acc.bench_smotembed_lightning import SmoteEmbedLightning
         model = SmoteEmbedLightning
         return model
     else:

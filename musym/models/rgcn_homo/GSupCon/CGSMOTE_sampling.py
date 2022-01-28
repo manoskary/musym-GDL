@@ -8,7 +8,7 @@ from musym.utils import load_and_save
 from pytorch_metric_learning.losses import SupConLoss
 import dgl.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel
-import torchmetrics
+from torchmetrics.functional import fbeta
 
 def run(proc_id, n_gpus, args, devices, data):
     # Start up distributed training, if enabled.
@@ -123,7 +123,7 @@ def run(proc_id, n_gpus, args, devices, data):
             # Classifier Prediction
             batch_pred = classifier(pred_adj, batch_pred, prev_encs)
             acc = (torch.argmax(batch_pred, dim=1) == batch_labels).float().sum() / len(pred)
-            f1 = torchmetrics.functional.f1_score(torch.argmax(batch_pred, dim=1), batch_labels, average="macro")
+            f1 = fbeta(torch.argmax(batch_pred, dim=1), batch_labels, average="macro", num_classes=n_classes)
             cl_loss = cl_criterion(batch_pred, batch_labels)
             cl_optimizer.zero_grad()
             cl_loss.backward()
