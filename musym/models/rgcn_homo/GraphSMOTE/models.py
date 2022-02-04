@@ -98,16 +98,85 @@ class SMOTE(object):
 		return X, y
 
 
-class SMOTE_Bar(SMOTE):
-	def __init__(self, n_classes):
-		super(SMOTE_Bar, self).__init__()
+class MBSMOTE(nn.Module):
+	"""
+		Minority Sampling with SMOTE.
+	"""
+
+	def __init__(self, n_classes, distance='euclidian', dims=512, k=2):
+		super(MBSMOTE, self).__init__()
+		self.newindex = 0
+		self.k = k
+		self.dims = dims
+		self.distance_measure = distance
 		self.n_classes = n_classes
+		# This could be a Linear Layer
+		self.linear = nn.Linear(dims*2, dims)
 		self.centers = torch.zeros((n_classes, self.dims))
+
+	def populate(self, N, i, nnarray, min_samples, k):
+		while N:
+			nn = randint(0, k - 2)
+
+			diff = min_samples[nnarray[nn]] - min_samples[i]
+			gap = random.uniform(0, 1)
+
+			self.synthetic_arr[self.newindex, :] = min_samples[i] + gap * diff
+
+			self.newindex += 1
+
+			N -= 1
+
+	def k_neighbors(self, euclid_distance, k):
+		nearest_idx = torch.zeros((euclid_distance.shape[0], euclid_distance.shape[0]), dtype=torch.int64)
+
+		idxs = torch.argsort(euclid_distance, dim=1)
+		nearest_idx[:, :] = idxs
+
+		return nearest_idx[:, 1:k]
+
+	def find_k(self, X, k):
+		euclid_distance = torch.zeros((X.shape[0], X.shape[0]), dtype=torch.float32)
+
+		for i in range(len(X)):
+			dif = (X - X[i]) ** 2
+			dist = torch.sqrt(dif.sum(axis=1))
+			euclid_distance[i] = dist
+
+		return self.k_neighbors(euclid_distance, k)
+
+	def generate(self, min_samples, N, k):
+		"""
+        Returns (N/100) * n_minority_samples synthetic minority samples.
+        Parameters
+        ----------
+        min_samples : Numpy_array-like, shape = [n_minority_samples, n_features]
+            Holds the minority samples
+        N : percetange of new synthetic samples:
+            n_synthetic_samples = N/100 * n_minority_samples. Can be < 100.
+        k : int. Number of nearest neighbours.
+        Returns
+        -------
+        S : Synthetic samples. array,
+            shape = [(N/100) * n_minority_samples, n_features].
+        """
+		T = min_samples.shape[0]
+		self.synthetic_arr = torch.zeros(int(N / 100) * T, self.dims)
+		N = int(N / 100)
+		if self.distance_measure == 'euclidian':
+			indices = self.find_k(min_samples, k)
+		for i in range(indices.shape[0]):
+			self.populate(N, i, indices[i], min_samples, k)
+		self.newindex = 0
+		return self.synthetic_arr
+
 
 	def fit_generate(self, X, y):
 		# get occurence of each class
 		occ = torch.eye(int(y.max() + 1), int(y.max() + 1))[y].sum(axis=0)
-		self.check_if_fitted(X, y, occ)
+		device = X.get_device()
+		if device < 0:
+			device = "cpu"
 		# get the dominant class
 		dominant_class = torch.argmax(occ)
 		# get occurence of the dominant class
@@ -115,20 +184,25 @@ class SMOTE_Bar(SMOTE):
 		for i in range(len(occ)):
 			# For Mini-Batch Training exclude examples with less than k occurances in the mini banch.
 			if i != dominant_class and occ[i] > 0:
+				center = self.update_centers(X, y, i, device)
 				# calculate the amount of synthetic data to generate
 				N = (n_occ - occ[i]) * 100 / occ[i]
 				if N != 0:
-					candidates = X[y == i] if occ[i] >= self.k else torch.cat(X[y==i], self.centers[i])
+					candidates = torch.cat((X[y==i], center.to(device)))
 					xs = self.generate(candidates, N, self.k)
-					X = torch.cat((X, xs.to(X.get_device()))) if X.get_device() >= 0 else torch.cat((X, xs))
+					X = torch.cat((X, xs.to(device)))
 					ys = torch.ones(xs.shape[0]) * i
-					y = torch.cat((y, ys.to(y.get_device()))) if y.get_device() >= 0 else torch.cat((y, ys))
+					y = torch.cat((y, ys.to(device)))
 		return X, y
 
-	def check_if_fitted(self, X, y, occ):
-		for i in range(self.n_classes):
-			if torch.all(self.centers[i] == 0) and occ[i] > 0:
-				self.centers[i] = self.barycenter(X[y==i]).to(X.get_device())
+	def update_centers(self, X, y, i, device):
+		if torch.all(self.centers[i] == 0):
+			center = self.barycenter(X[y==i]).to(device)
+		else:
+			#TODO Maybe add mean Euclidean Distance instead
+			# center = self.linear(torch.cat((self.barycenter(X[y == i]), self.centers[i])).to(device))
+			center = (self.barycenter(X[y==i]) + self.centers[i])/2
+		return center
 
 	def barycenter(self, x, y=None):
 		'''
@@ -147,9 +221,6 @@ class SMOTE_Bar(SMOTE):
 			y_norm = x_norm.view(1, -1)
 
 		dist = x_norm + y_norm - 2.0 * torch.mm(x, y_t)
-		# Ensure diagonal is zero if x=y
-		# if y is None:
-		#     dist = dist - torch.diag(dist.diag)
 		return torch.clamp(dist, 0.0, np.inf).mean()
 
 # Graphsage layer
@@ -330,7 +401,7 @@ class GraphSMOTE(nn.Module):
 		self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
 		self.linear = nn.Linear(( n_hidden if n_layers > 1 else in_feats), n_hidden)
 		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
-		self.smote = SMOTE(dims=n_hidden, k=3)
+		self.smote = MBSMOTE(n_classes=n_classes, dims=n_hidden, k=2)
 		self.decoder_loss = EdgeLoss()
 
 	def forward(self, blocks, input_feats, adj, batch_labels):
