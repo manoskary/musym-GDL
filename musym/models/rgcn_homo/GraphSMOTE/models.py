@@ -98,12 +98,12 @@ class SMOTE(object):
 		return X, y
 
 
-class MBSMOTE(nn.Module):
+class MBSMOTE(object):
 	"""
 		Minority Sampling with SMOTE.
 	"""
 
-	def __init__(self, n_classes, distance='euclidian', dims=512, k=2):
+	def __init__(self, n_classes, distance='euclidian', dims=512, k=2, epsilon=1):
 		super(MBSMOTE, self).__init__()
 		self.newindex = 0
 		self.k = k
@@ -112,6 +112,8 @@ class MBSMOTE(nn.Module):
 		self.n_classes = n_classes
 		# This could be a Linear Layer
 		self.linear = nn.Linear(dims*2, dims)
+		nn.init.xavier_uniform_(self.linear.weight, gain=nn.init.calculate_gain('relu'))
+		self.epsilon = epsilon
 		self.centers = torch.zeros((n_classes, self.dims))
 
 	def populate(self, N, i, nnarray, min_samples, k):
@@ -188,7 +190,7 @@ class MBSMOTE(nn.Module):
 				# calculate the amount of synthetic data to generate
 				N = (n_occ - occ[i]) * 100 / occ[i]
 				if N != 0:
-					candidates = torch.cat((X[y==i], center.to(device)))
+					candidates = torch.cat((X[y==i], center.unsqueeze(0).to(device)))
 					xs = self.generate(candidates, N, self.k)
 					X = torch.cat((X, xs.to(device)))
 					ys = torch.ones(xs.shape[0]) * i
@@ -200,28 +202,12 @@ class MBSMOTE(nn.Module):
 			center = self.barycenter(X[y==i]).to(device)
 		else:
 			#TODO Maybe add mean Euclidean Distance instead
-			# center = self.linear(torch.cat((self.barycenter(X[y == i]), self.centers[i])).to(device))
-			center = (self.barycenter(X[y==i]) + self.centers[i])/2
+			center = self.linear(torch.cat((self.barycenter(X[y == i]), self.centers[i])).to(device))
+			# center = (self.barycenter(X[y==i]) + self.centers[i])/2
 		return center
 
 	def barycenter(self, x, y=None):
-		'''
-		Input: x is a Nxd matrix
-			   y is an optional Mxd matirx
-		Output: dist is a NxM matrix where dist[i,j] is the square norm between x[i,:] and y[j,:]
-				if y is not given then use 'y=x'.
-		i.e. dist[i,j] = ||x[i,:]-y[j,:]||^2
-		'''
-		x_norm = (x ** 2).sum(1).view(-1, 1)
-		if y is not None:
-			y_t = torch.transpose(y, 0, 1)
-			y_norm = (y ** 2).sum(1).view(1, -1)
-		else:
-			y_t = torch.transpose(x, 0, 1)
-			y_norm = x_norm.view(1, -1)
-
-		dist = x_norm + y_norm - 2.0 * torch.mm(x, y_t)
-		return torch.clamp(dist, 0.0, np.inf).mean()
+		return x.mean(0)
 
 # Graphsage layer
 class SageConvLayer(nn.Module):
@@ -401,7 +387,8 @@ class GraphSMOTE(nn.Module):
 		self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
 		self.linear = nn.Linear(( n_hidden if n_layers > 1 else in_feats), n_hidden)
 		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
-		self.smote = MBSMOTE(n_classes=n_classes, dims=n_hidden, k=2)
+		# self.smote = MBSMOTE(n_classes=n_classes, dims=n_hidden, k=2)
+		self.smote = SMOTE(dims=n_hidden, k=3)
 		self.decoder_loss = EdgeLoss()
 
 	def forward(self, blocks, input_feats, adj, batch_labels):
