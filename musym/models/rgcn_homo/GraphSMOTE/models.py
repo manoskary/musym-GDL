@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import math
+
+from stevedore.example.simple import Simple
 from tqdm import tqdm
 import numpy as np
 import torch.nn.functional as F
@@ -484,4 +486,84 @@ class SMOTEmbed(nn.Module):
 		x, _ = self.encoder(blocks, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
 		x = self.classifier(x)
+		return x, y.type(torch.long)
+
+class EmptySMOTE(nn.Module):
+	def __init__(self):
+		super(Simple, self).__init__()
+
+	def fit_generate(self, x, y):
+		return x, y
+
+
+class EmptyDecoder(nn.Module):
+	def __init__(self):
+		super(Simple, self).__init__()
+
+	def forward(self, x, y):
+		return x
+
+
+class AblationSMOTE(nn.Module):
+	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1, rem_smote=False, rem_gnn_clf=False, rem_adjmix=False, rem_gnn_enc=False):
+		super(AblationSMOTE, self).__init__()
+		self.n_layers = n_layers
+		self.n_classes = n_classes
+		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
+
+		# Ablation
+		self.rem_smote = rem_smote
+		self.rem_gnn_clf = rem_gnn_clf
+		self.rem_adjmix = rem_adjmix
+		self.rem_gnn_enc = rem_gnn_enc
+
+		# Layers
+		if n_layers > 1:
+			dec_feats = n_hidden
+		else:
+			dec_feats = in_feats
+
+		if self.rem_gnn_clf or self.rem_gnn_enc:
+			self.decoder = EmptyDecoder()
+		else:
+			self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
+
+		if self.rem_gnn_clf or self.rem_gnn_enc:
+			self.classifier = nn.Linear(n_hidden, n_layers)
+		else:
+			self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
+		if rem_smote:
+			self.smote = EmptySMOTE()
+		else:
+			self.smote = SMOTE(dims=n_hidden, k=3)
+		self.decoder_loss = EdgeLoss()
+
+	def forward(self, blocks, input_feats, adj, batch_labels):
+		x = input_feats
+		x, prev_feats = self.encoder(blocks, x)
+		x, y = self.smote.fit_generate(x, batch_labels)
+		pred_adj = self.decoder(x, prev_feats)
+		if self.rem_gnn_clf or self.rem_gnn_enc:
+			loss = 0
+		else:
+			loss = self.decoder_loss(pred_adj, adj)
+		dum =  torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
+		if not (self.rem_adjmix or self.rem_gnn_enc):
+			pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
+		if self.rem_gnn_clf:
+			x = self.classifier(x)
+		elif self.rem_gnn_enc:
+			x = self.classifier(pred_adj)
+		else:
+			x = self.classifier(pred_adj, x, prev_feats)
+		return x, y.type(torch.long), loss
+
+	def val_forward(self, blocks, input_feats, batch_labels):
+		x = input_feats
+		y = batch_labels
+		x, prev_feats = self.encoder(blocks, x)
+		pred_adj = self.decoder(x, prev_feats)
+		dum = torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
+		pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
+		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long)
