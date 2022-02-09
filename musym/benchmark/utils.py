@@ -59,7 +59,7 @@ class DataModule(LightningDataModule):
         sampler = dgl.dataloading.MultiLayerNeighborSampler([int(_) for _ in fan_out])
 
         dataloader_device = torch.device('cpu')
-        if not data_cpu:
+        if not data_cpu and num_workers == 0:
             train_nid = train_nid.to(device)
             val_nid = val_nid.to(device)
             test_nid = test_nid.to(device)
@@ -85,8 +85,7 @@ class DataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             drop_last=False,
-            # use_ddp=True,
-            num_workers=0)
+            num_workers=self.num_workers)
 
     def val_dataloader(self):
         return MyLoader(
@@ -97,7 +96,7 @@ class DataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             drop_last=False,
-            num_workers=0)
+            num_workers=self.num_workers)
 
 
 def _download(url, path, filename):

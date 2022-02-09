@@ -488,19 +488,19 @@ class SMOTEmbed(nn.Module):
 		x = self.classifier(x)
 		return x, y.type(torch.long)
 
-class EmptySMOTE(nn.Module):
+class EmptySMOTE(object):
 	def __init__(self):
-		super(Simple, self).__init__()
+		super(EmptySMOTE, self).__init__()
 
 	def fit_generate(self, x, y):
 		return x, y
 
 
-class EmptyDecoder(nn.Module):
+class EmptyDecoder(object):
 	def __init__(self):
-		super(Simple, self).__init__()
+		super(EmptyDecoder, self).__init__()
 
-	def forward(self, x, y):
+	def __call__(self, x, y):
 		return x
 
 
@@ -529,7 +529,7 @@ class AblationSMOTE(nn.Module):
 			self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
 
 		if self.rem_gnn_clf or self.rem_gnn_enc:
-			self.classifier = nn.Linear(n_hidden, n_layers)
+			self.classifier = nn.Linear(n_hidden, n_classes)
 		else:
 			self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
 		if rem_smote:
@@ -544,16 +544,20 @@ class AblationSMOTE(nn.Module):
 		x, y = self.smote.fit_generate(x, batch_labels)
 		pred_adj = self.decoder(x, prev_feats)
 		if self.rem_gnn_clf or self.rem_gnn_enc:
-			loss = 0
+			loss = torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device())
 		else:
 			loss = self.decoder_loss(pred_adj, adj)
 		dum =  torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
-		if not (self.rem_adjmix or self.rem_gnn_enc):
+		if (self.rem_adjmix or self.rem_gnn_enc):
+			pred_adj = torch.where(pred_adj >= 0.0, pred_adj, dum)
+		else:
 			pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
 		if self.rem_gnn_clf:
 			x = self.classifier(x)
+			x = F.relu(x)
 		elif self.rem_gnn_enc:
 			x = self.classifier(pred_adj)
+			x = F.relu(x)
 		else:
 			x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
@@ -564,6 +568,16 @@ class AblationSMOTE(nn.Module):
 		x, prev_feats = self.encoder(blocks, x)
 		pred_adj = self.decoder(x, prev_feats)
 		dum = torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
-		pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
-		x = self.classifier(pred_adj, x, prev_feats)
+		if self.rem_adjmix or self.rem_gnn_enc:
+			pred_adj = torch.where(pred_adj >= 0.0, pred_adj, dum)
+		else:
+			pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
+		if self.rem_gnn_clf:
+			x = self.classifier(x)
+			x = F.relu(x)
+		elif self.rem_gnn_enc:
+			x = self.classifier(pred_adj)
+			x = F.relu(x)
+		else:
+			x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long)
