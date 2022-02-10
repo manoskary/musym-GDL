@@ -44,6 +44,8 @@ class DataModule(LightningDataModule):
             g, n_classes = load_and_save("cad_basis_homo", os.path.abspath("../data/"))
         elif dataset_name == "ogbn-products":
             g, n_classes = load_ogb_product(load_dir)
+        elif dataset_name == "ogbn-products-giant":
+            g, n_classes = load_ogb_product(load_dir, giant=True)
         else:
             raise ValueError('unknown dataset')
 
@@ -282,7 +284,7 @@ def symlink(target, link_name, overwrite=False):
 
 
 
-def load_ogb_product(load_dir=None):
+def load_ogb_product(load_dir=None, giant=False):
     name = 'ogbn-products'
     path = os.path.join(load_dir, 'dataset')
     print('load', name)
@@ -293,6 +295,12 @@ def load_ogb_product(load_dir=None):
     labels = labels[:, 0]
 
     graph.ndata['label'] = labels
+    if giant:
+        # Load pre-downloaded features
+        print("Loading Giant Features")
+        base_path = os.path.abspath(os.path.join(os.getcwd(), os.pardir))
+        graph.ndata["feat"] = torch.tensor(np.load(os.path.join(base_path, "dataset", name.replace("-", "_"), "giant", "X.all.xrt-emb.npy"))).float()
+        print("Finished Loading Giant Features for ", name)
     in_feats = graph.ndata['feat'].shape[1]
     num_labels = len(torch.unique(
         labels[torch.logical_not(torch.isnan(labels))]))
