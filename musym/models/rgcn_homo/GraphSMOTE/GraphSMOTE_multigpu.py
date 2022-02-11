@@ -76,7 +76,7 @@ def run(rank, n_gpus, config, data):
 
     # Define model and optimizer
     model = GraphSMOTE(in_feats, config["num_hidden"], n_classes,
-                 config["num_layers"], F.relu, config["dropout"])
+                 config["num_layers"], F.relu, config["dropout"], ext_mode="lstm")
     model = model.to(dev_id)
     if n_gpus > 1:
         model = DistributedDataParallel(
@@ -130,7 +130,7 @@ def run(rank, n_gpus, config, data):
 
 def init_process(rank, world_size, fn, config, data, backend='nccl'):
     """ Initialize the distributed environment. """
-    os.environ['MASTER_ADDR'] = "140.78.124.136"
+    os.environ['MASTER_ADDR'] = "140.78.124.132"
     os.environ['MASTER_PORT'] = config["MASTER_PORT"]
     torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
     fn(rank, world_size, config, data)

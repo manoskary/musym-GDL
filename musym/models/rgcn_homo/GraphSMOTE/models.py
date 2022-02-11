@@ -346,16 +346,25 @@ class EdgeLoss(nn.Module):
 
 
 class Encoder(nn.Module):
-	def __init__(self, in_feats, n_hidden, n_layers, activation, dropout):
+	def __init__(self, in_feats, n_hidden, n_layers, activation, dropout, ext_mode=None):
 		super(Encoder, self).__init__()
 		self.in_feats = in_feats
 		self.n_hidden = n_hidden
 		self.activation = activation
 		self.dropout = nn.Dropout(dropout)
 		self.layers = nn.ModuleList()
-		self.layers.append(dglnn.SAGEConv(self.in_feats, self.n_hidden, aggregator_type="pool"))
-		for i in range(n_layers - 1):
-			self.layers.append(dglnn.SAGEConv(self.n_hidden, self.n_hidden, aggregator_type="pool"))
+		if ext_mode == "attention":
+			self.layers.append(dglnn.GATConv(self.in_feats, self.n_hidden, num_heads=3, allow_zero_in_degree=True))
+			for i in range(n_layers - 1):
+				self.layers.append(dglnn.GATConv(self.n_hidden, self.n_hidden,  num_heads=3, allow_zero_in_degree=True))
+		else:
+			if ext_mode == "lstm":
+				aggregator_type = "lstm"
+			else:
+				aggregator_type = "pool"
+			self.layers.append(dglnn.SAGEConv(self.in_feats, self.n_hidden, aggregator_type=aggregator_type))
+			for i in range(n_layers - 1):
+				self.layers.append(dglnn.SAGEConv(self.n_hidden, self.n_hidden, aggregator_type=aggregator_type))
 
 	def forward(self, blocks, inputs):
 		h = inputs
@@ -377,11 +386,11 @@ class Encoder(nn.Module):
 
 
 class GraphSMOTE(nn.Module):
-	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1):
+	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1, ext_mode=None):
 		super(GraphSMOTE, self).__init__()
 		self.n_layers = n_layers
 		self.n_classes = n_classes
-		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
+		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout, ext_mode)
 		if n_layers > 1:
 			dec_feats = n_hidden
 		else:

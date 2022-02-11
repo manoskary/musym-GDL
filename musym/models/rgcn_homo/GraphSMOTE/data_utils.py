@@ -200,6 +200,9 @@ def split_genuine(labels):
 
     return train_idx, val_idx, test_idx, c_num_mat
 
+def load_data_amazon():
+    pass
+
 
 def load_imbalanced_local(name):
     """
@@ -226,6 +229,10 @@ def load_imbalanced_local(name):
         g = load_data_reddit()
         im_class_num = 5
         class_sample_num = 20  # not used
+    elif name == "ogbn-products":
+        g = load_data_amazon()
+        im_class_num = 5 # not used
+        class_sample_num = 5 # Not used
     else:
         raise ValueError("Unknown dataset name")
 
