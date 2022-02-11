@@ -37,12 +37,13 @@ class GraphSMOTELightning(LightningModule):
                  activation,
                  dropout,
                  lr,
-                 loss_weight = 0.0001
+                 loss_weight = 0.0001,
+                 ext_mode=None
         ):
         super(GraphSMOTELightning, self).__init__()
         self.save_hyperparameters()
         self.loss_weight = loss_weight
-        self.module = GraphSMOTE(in_feats, n_hidden, n_classes, n_layers, activation, dropout)
+        self.module = GraphSMOTE(in_feats, n_hidden, n_classes, n_layers, activation, dropout, ext_mode=ext_mode)
         self.lr = lr
         self.train_acc = Accuracy()
         self.val_acc = Accuracy()
