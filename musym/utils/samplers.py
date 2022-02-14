@@ -23,3 +23,60 @@ class StratifiedSampler:
 
     def __len__(self):
         return len(self.y)
+
+def make_imbalance(
+    X, y, imbalance_ratio=0.2, num_classes=10, verbose=False, **kwargs
+    ):
+    """
+    DownSample features and Labels to create Imbalanced dataset with specific imbalance ratio.
+
+
+    Parameters
+    ----------
+    X : torch.tensor
+        The Features
+    y : torch.tensor
+        The labels
+    imbalance_ratio : float
+        The number of imbalance ration beetween the majority classes and the smallest minority class.
+    num_classes : int
+        Reduce the number of classes or use None to use all.
+        Using the num_classes most populated classes.
+    verbose : bool
+    kwargs
+
+    Returns
+    -------
+    X_resampled : torch.tensor
+        The Downsampled features
+    y_resampled : torch.tensor
+        The Downsampled labels
+    """
+    #TODO generalize and refine function.
+    target_stats = torch.eye(int(y.max() + 1), int(y.max() + 1))[y].sum(axis=0)
+    samples_weights = torch.zeros(X.shape[0])
+    if num_classes==None:
+        num_classes = target_stats.shape[0]
+    if verbose:
+        print(f"The original target distribution in the dataset is: {target_stats}")
+
+    n_occ, indices = torch.sort(target_stats, descending=True)[:num_classes]
+    min_samples = n_occ[-1]
+    max_samples = n_occ[0]
+    if min_samples/max_samples > imbalance_ratio:
+        raise ValueError("The imbalance ratio is too small, not enough samples in majority class.")
+    desired_max = min_samples/imbalance_ratio
+    new_indices = list()
+    for i in range(num_classes):
+        if min_samples/n_occ[i] <= imbalance_ratio:
+            new_indices.append(torch.where(y==indices[i]))
+        else:
+            indices.append(torch.randperm(torch.where(y==indices[i])[0])[:desired_max])
+
+    new_indices = torch.cat(new_indices)
+    X_resampled = X[new_indices]
+    y_resampled = y[new_indices]
+    if verbose:
+        print(f"Make the dataset imbalanced: {torch.eye(int(y_resampled.max() + 1), int(y_resampled.max() + 1))[y_resampled].sum(axis=0)}")
+
+    return X_resampled, y_resampled
