@@ -38,7 +38,6 @@ def load_and_save(name, data_dir=None, classname=None):
 
         dataset.save_data()
         # Load the Homogeneous Graph as an UndirectedGraph
-        g = to_bidirected(dataset[0])
         n_classes = dataset.num_classes
         return g, n_classes
 
