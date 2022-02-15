@@ -17,6 +17,7 @@ from pyro.infer import Trace_ELBO
 from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression
 from dgl.sampling import node2vec_random_walk
+from torchmetrics.functional import f1
 
 
 class Node2vec(nn.Module):
@@ -232,10 +233,10 @@ class Node2vecModel(object):
         else:
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    def _train_step(self, model, loader, optimizer, device):
+    def _train_step(self, epoch, model, loader, optimizer, device):
         model.train()
         total_loss = 0
-        for pos_traces, neg_traces in loader:
+        for pos_traces, neg_traces in tqdm.tqdm(loader, position=0, leave=True, desc="Pretraining Epoch %i" % epoch):
             pos_traces, neg_traces = pos_traces.to(device), neg_traces.to(device)
             optimizer.zero_grad()
             loss = model.loss(pos_traces, neg_traces)
@@ -270,12 +271,12 @@ class Node2vecModel(object):
             optimizer = torch.optim.SparseAdam(list(self.model.parameters()), lr=learning_rate)
         else:
             optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
-        for i in range(epochs):
-            loss = self._train_step(self.model, loader, optimizer, self.device)
+        for epoch in range(epochs):
+            loss = self._train_step(epoch, self.model, loader, optimizer, self.device)
             if self.eval_steps > 0:
                 if epochs % self.eval_steps == 0:
                     acc = self._evaluate_step()
-                    print("Epoch: {}, Train Loss: {:.4f}, Val Acc: {:.4f}".format(i, loss, acc))
+                    print("Epoch: {}, Train Loss: {:.4f}, Val Acc: {:.4f}".format(epoch, loss, acc))
 
     def embedding(self, nodes=None):
         """
@@ -389,7 +390,7 @@ def post_process(X, y, n_classes, n_iterations=10):
 
 def main(args):
     """
-    Main Call for Node Classification with Gaug.
+    Main Call for Node Classification with Node2Vec + GraphSMOTE + DBNN.
     """
     #--------------- Standarize Configuration ---------------------
     config = args if isinstance(args, dict) else vars(args)
@@ -400,7 +401,7 @@ def main(args):
 
     # --------------- Dataset Loading -------------------------
     g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
-
+    g = dgl.add_self_loop(dgl.add_reverse_edges(g))
     # training defs
     labels = g.ndata.pop('label')
     train_nids = torch.nonzero(g.ndata.pop('train_mask'), as_tuple=True)[0]
@@ -418,15 +419,20 @@ def main(args):
 
     # ------------ Pre-Processing Node2Vec ----------------------
     g = dgl.add_reverse_edges(g)
-    pp_model = Node2vecModel(g=g, embedding_dim=128, walk_length=50, p=0.25, q=4.0, num_walks=10, device=device)
-    pp_model.train(config["num_epochs"], batch_size=100)
-    node_emb = pp_model.embedding()
-    g.ndata["feat"] = torch.cat((node_features, node_emb))
+    nodes = g.nodes()
+    nodes_train, y_train = nodes[train_nids], labels[train_nids]
+    nodes_val, y_val = nodes[val_nids], labels[val_nids]
+    eval_set = [(nodes_train, y_train), (nodes_val, y_val)]
+    pp_model = Node2vecModel(g=g, embedding_dim=256, walk_length=50, p=0.25, q=4.0, num_walks=10, device=device, eval_set=eval_set, eval_steps=1)
+    pp_model.train(epochs=10, batch_size=128)
+    node_emb = pp_model.embedding().detach().cpu()
+    g.ndata["feat"] = torch.cat((node_features, node_emb), dim=1)
     g.ndata["label"] = labels
 
 
+
     # create model
-    in_feats = node_features.shape[1]
+    in_feats = g.ndata["feat"].shape[1]
 
 
     if isinstance(config["fan_out"], str):
@@ -468,7 +474,8 @@ def main(args):
     for epoch in range(config["num_epochs"]):
         model.train()
         acc = list()
-        for step, (input_nodes, output_nodes, mfgs) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True, desc="Pretraining Epoch %i" % epoch)):
+        f1_score = 0
+        for step, (input_nodes, output_nodes, mfgs) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True, desc="Training Epoch %i" % epoch)):
             batch_inputs = mfgs[0].srcdata['feat']
             batch_labels = mfgs[-1].dstdata['label']
             adj = mfgs[-1].adj().to_dense()[:len(batch_labels), :len(batch_labels)].to(device)
@@ -477,9 +484,12 @@ def main(args):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            acc.append((torch.argmax(pred, dim=1) == batch_labels))
+            acc.append((torch.argmax(pred[:len(batch_labels)], dim=1) == batch_labels))
+            f1_score += f1(torch.argmax(pred[:len(batch_labels)], dim=1), batch_labels, average="macro", num_classes=n_classes).item()
+
+        f1_score = f1_score/ (step+1)
         acc_score = torch.cat(acc) / len(labels)
-        print("Epoch {:04d} | Loss {:04f} | Acc {:04f} |".format(epoch, loss, acc_score))
+        print("Epoch {:04d} | Loss {:.04f} | Acc {:.04f} | F score {:.04f} |".format(epoch, loss, acc_score, f1_score))
 
     model.eval()
     train_prediction = model.inference(train_dataloader, labels, device)
@@ -499,7 +509,7 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
-    argparser.add_argument('--num-epochs', type=int, default=1)
+    argparser.add_argument('--num-epochs', type=int, default=10)
     argparser.add_argument('--num-hidden', type=int, default=128)
     # argparser.add_argument('--clf-hidden', type=int, default=64)
     argparser.add_argument('--num-layers', type=int, default=2)
