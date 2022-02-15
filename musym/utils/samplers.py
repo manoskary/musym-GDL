@@ -60,18 +60,21 @@ def make_imbalance(
     if verbose:
         print(f"The original target distribution in the dataset is: {target_stats}")
 
-    n_occ, indices = torch.sort(target_stats, descending=True)[:num_classes]
-    min_samples = n_occ[-1]
-    max_samples = n_occ[0]
-    if min_samples/max_samples > imbalance_ratio:
+    n_occ, indices = torch.sort(target_stats, descending=True)
+    n_occ, indices = n_occ[:num_classes], indices[:num_classes]
+    min_samples = n_occ[-1].item()
+    max_samples = n_occ[0].item()
+    if (min_samples/max_samples)> imbalance_ratio:
         raise ValueError("The imbalance ratio is too small, not enough samples in majority class.")
-    desired_max = min_samples/imbalance_ratio
+    desired_max = int(min_samples/imbalance_ratio)
     new_indices = list()
     for i in range(num_classes):
-        if min_samples/n_occ[i] <= imbalance_ratio:
-            new_indices.append(torch.where(y==indices[i]))
+        if min_samples/n_occ[i].item() <= imbalance_ratio:
+            new_indices.append(torch.where(y==indices[i])[0])
         else:
-            indices.append(torch.randperm(torch.where(y==indices[i])[0])[:desired_max])
+            rand_idx = torch.randperm(int(n_occ[i].item()))
+            permuted = torch.where(y == indices[i])[0][rand_idx]
+            new_indices.append(permuted[:desired_max])
 
     new_indices = torch.cat(new_indices)
     X_resampled = X[new_indices]
@@ -80,3 +83,13 @@ def make_imbalance(
         print(f"Make the dataset imbalanced: {torch.eye(int(y_resampled.max() + 1), int(y_resampled.max() + 1))[y_resampled].sum(axis=0)}")
 
     return X_resampled, y_resampled
+
+
+if __name__ == '__main__':
+    import os
+    from musym.benchmark.utils import load_ogb_product
+    path = os.path.normpath("/home/manos/Desktop/JKU/codes/musym-GDL/musym/benchmark/")
+    g, _ = load_ogb_product(path)
+    X, y = g.ndata.pop("feat"), g.ndata.pop("label")
+    X_res, y_res = make_imbalance(X, y)
+    print(X_res.shape, y_res.shape)
