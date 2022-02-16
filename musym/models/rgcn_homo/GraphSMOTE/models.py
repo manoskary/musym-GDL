@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 import math
-
-from stevedore.example.simple import Simple
 from tqdm import tqdm
 import numpy as np
 import torch.nn.functional as F
@@ -413,12 +411,13 @@ class GraphSMOTE(nn.Module):
 		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
 
-	def inference(self, dataloader, labels, device):
+	def inference(self, dataloader, node_features, labels, device):
 		prediction = torch.zeros(len(labels), self.n_classes).to(device)
 		with torch.no_grad():
 			for input_nodes, seeds, mfgs in tqdm(dataloader, position=0, leave=True):
-				batch_inputs = mfgs[0].srcdata['feat']
-				batch_labels = mfgs[-1].dstdata['label']
+				batch_inputs = node_features[input_nodes].to(device)
+				batch_labels = labels[seeds].to(device)
+				mfgs = [mfg.int().to(device) for mfg in mfgs]
 				batch_pred, prev_encs = self.encoder(mfgs, batch_inputs)
 				pred_adj = self.decoder(batch_pred, prev_encs)
 				if pred_adj.get_device() >= 0:
