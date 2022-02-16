@@ -39,7 +39,7 @@ def load_and_save(name, data_dir=None, classname=None):
         dataset.save_data()
         # Load the Homogeneous Graph as an UndirectedGraph
         n_classes = dataset.num_classes
-        return g, n_classes
+        return dataset[0], n_classes
 
 
 def compute_metrics(y_pred, y_true):
