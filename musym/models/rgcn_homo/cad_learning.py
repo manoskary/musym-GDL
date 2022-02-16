@@ -397,7 +397,6 @@ def main(args):
 
     config["num_layers"] = len(config["fan_out"])
     config["shuffle"] = bool(config["shuffle"])
-    config["log"] = False if config["unlog"] else True
 
     # --------------- Dataset Loading -------------------------
     g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
@@ -418,21 +417,26 @@ def main(args):
 
 
     # ------------ Pre-Processing Node2Vec ----------------------
+    emb_path = os.path.join(config["data_dir"], "cad_basis_homo", "node_emb.pt")
     g = dgl.add_reverse_edges(g)
     nodes = g.nodes()
-    nodes_train, y_train = nodes[train_nids], labels[train_nids]
-    nodes_val, y_val = nodes[val_nids], labels[val_nids]
-    eval_set = [(nodes_train, y_train), (nodes_val, y_val)]
-    pp_model = Node2vecModel(g=g, embedding_dim=256, walk_length=50, p=0.25, q=4.0, num_walks=10, device=device, eval_set=eval_set, eval_steps=1)
-    pp_model.train(epochs=10, batch_size=128)
-    node_emb = pp_model.embedding().detach().cpu()
-    g.ndata["feat"] = torch.cat((node_features, node_emb), dim=1)
-    g.ndata["label"] = labels
+    if config["preprocess"]:
+        nodes_train, y_train = nodes[train_nids], labels[train_nids]
+        nodes_val, y_val = nodes[val_nids], labels[val_nids]
+        eval_set = [(nodes_train, y_train), (nodes_val, y_val)]
+        pp_model = Node2vecModel(g=g, embedding_dim=256, walk_length=50, p=0.25, q=4.0, num_walks=10, device=device, eval_set=eval_set, eval_steps=1)
+        pp_model.train(epochs=5, batch_size=128)
+        node_emb = pp_model.embedding().detach().cpu()
+        node_features = torch.cat((node_features, node_emb), dim=1)
+        torch.save(node_features, emb_path)
 
-
+    try:
+        node_features = torch.load(emb_path)
+    except:
+        print("Node embedding was not found continuing with standard node features.")
 
     # create model
-    in_feats = g.ndata["feat"].shape[1]
+    in_feats =  node_features.shape[1]
 
 
     if isinstance(config["fan_out"], str):
@@ -440,7 +444,7 @@ def main(args):
     else :
         fanouts = config["fan_out"]
 
-    if use_cuda:
+    if use_cuda and config["num_workers"]==0:
         train_nids = train_nids.to(device)
         test_nids = test_nids.to(device)
         g = g.formats(['csc'])
@@ -460,39 +464,50 @@ def main(args):
         drop_last=False,
         num_workers=config["num_workers"],
     )
+    model_path = os.path.join(config["data_dir"], "cad_basis_homo", "model_sd.pt")
+    model = GraphSMOTE(in_feats, n_hidden=config["num_hidden"], n_classes=n_classes, n_layers=config["num_layers"],
+                       ext_mode=config["ext_mode"])
 
-    model = GraphSMOTE(in_feats, n_hidden=config["num_hidden"], n_classes=n_classes, n_layers=config["num_layers"], ext_mode=config["ext_mode"])
     if use_cuda:
         model = model.cuda()
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     criterion = nn.CrossEntropyLoss()
 
-    # training loop
-    print("start training...")
 
-    for epoch in range(config["num_epochs"]):
-        model.train()
-        acc = list()
-        f1_score = 0
-        for step, (input_nodes, output_nodes, mfgs) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True, desc="Training Epoch %i" % epoch)):
-            batch_inputs = mfgs[0].srcdata['feat']
-            batch_labels = mfgs[-1].dstdata['label']
-            adj = mfgs[-1].adj().to_dense()[:len(batch_labels), :len(batch_labels)].to(device)
-            pred, upsampl_lab, embed_loss = model(mfgs, batch_inputs, adj, batch_labels)
-            loss = criterion(pred, upsampl_lab) + embed_loss * config["gamma"]
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            acc.append((torch.argmax(pred[:len(batch_labels)], dim=1) == batch_labels))
-            f1_score += f1(torch.argmax(pred[:len(batch_labels)], dim=1), batch_labels, average="macro", num_classes=n_classes).item()
+    if config["load_model"]:
+        model.load_state_dict(torch.load(model_path))
+    else:
+        # training loop
+        print("start training...")
 
-        f1_score = f1_score/ (step+1)
-        acc_score = torch.cat(acc) / len(labels)
-        print("Epoch {:04d} | Loss {:.04f} | Acc {:.04f} | F score {:.04f} |".format(epoch, loss, acc_score, f1_score))
+        for epoch in range(config["num_epochs"]):
+            model.train()
+            acc = list()
+            f1_score = 0
+            for step, (input_nodes, output_nodes, mfgs) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True, desc="Training Epoch %i" % epoch)):
+                batch_inputs = node_features[input_nodes].to(device)
+                batch_labels = labels[output_nodes].to(device)
+                if dataloader_device == "cpu":
+                    mfgs = [mfg.int().to(device) for mfg in mfgs]
+                adj = mfgs[-1].adj().to_dense()[:len(batch_labels), :len(batch_labels)].to(device)
+                pred, upsampl_lab, embed_loss = model(mfgs, batch_inputs, adj, batch_labels)
+                loss = criterion(pred, upsampl_lab) + embed_loss * config["gamma"]
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                acc.append((torch.argmax(pred[:len(batch_labels)], dim=1) == batch_labels))
+                f1_score += f1(torch.argmax(pred[:len(batch_labels)], dim=1), batch_labels, average="macro", num_classes=n_classes).item()
+
+            f1_score = f1_score/ (step+1)
+            acc_score = torch.cat(acc).float().sum() / len(labels)
+            print("Epoch {:04d} | Loss {:.04f} | Acc {:.04f} | F score {:.04f} |".format(epoch, loss, acc_score, f1_score))
+        torch.save(model.state_dict(), model_path)
 
     model.eval()
     train_prediction = model.inference(train_dataloader, labels, device)
+    pred_path = os.path.join(config["data_dir"], "cad_basis_homo", "preds.pt")
+    torch.save(train_prediction, pred_path)
     # TODO needs to address post-processing using Dynamic Bayesian Model.
     train_prediction = train_prediction.detach().cpu()
     labels = labels.detach().cpu()
@@ -509,21 +524,20 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
-    argparser.add_argument('--num-epochs', type=int, default=10)
+    argparser.add_argument('--num-epochs', type=int, default=50)
     argparser.add_argument('--num-hidden', type=int, default=128)
-    # argparser.add_argument('--clf-hidden', type=int, default=64)
     argparser.add_argument('--num-layers', type=int, default=2)
-    argparser.add_argument('--lr', type=float, default=1e-2)
+    argparser.add_argument('--lr', type=float, default=0.001123)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument("--weight-decay", type=float, default=5e-4,
                            help="Weight for L2 loss")
-    argparser.add_argument("--gamma", type=float, default=0.0001,
+    argparser.add_argument("--gamma", type=float, default=0.001248,
                            help="weight of decoder regularization loss.")
     argparser.add_argument("--ext-mode", type=str, default=None, choices=["lstm", "attention"])
     argparser.add_argument("--fan-out", default=[5, 10])
     argparser.add_argument('--shuffle', type=int, default=True)
-    argparser.add_argument("--batch-size", type=int, default=256)
-    argparser.add_argument("--num-workers", type=int, default=0)
+    argparser.add_argument("--batch-size", type=int, default=2048)
+    argparser.add_argument("--num-workers", type=int, default=10)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
                                 "on GPU when using it to save time for data copy. This may "
@@ -533,7 +547,9 @@ if __name__ == '__main__':
                            help="Initialize learnable graph weights. Use 1 for True and 0 for false")
     argparser.add_argument("--temperature", type=float, default=0.2)
     argparser.add_argument("--data-dir", type=str, default=os.path.abspath("./data/"))
-    argparser.add_argument("--unlog", action="store_true", help="Unbinds wandb.")
+    argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
+    argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
+    argparser.add_argument("--load-model", action="store_true", help="Load pretrained model.")
     args = argparser.parse_args()
 
 
