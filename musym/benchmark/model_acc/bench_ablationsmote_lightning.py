@@ -9,7 +9,13 @@ from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from musym.benchmark.utils import DataModule
 
-class SmoteEmbedLightning(LightningModule):
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.integration.wandb import WandbLoggerCallback
+from ray.tune.integration.pytorch_lightning import TuneReportCallback
+
+
+class AlbationSMOTE(LightningModule):
     def __init__(self,
                  in_feats,
                  n_hidden,
@@ -86,6 +92,54 @@ def evaluate(model, g, val_nid, device):
     return test_acc(torch.softmax(pred[val_nid], -1), labels[val_nid].to(pred.device))
 
 
+def ablation_study(config):
+    rem_smote = False
+    rem_gnn_enc = False
+    rem_gnn_clf = False
+    rem_adjmix = False
+    if config["mode"] == "no-smote":
+        rem_smote = True
+    elif config["mode"] == "no-enc":
+        rem_gnn_enc = True
+    elif config["mode"] == "no-gnn-clf":
+        rem_gnn_clf = True
+    elif config["mode"] == "no-adj-mix":
+        rem_adjmix = True
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    model = AlbationSMOTE
+    fanouts = [int(_) for _ in config["fan_out"].split(',')]
+    config["num_layers"] = len(fanouts)
+    datamodule = DataModule(
+        dataset_name=config["dataset"], data_cpu=config["data_cpu"], fan_out=fanouts,
+        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device, init_weights=config["init_weights"], load_dir=config["load_dir"])
+
+    model = model(
+        datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
+        F.relu, config["dropout"], config["lr"], loss_weight=config["gamma"],
+        rem_smote=rem_smote, rem_adjmix=rem_adjmix, rem_gnn_enc=rem_gnn_enc, rem_gnn_clf=rem_gnn_clf
+    )
+
+    # Train
+    checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=3)
+    trainer = Trainer(gpus=1,
+                      max_epochs=config["num_epochs"],
+                      callbacks=[
+                          checkpoint_callback,
+                          TuneReportCallback(
+                              {
+                                  "loss": "val_loss_epoch",
+                                  "mean_accuracy": "val_acc_epoch",
+                                  "val_fscore": "val_fscore_epoch",
+                                  "val_auroc": "val_auroc_epoch",
+                                  "train_acc": "train_acc_epoch",
+                              },
+                              on="validation_end")
+                      ])
+    trainer.fit(model, datamodule=datamodule)
+
+
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--gpu', type=int, default=0,
@@ -94,6 +148,7 @@ if __name__ == '__main__':
     argparser.add_argument('--num-epochs', type=int, default=20)
     argparser.add_argument('--num-hidden', type=int, default=16)
     argparser.add_argument('--fan-out', type=str, default='10,25')
+    argparser.add_argument('--gamma', type=float, default=0.001)
     argparser.add_argument('--batch-size', type=int, default=64)
     argparser.add_argument('--lr', type=float, default=0.003)
     argparser.add_argument('--dropout', type=float, default=0.5)
@@ -106,52 +161,38 @@ if __name__ == '__main__':
                                 "This flag disables that.")
     argparser.add_argument('--init-weights', action='store_true',
                            help="Initializes random weights for the edges of the training graph.")
-    argparser.add_argument("--mode", type=str, default="full",
-                           help="Mode of AblationSMOTE ",
-                           choices = ["full", "no-smote", "no-enc", "no-gnn-clf", "no-adj-mix"]
-                           )
+    # argparser.add_argument("--mode", type=str, default="full",
+    #                        help="Mode of AblationSMOTE ",
+    #                        choices = ["full", "no-smote", "no-enc", "no-gnn-clf", "no-adj-mix"]
+    #                        )
     argparser.add_argument("--load-dir", type=str, default=".",
                            )
     args = argparser.parse_args()
 
-    rem_smote = False
-    rem_gnn_enc = False
-    rem_gnn_clf = False
-    rem_adjmix = False
-    if args.mode == "no-smote":
-        rem_smote=True
-    elif args.mode == "no-enc":
-        rem_gnn_enc=True
-    elif args.mode == "no-gnn-clf":
-        rem_gnn_clf=True
-    elif args.mode == "no-adj-mix":
-        rem_adjmix=True
-
-
-
-
-    if args.gpu >= 0:
-        device = torch.device('cuda:%d' % args.gpu)
-    else:
-        device = torch.device('cpu')
     config = args if isinstance(args, dict) else vars(args)
-    model = SmoteEmbedLightning
-    fanouts = [int(_) for _ in config["fan_out"].split(',')]
-    config["num_layers"] = len(fanouts)
-    datamodule = DataModule(
-        dataset_name=config["dataset"], data_cpu=config["data_cpu"], fan_out=fanouts,
-        batch_size=config["batch_size"], num_workers=config["num_workers"], device=device, init_weights=config["init_weights"], load_dir=config["load_dir"])
+    config["mode"] = tune.grid_search(["full", "no-smote", "no-enc", "no-gnn-clf", "no-adj-mix"])
 
-    model = model(
-        datamodule.in_feats, config["num_hidden"], datamodule.n_classes, config["num_layers"],
-        F.relu, config["dropout"], config["lr"],
-        rem_smote=rem_smote, rem_adjmix=rem_adjmix, rem_gnn_enc=rem_gnn_enc, rem_gnn_clf=rem_gnn_clf
-    )
+    reporter = CLIReporter(
+        parameter_columns=["mode"],
+        metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
-    # Train
-    checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
-    trainer = Trainer(gpus=[args.gpu] if args.gpu != -1 else None,
-                      max_epochs=args.num_epochs,
-                      logger=WandbLogger(project="AblationSMOTE", group=args.dataset, job_type=args.mode),
-                      callbacks=[checkpoint_callback])
-    trainer.fit(model, datamodule=datamodule)
+    analysis = tune.run(
+        tune.with_parameters(
+            ablation_study
+        ),
+        resources_per_trial={
+            "cpu": config["num_workers"] if config["num_workers"] > 0 else 1,
+            "gpu": 1
+        },
+        metric="loss",
+        mode="min",
+        config=config,
+        callbacks=[
+            WandbLoggerCallback(project="AblationSMOTE", group=config["dataset"])
+        ],
+        progress_reporter=reporter,
+        name="tune_{}_{}_{}".format(config["dataset"], AblationSMOTE, "mode"))
+
+
+
+
