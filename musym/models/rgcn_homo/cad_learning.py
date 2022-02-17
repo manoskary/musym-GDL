@@ -308,7 +308,7 @@ class BNN(nn.Module):
 
 # Using pyro version 0.2.1
 class DBNN(object):
-    def __init__(self, n_classes, lr=0.01):
+    def __init__(self, n_classes, lr=0.001):
         self.net = BNN(n_classes, n_classes * 2, n_classes)
         self.n_classes = n_classes
         self.optimizer = Adam({"lr": lr})
@@ -377,15 +377,19 @@ class DBNN(object):
         sampled_models = [self.guide(None, None) for _ in range(self.n_classes)]
         yhats = [model(x).data for model in sampled_models]
         mean = torch.mean(torch.stack(yhats), 0)
-        return np.argmax(mean.numpy(), axis=1)
+        return mean
 
 def post_process(X, y, n_classes, n_iterations=10):
     model = DBNN(n_classes)
-    for j in range(n_iterations):
+    fscore = 0
+    epoch = 0
+    while fscore < 0.9:
         loss = model.svi.step(X, y)
         y_pred = torch.tensor(model.predict(X))
-        acc = torch.eq(y, y_pred).float().sum()/len(y)
-        print("Post-Process Epoch {:04d} | Loss {:.4f} | Accuracy {:.4f}".format(j, loss, acc))
+        acc = torch.eq(y, torch.argmax(y_pred, dim=1)).float().sum()/len(y)
+        fscore = f1(y_pred, y, average="macro", num_classes=n_classes)
+        print("Post-Process Epoch {:04d} | Loss {:.4f} | Accuracy {:.4f} | F score {:.4f} |".format(epoch, loss, acc, fscore))
+        epoch+=1
     return model
 
 def main(args):
@@ -418,7 +422,6 @@ def main(args):
 
     # ------------ Pre-Processing Node2Vec ----------------------
     emb_path = os.path.join(config["data_dir"], "cad_basis_homo", "node_emb.pt")
-    g = dgl.add_reverse_edges(g)
     nodes = g.nodes()
     if config["preprocess"]:
         nodes_train, y_train = nodes[train_nids], labels[train_nids]
@@ -505,13 +508,36 @@ def main(args):
         torch.save(model.state_dict(), model_path)
 
     model.eval()
-    train_prediction = model.inference(train_dataloader, labels, device)
+    train_prediction = model.inference(train_dataloader, node_features, labels[train_nids], device)
     pred_path = os.path.join(config["data_dir"], "cad_basis_homo", "preds.pt")
-    torch.save(train_prediction, pred_path)
+    posttrain_label_path = os.path.join(config["data_dir"], "cad_basis_homo", "post_train_labels.pt")
+    # torch.save(train_prediction.detach().cpu(), pred_path)
+    # torch.save(labels[train_nids].detach().cpu(), posttrain_label_path)
+
+    if config["eval"]:
+        val_dataloader = dgl.dataloading.NodeDataLoader(
+            g,
+            torch.cat((val_nids, test_nids)),
+            sampler,
+            device=dataloader_device,
+            shuffle=config["shuffle"],
+            batch_size = config["batch_size"],
+            drop_last=False,
+            num_workers=config["num_workers"],
+        )
+        idx = torch.cat((val_nids, test_nids))
+        val_prediction = model.inference(val_dataloader, node_features, labels, device)
+        acc = torch.eq(labels[idx], torch.argmax(val_prediction[idx].cpu(), dim=1)).float().sum() / len(labels[idx])
+        fscore = f1(val_prediction[idx].cpu(), labels[idx], average="macro", num_classes=2)
+        print("Validation Score : Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+
+
+
     # TODO needs to address post-processing using Dynamic Bayesian Model.
-    train_prediction = train_prediction.detach().cpu()
-    labels = labels.detach().cpu()
-    pm = post_process(train_prediction, labels, n_classes, n_iterations=10)
+    X_train = train_prediction.detach().cpu()
+    y_train = labels[train_nids].detach().cpu()
+    print(X_train.shape, y_train.shape)
+    return X_train, y_train
 
 
 
@@ -520,6 +546,7 @@ def main(args):
 
 if __name__ == '__main__':
     import argparse
+    import pickle
     argparser = argparse.ArgumentParser(description='GraphSAGE')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
@@ -550,9 +577,23 @@ if __name__ == '__main__':
     argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
     argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
     argparser.add_argument("--load-model", action="store_true", help="Load pretrained model.")
+    argparser.add_argument("--eval", action="store_true", help="Preview Results on Validation set.")
     args = argparser.parse_args()
 
 
 
     print(args)
-    main(args)
+    if not args.postprocess:
+        X_train, y_train = main(args)
+    else :
+        pred_path = os.path.join(args.data_dir, "cad_basis_homo", "preds.pt")
+        posttrain_label_path = os.path.join(args.data_dir, "cad_basis_homo", "post_train_labels.pt")
+        X_train, y_train = torch.load(pred_path), torch.load(posttrain_label_path)
+
+        # Start Post-processing.
+        posttrain_model_path = os.path.join(args.data_dir, "cad_basis_homo", "pm_model.pkl")
+        pm = post_process(X_train, y_train, n_classes=2, n_iterations=200)
+        y_pred = torch.tensor(pm.predict(X_train))
+        acc = torch.eq(y_train, torch.argmax(X_train, dim=1)).float().sum() / len(y_train)
+        fscore = f1(X_train, y_train, average="macro", num_classes=2)
+        print("Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
