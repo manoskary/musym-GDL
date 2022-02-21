@@ -588,12 +588,19 @@ if __name__ == '__main__':
     else :
         pred_path = os.path.join(args.data_dir, "cad_basis_homo", "preds.pt")
         posttrain_label_path = os.path.join(args.data_dir, "cad_basis_homo", "post_train_labels.pt")
-        X_train, y_train = torch.load(pred_path), torch.load(posttrain_label_path)
+        X_train, y_train = torch.load(pred_path).numpy(), torch.load(posttrain_label_path).numpy()
+
 
         # Start Post-processing.
-        posttrain_model_path = os.path.join(args.data_dir, "cad_basis_homo", "pm_model.pkl")
-        pm = post_process(X_train, y_train, n_classes=2, n_iterations=200)
-        y_pred = torch.tensor(pm.predict(X_train))
-        acc = torch.eq(y_train, torch.argmax(X_train, dim=1)).float().sum() / len(y_train)
-        fscore = f1(X_train, y_train, average="macro", num_classes=2)
+        # posttrain_model_path = os.path.join(args.data_dir, "cad_basis_homo", "pm_model.pkl")
+        # pm = post_process(X_train, y_train, n_classes=2, n_iterations=200)
+        # y_pred = torch.tensor(pm.predict(X_train))
+        import pomegranate as pg
+        from sklearn.metrics import f1_score
+
+        distribution = pg.MultivariateGaussianDistribution
+        model = pg.HiddenMarkovModel.from_samples(distribution, n_components=5, X=X_train, labels=y_train, algorithm='labeled')
+        y_pred = model.predict(X_train, algorithm='viterbi')
+        acc = torch.eq(y_train, y_pred).float().sum() / len(y_train)
+        fscore = f1_score(y_train, y_pred, average="macro")
         print("Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
