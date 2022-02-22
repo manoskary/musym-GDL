@@ -513,7 +513,9 @@ def main(args):
     posttrain_label_path = os.path.join(config["data_dir"], "cad_basis_homo", "post_train_labels.pt")
     # torch.save(train_prediction.detach().cpu(), pred_path)
     # torch.save(labels[train_nids].detach().cpu(), posttrain_label_path)
-
+    # TODO needs to address post-processing using Dynamic Bayesian Model.
+    X_train = train_prediction.detach().cpu()
+    y_train = labels[train_nids].detach().cpu()
     if config["eval"]:
         val_dataloader = dgl.dataloading.NodeDataLoader(
             g,
@@ -529,15 +531,18 @@ def main(args):
         val_prediction = model.inference(val_dataloader, node_features, labels, device)
         acc = torch.eq(labels[idx], torch.argmax(val_prediction[idx].cpu(), dim=1)).float().sum() / len(labels[idx])
         fscore = f1(val_prediction[idx].cpu(), labels[idx], average="macro", num_classes=2)
+        Χ_val = val_prediction[idx].detach().cpu()
+        y_val = labels[idx].detach().cpu()
         print("Validation Score : Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+        return X_train, y_train, Χ_val, y_val
+    else:
+        print(X_train.shape, y_train.shape)
+        return X_train, y_train
 
 
 
-    # TODO needs to address post-processing using Dynamic Bayesian Model.
-    X_train = train_prediction.detach().cpu()
-    y_train = labels[train_nids].detach().cpu()
-    print(X_train.shape, y_train.shape)
-    return X_train, y_train
+
+
 
 
 
@@ -591,16 +596,33 @@ if __name__ == '__main__':
         X_train, y_train = torch.load(pred_path).numpy(), torch.load(posttrain_label_path).numpy()
 
 
-        # Start Post-processing.
+        print("Start Post-processing...")
+
+
+        # ---------------- Deep HMM with Pyro ---------------
+
         # posttrain_model_path = os.path.join(args.data_dir, "cad_basis_homo", "pm_model.pkl")
         # pm = post_process(X_train, y_train, n_classes=2, n_iterations=200)
         # y_pred = torch.tensor(pm.predict(X_train))
+
+
+        # -------------- POMEGRANATE HMM --------------------
+
         import pomegranate as pg
         from sklearn.metrics import f1_score
 
         distribution = pg.MultivariateGaussianDistribution
-        model = pg.HiddenMarkovModel.from_samples(distribution, n_components=5, X=X_train, labels=y_train, algorithm='labeled')
+        model = pg.HiddenMarkovModel.from_samples(distribution, n_components=2, X=X_train, labels=y_train, algorithm='labeled')
         y_pred = model.predict(X_train, algorithm='viterbi')
-        acc = torch.eq(y_train, y_pred).float().sum() / len(y_train)
+
+
+        # ------------- Scikit Learn -------------------------
+        # from sklearn.ensemble import RandomForestClassifier
+        #
+        # clf = RandomForestClassifier().fit(X_train, y_train)
+        # y_pred = clf.predict(X_train)
+
+        acc = np.equal(y_train, y_pred).astype(float).sum() / len(y_train)
         fscore = f1_score(y_train, y_pred, average="macro")
         print("Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+
