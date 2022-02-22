@@ -163,16 +163,19 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 						edges_dst = dst
 					edges = (edges_src, edges_dst)
 
+			# Have to store onset local and onset global.
 			try:
 				g = self.graph
 				graph = dgl.graph(edges)
 				graph.ndata['feat'] = note_node_features.float()
-				graph.ndata['label'] = note_node_labels                    
+				graph.ndata['label'] = note_node_labels
+				graph.ndata['score_name'] = torch.tensor([fn]).repeat(len(note_node_labels))
 				self.graph = dgl.batch([g, graph])
 			except AttributeError:
 				self.graph = dgl.graph(edges)
 				self.graph.ndata['feat'] = note_node_features.float()
 				self.graph.ndata['label'] = note_node_labels
+				self.graph.ndata['score_name'] = torch.tensor([fn]).repeat(len(note_node_labels))
 				
 
 
@@ -190,6 +193,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 							graph = dgl.graph(edges)
 							graph.ndata['feat'] = note_node_features.float()*dur_resize + pitch_aug
 							graph.ndata['label'] = note_node_labels
+							self.graph.ndata['score_name'] = torch.tensor([fn+"_agg"]).repeat(len(note_node_labels))
 							self.graph = dgl.batch([g, graph])
 						else:                           
 							num_feat = len(self.features)
@@ -197,6 +201,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 							graph = dgl.graph(edges)
 							graph.ndata['feat'] = note_node_features.float()*dur_resize
 							graph.ndata['label'] = note_node_labels
+							self.graph.ndata['score_name'] = torch.tensor([fn + "_agg"]).repeat(len(note_node_labels))
 							self.graph = dgl.batch([g, graph])
 
 
