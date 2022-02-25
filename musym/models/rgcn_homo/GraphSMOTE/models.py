@@ -303,7 +303,8 @@ class SageClassifier(nn.Module):
 				h = F.normalize(h)
 				h = self.dropout(h)
 		h = self.clf(h)
-		return h
+		# Added softmax
+		return F.softmax(h, dim=1)
 
 
 class SageDecoder(nn.Module):

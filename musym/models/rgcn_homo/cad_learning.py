@@ -1,4 +1,6 @@
 import os
+
+import hmmlearn.hmm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,12 +10,12 @@ import tqdm
 from sklearn.metrics import f1_score
 from GraphSMOTE.models import GraphSMOTE
 from musym.utils import load_and_save
-import pyro
-from pyro.distributions import Normal
-from pyro.distributions import Categorical
-from pyro.optim import Adam
-from pyro.infer import SVI
-from pyro.infer import Trace_ELBO
+# import pyro
+# from pyro.distributions import Normal
+# from pyro.distributions import Categorical
+# from pyro.optim import Adam
+# from pyro.infer import SVI
+# from pyro.infer import Trace_ELBO
 from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression
 from dgl.sampling import node2vec_random_walk
@@ -294,103 +296,40 @@ class Node2vecModel(object):
         return self.model(nodes)
 
 
-class BNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super(BNN, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.out = nn.Linear(hidden_size, output_size)
+def to_sequences(labels, preds, idx, score_duration, piece_idx):
+    seqs = list()
+    trues = list()
+    # Make args same dimensions as preds
+    piece_idx = piece_idx[idx]
+    labels = labels[idx]
+    score_duration = score_duration[idx]
+    # Start Building Sequence per piece name.
+    for name in torch.unique(piece_idx):
+        # Gather on non-augmented Pieces
+        if name != 0:
+            durs = score_duration[piece_idx == name]
+            X = preds[piece_idx == name]
+            y = labels[piece_idx == name]
+            sorted_durs, resorted_idx = torch.sort(durs)
+            X = X[resorted_idx]
+            y = y[resorted_idx]
+            new_X = []
+            new_y = []
+            # group by onset
+            for udur in torch.unique(sorted_durs):
+                x = X[sorted_durs == udur]
+                z = y[sorted_durs == udur]
+                if len(x.shape) > 1:
+                    # Can be Max or Mean aggregation of likelihoods.
+                    new_X.append(x.mean(dim=0))
+                    new_y.append(z.max().unsqueeze(0))
+                else:
+                    new_X.append(x)
+                    new_y.append(z)
+            seqs.append(torch.vstack(new_X).numpy())
+            trues.append(torch.cat(new_y).numpy())
+    return seqs, trues
 
-    def forward(self, x):
-        output = self.fc1(x)
-        output = F.relu(output)
-        output = self.out(output)
-        return output
-
-# Using pyro version 0.2.1
-class DBNN(object):
-    def __init__(self, n_classes, lr=0.001):
-        self.net = BNN(n_classes, n_classes * 2, n_classes)
-        self.n_classes = n_classes
-        self.optimizer = Adam({"lr": lr})
-        self.svi = SVI(self.model, self.guide, self.optimizer, loss=Trace_ELBO())
-
-    def model(self, x_data, y_data):
-        # define prior distributions
-        fc1w_prior = Normal(loc=torch.zeros_like(self.net.fc1.weight),
-                            scale=torch.ones_like(self.net.fc1.weight))
-        fc1b_prior = Normal(loc=torch.zeros_like(self.net.fc1.bias),
-                            scale=torch.ones_like(self.net.fc1.bias))
-        outw_prior = Normal(loc=torch.zeros_like(self.net.out.weight),
-                            scale=torch.ones_like(self.net.out.weight))
-        outb_prior = Normal(loc=torch.zeros_like(self.net.out.bias),
-                            scale=torch.ones_like(self.net.out.bias))
-
-        priors = {
-            'fc1.weight': fc1w_prior,
-            'fc1.bias': fc1b_prior,
-            'out.weight': outw_prior,
-            'out.bias': outb_prior}
-
-        lifted_module = pyro.random_module("module", self.net, priors)
-        lifted_reg_model = lifted_module()
-
-        lhat = F.log_softmax(lifted_reg_model(x_data))
-        pyro.sample("obs", Categorical(logits=lhat), obs=y_data)
-
-
-    def guide(self, x_data, y_data):
-        fc1w_mu = torch.randn_like(self.net.fc1.weight)
-        fc1w_sigma = torch.randn_like(self.net.fc1.weight)
-        fc1w_mu_param = pyro.param("fc1w_mu", fc1w_mu)
-        fc1w_sigma_param = F.softplus(pyro.param("fc1w_sigma", fc1w_sigma))
-        fc1w_prior = Normal(loc=fc1w_mu_param, scale=fc1w_sigma_param)
-
-        fc1b_mu = torch.randn_like(self.net.fc1.bias)
-        fc1b_sigma = torch.randn_like(self.net.fc1.bias)
-        fc1b_mu_param = pyro.param("fc1b_mu", fc1b_mu)
-        fc1b_sigma_param = F.softplus(pyro.param("fc1b_sigma", fc1b_sigma))
-        fc1b_prior = Normal(loc=fc1b_mu_param, scale=fc1b_sigma_param)
-
-        outw_mu = torch.randn_like(self.net.out.weight)
-        outw_sigma = torch.randn_like(self.net.out.weight)
-        outw_mu_param = pyro.param("outw_mu", outw_mu)
-        outw_sigma_param = F.softplus(pyro.param("outw_sigma", outw_sigma))
-        outw_prior = Normal(loc=outw_mu_param, scale=outw_sigma_param).independent(1)
-
-        outb_mu = torch.randn_like(self.net.out.bias)
-        outb_sigma = torch.randn_like(self.net.out.bias)
-        outb_mu_param = pyro.param("outb_mu", outb_mu)
-        outb_sigma_param = F.softplus(pyro.param("outb_sigma", outb_sigma))
-        outb_prior = Normal(loc=outb_mu_param, scale=outb_sigma_param)
-
-        priors = {
-            'fc1.weight': fc1w_prior,
-            'fc1.bias': fc1b_prior,
-            'out.weight': outw_prior,
-            'out.bias': outb_prior}
-
-        lifted_module = pyro.random_module("module", self.net, priors)
-
-        return lifted_module()
-
-    def predict(self, x):
-        sampled_models = [self.guide(None, None) for _ in range(self.n_classes)]
-        yhats = [model(x).data for model in sampled_models]
-        mean = torch.mean(torch.stack(yhats), 0)
-        return mean
-
-def post_process(X, y, n_classes, n_iterations=10):
-    model = DBNN(n_classes)
-    fscore = 0
-    epoch = 0
-    while fscore < 0.9:
-        loss = model.svi.step(X, y)
-        y_pred = torch.tensor(model.predict(X))
-        acc = torch.eq(y, torch.argmax(y_pred, dim=1)).float().sum()/len(y)
-        fscore = f1(y_pred, y, average="macro", num_classes=n_classes)
-        print("Post-Process Epoch {:04d} | Loss {:.4f} | Accuracy {:.4f} | F score {:.4f} |".format(epoch, loss, acc, fscore))
-        epoch+=1
-    return model
 
 def main(args):
     """
@@ -409,7 +348,9 @@ def main(args):
     labels = g.ndata.pop('label')
     train_nids = torch.nonzero(g.ndata.pop('train_mask'), as_tuple=True)[0]
     node_features = g.ndata.pop('feat')
-
+    piece_idx = g.ndata.pop("score_name")
+    score_duration = node_features[:, 3]
+    node_features = F.normalize(node_features)
 
     # Validation and Testing
     val_nids = torch.nonzero(g.ndata.pop('val_mask'), as_tuple=True)[0]
@@ -470,6 +411,7 @@ def main(args):
     model_path = os.path.join(config["data_dir"], "cad_basis_homo", "model_sd.pt")
     model = GraphSMOTE(in_feats, n_hidden=config["num_hidden"], n_classes=n_classes, n_layers=config["num_layers"],
                        ext_mode=config["ext_mode"])
+    print("Model Trainable Parameters : ", sum(p.numel() for p in model.parameters() if p.requires_grad))
 
     if use_cuda:
         model = model.cuda()
@@ -509,8 +451,8 @@ def main(args):
 
     model.eval()
     train_prediction = model.inference(train_dataloader, node_features, labels[train_nids], device)
-    pred_path = os.path.join(config["data_dir"], "cad_basis_homo", "preds.pt")
-    posttrain_label_path = os.path.join(config["data_dir"], "cad_basis_homo", "post_train_labels.pt")
+    # pred_path = os.path.join(config["data_dir"], "cad_basis_homo", "preds.pt")
+    # posttrain_label_path = os.path.join(config["data_dir"], "cad_basis_homo", "post_train_labels.pt")
     # torch.save(train_prediction.detach().cpu(), pred_path)
     # torch.save(labels[train_nids].detach().cpu(), posttrain_label_path)
     # TODO needs to address post-processing using Dynamic Bayesian Model.
@@ -537,16 +479,7 @@ def main(args):
         return X_train, y_train, Χ_val, y_val
     else:
         print(X_train.shape, y_train.shape)
-        return X_train, y_train
-
-
-
-
-
-
-
-
-
+        return to_sequences(labels, X_train, train_nids, score_duration, piece_idx)
 
 
 if __name__ == '__main__':
@@ -555,7 +488,6 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='GraphSAGE')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
-    argparser.add_argument("-d", "--dataset", type=str, default="toy_01_homo")
     argparser.add_argument('--num-epochs', type=int, default=50)
     argparser.add_argument('--num-hidden', type=int, default=128)
     argparser.add_argument('--num-layers', type=int, default=2)
@@ -575,9 +507,6 @@ if __name__ == '__main__':
                                 "on GPU when using it to save time for data copy. This may "
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
-    argparser.add_argument("--init-eweights", type=int, default=0,
-                           help="Initialize learnable graph weights. Use 1 for True and 0 for false")
-    argparser.add_argument("--temperature", type=float, default=0.2)
     argparser.add_argument("--data-dir", type=str, default=os.path.abspath("./data/"))
     argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
     argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
@@ -590,39 +519,70 @@ if __name__ == '__main__':
     print(args)
     if not args.postprocess:
         X_train, y_train = main(args)
+        pred_path = os.path.join(args.data_dir, "cad_basis_homo", "preds.pkl")
+        posttrain_label_path = os.path.join(args.data_dir, "cad_basis_homo", "post_train_labels.pkl")
+        with open(pred_path, "wb") as f:
+            pickle.dump(X_train, f)
+        with open(posttrain_label_path, "wb") as f:
+            pickle.dump(y_train, f)
     else :
-        pred_path = os.path.join(args.data_dir, "cad_basis_homo", "preds.pt")
-        posttrain_label_path = os.path.join(args.data_dir, "cad_basis_homo", "post_train_labels.pt")
-        X_train, y_train = torch.load(pred_path).numpy(), torch.load(posttrain_label_path).numpy()
-
+        pred_path = os.path.join(args.data_dir, "cad_basis_homo", "preds.pkl")
+        posttrain_label_path = os.path.join(args.data_dir, "cad_basis_homo", "post_train_labels.pkl")
+        # X_train, y_train = torch.load(pred_path).numpy(), torch.load(posttrain_label_path).numpy()
+        with open(pred_path, "rb") as f:
+            X_train = pickle.load(f)
+        with open(posttrain_label_path, "rb") as f:
+            y_train = pickle.load(f)
 
         print("Start Post-processing...")
 
 
-        # ---------------- Deep HMM with Pyro ---------------
-
-        # posttrain_model_path = os.path.join(args.data_dir, "cad_basis_homo", "pm_model.pkl")
-        # pm = post_process(X_train, y_train, n_classes=2, n_iterations=200)
-        # y_pred = torch.tensor(pm.predict(X_train))
-
 
         # -------------- POMEGRANATE HMM --------------------
 
-        import pomegranate as pg
-        from sklearn.metrics import f1_score
-
-        distribution = pg.MultivariateGaussianDistribution
-        model = pg.HiddenMarkovModel.from_samples(distribution, n_components=2, X=X_train, labels=y_train, algorithm='labeled')
-        y_pred = model.predict(X_train, algorithm='viterbi')
-
-
-        # ------------- Scikit Learn -------------------------
-        # from sklearn.ensemble import RandomForestClassifier
+        # import pomegranate as pg
+        # from sklearn.metrics import f1_score
         #
-        # clf = RandomForestClassifier().fit(X_train, y_train)
-        # y_pred = clf.predict(X_train)
+        # trans_mat = np.array([[0.98, 1.],
+        #                       [0.02, 0.]])
+        # starts = np.array([1.0, 0.0])
+        # ends = np.array([1.0, 0.0])
+        # model = pg.HiddenMarkovModel.from_matrix(trans_mat, dists, starts, ends)
+        # y_pred = model.predict(X_train, algorithm='viterbi')
 
-        acc = np.equal(y_train, y_pred).astype(float).sum() / len(y_train)
-        fscore = f1_score(y_train, y_pred, average="macro")
-        print("Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+
+        # ------------- HMM Learn -------------------------
+        from hmmlearn import hmm
+
+        pm = hmm.GaussianHMM(n_components=2, covariance_type="diag", init_params="cm", params="cmt")
+        pm.startprob_ = np.array([1.0, 0.0])
+        pm.transmat_ = np.array([[0.95, 0.05],
+                                  [1.00, 0.00]])
+        pm.fit(np.concatenate(X_train), [len(x) for x in X_train])
+        over_acc = 0
+        over_f1 = 0
+        for i, seq in enumerate(X_train):
+            y_pred = pm.predict(seq)
+            acc = np.equal(y_train[i], y_pred).astype(float).sum() / len(y_pred)
+            over_acc += acc
+            fscore = f1_score(y_train[i], y_pred, average="macro")
+            over_f1 += fscore
+            print("Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+        over_acc = over_acc / (i+1)
+        over_f1 = over_f1 / (i+1)
+        print("Mean Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+
+        over_acc = 0
+        over_f1 = 0
+        for i, seq in enumerate(X_train):
+            y_pred = X_train[i].argmax(axis=1)
+            acc = np.equal(y_train[i], y_pred).astype(float).sum() / len(y_pred)
+            over_acc += acc
+            fscore = f1_score(y_train[i], y_pred, average="macro")
+            over_f1 += fscore
+        over_acc = over_acc / (i+1)
+        over_f1 = over_f1 / (i+1)
+        print("Mean Post-Process Thresholding: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+
+
 

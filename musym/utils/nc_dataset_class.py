@@ -45,9 +45,9 @@ FILE_LIST = [
 	]
 
 BASIS_FN = [
-	'duration_basis.duration', 'fermata_basis.fermata', 'grace_basis.grace_note',
+	'onset_basis.score_position', 'duration_basis.duration', 'fermata_basis.fermata',
 	'grace_basis.n_grace', 'grace_basis.grace_pos', 'onset_basis.onset',
-	'onset_basis.score_position', 'polynomial_pitch_basis.pitch',
+	'polynomial_pitch_basis.pitch', 'grace_basis.grace_note',
 	'polynomial_pitch_basis.pitch^2', 'polynomial_pitch_basis.pitch^3',
 	'relative_score_position_basis.score_position', 'slur_basis.slur_incr',
 	'slur_basis.slur_decr', 'time_signature_basis.time_signature_num_1',
@@ -92,6 +92,10 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 	def process(self):
 		if not hasattr(self, 'piece_list'):
 			self.piece_list = MOZART_PIANO_SONATAS
+
+		piece_list_retracing = ["augmented_piece"] + self.piece_list
+		self.piece_encoding = dict(zip(range(len(piece_list_retracing)), piece_list_retracing))
+		self.inverse_piece_encoding = dict(zip(piece_list_retracing, range(len(piece_list_retracing))))
 		self.test_piece_list = random.sample(self.piece_list, int(0.2*len(self.piece_list)))
 		self.val_piece_list = random.sample(list(set(self.piece_list)-set(self.test_piece_list)), int(0.2*len(self.piece_list))) 
 		self.train_piece_list = list(set(self.piece_list)-(set(self.test_piece_list).union(set(self.val_piece_list))))
@@ -169,14 +173,13 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 				graph = dgl.graph(edges)
 				graph.ndata['feat'] = note_node_features.float()
 				graph.ndata['label'] = note_node_labels
-				graph.ndata['score_name'] = torch.tensor([fn]).repeat(len(note_node_labels))
+				graph.ndata['score_name'] = torch.tensor([self.inverse_piece_encoding[fn]]).repeat(len(note_node_labels))
 				self.graph = dgl.batch([g, graph])
 			except AttributeError:
 				self.graph = dgl.graph(edges)
 				self.graph.ndata['feat'] = note_node_features.float()
 				self.graph.ndata['label'] = note_node_labels
-				self.graph.ndata['score_name'] = torch.tensor([fn]).repeat(len(note_node_labels))
-				
+				self.graph.ndata['score_name'] = torch.tensor([self.inverse_piece_encoding[fn]]).repeat(len(note_node_labels))
 
 
 			# Perform Data Augmentation
@@ -193,7 +196,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 							graph = dgl.graph(edges)
 							graph.ndata['feat'] = note_node_features.float()*dur_resize + pitch_aug
 							graph.ndata['label'] = note_node_labels
-							self.graph.ndata['score_name'] = torch.tensor([fn+"_agg"]).repeat(len(note_node_labels))
+							graph.ndata['score_name'] = torch.tensor([0]).repeat(len(note_node_labels))
 							self.graph = dgl.batch([g, graph])
 						else:                           
 							num_feat = len(self.features)
@@ -201,7 +204,8 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 							graph = dgl.graph(edges)
 							graph.ndata['feat'] = note_node_features.float()*dur_resize
 							graph.ndata['label'] = note_node_labels
-							self.graph.ndata['score_name'] = torch.tensor([fn + "_agg"]).repeat(len(note_node_labels))
+							# Augmented Scores have a 0 score name to filter them out.
+							graph.ndata['score_name'] = torch.tensor([0]).repeat(len(note_node_labels))
 							self.graph = dgl.batch([g, graph])
 
 
@@ -274,7 +278,7 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 		save_info(info_path, {
 			'num_classes': self.num_classes, "predict_category" : self.predict_category, 
 			"features" : self.features, "PIECE_LIST" : self.piece_list, 
-			"test_piece_list" : self.test_piece_list, "train_piece_list" : self.train_piece_list})
+			"test_piece_list" : self.test_piece_list, "train_piece_list" : self.train_piece_list, "piece_encoding" : self.piece_encoding})
 
 	def load_data(self):
 		# load processed data from directory `self.save_path`
@@ -546,7 +550,7 @@ class cad_basis_homo(MozartPianoHomoGraphDataset):
 		super().__init__(
 				name='cad_basis_homo', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
-				select_piece=select_piece, normalize=True,
+				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = MIX)
 
