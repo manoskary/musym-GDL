@@ -519,7 +519,6 @@ class AblationSMOTE(nn.Module):
 		self.n_layers = n_layers
 		self.n_classes = n_classes
 		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
-
 		# Ablation
 		self.rem_smote = rem_smote
 		self.rem_gnn_clf = rem_gnn_clf

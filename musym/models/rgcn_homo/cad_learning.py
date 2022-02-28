@@ -1,6 +1,5 @@
 import os
-
-import hmmlearn.hmm
+import wandb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,6 +19,7 @@ from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression
 from dgl.sampling import node2vec_random_walk
 from torchmetrics.functional import f1
+from ray.tune import report
 
 
 class Node2vec(nn.Module):
@@ -296,28 +296,33 @@ class Node2vecModel(object):
         return self.model(nodes)
 
 
-def to_sequences(labels, preds, idx, score_duration, piece_idx):
+def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
     seqs = list()
     trues = list()
     # Make args same dimensions as preds
     piece_idx = piece_idx[idx]
     labels = labels[idx]
     score_duration = score_duration[idx]
+    onsets = onsets[idx]
+    o = torch.zeros(len(onsets))
+    o[torch.nonzero(onsets == 0, as_tuple=True)[0]] = 1.00
     # Start Building Sequence per piece name.
     for name in torch.unique(piece_idx):
         # Gather on non-augmented Pieces
         if name != 0:
             durs = score_duration[piece_idx == name]
+            is_onset = onsets[piece_idx == name]
             X = preds[piece_idx == name]
             y = labels[piece_idx == name]
             sorted_durs, resorted_idx = torch.sort(durs)
             X = X[resorted_idx]
             y = y[resorted_idx]
+            is_onset = is_onset[resorted_idx]
             new_X = []
             new_y = []
             # group by onset
             for udur in torch.unique(sorted_durs):
-                x = X[sorted_durs == udur]
+                x = torch.cat((X[sorted_durs == udur], is_onset[sorted_durs == udur].unsqueeze(1)), dim=1)
                 z = y[sorted_durs == udur]
                 if len(x.shape) > 1:
                     # Can be Max or Mean aggregation of likelihoods.
@@ -338,7 +343,9 @@ def main(args):
     #--------------- Standarize Configuration ---------------------
     config = args if isinstance(args, dict) else vars(args)
 
-    config["num_layers"] = len(config["fan_out"])
+
+    fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
+    config["num_layers"] = len(fanouts)
     config["shuffle"] = bool(config["shuffle"])
 
     # --------------- Dataset Loading -------------------------
@@ -349,6 +356,7 @@ def main(args):
     train_nids = torch.nonzero(g.ndata.pop('train_mask'), as_tuple=True)[0]
     node_features = g.ndata.pop('feat')
     piece_idx = g.ndata.pop("score_name")
+    onsets = node_features[:, 0]
     score_duration = node_features[:, 3]
     node_features = F.normalize(node_features)
 
@@ -382,11 +390,6 @@ def main(args):
     # create model
     in_feats =  node_features.shape[1]
 
-
-    if isinstance(config["fan_out"], str):
-        fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
-    else :
-        fanouts = config["fan_out"]
 
     if use_cuda and config["num_workers"]==0:
         train_nids = train_nids.to(device)
@@ -424,6 +427,13 @@ def main(args):
         model.load_state_dict(torch.load(model_path))
     else:
         # training loop
+        # --------------------- Init WANDB ---------------------------------
+        wandb.init(
+            project="Cadence Detection",
+            group="GraphSMOTE-bs{}-l{}x{}".format(config["batch_size"], config["num_layers"], config["num_hidden"]),
+            job_type="Cadence-Detection",
+            config=config)
+        wandb.watch(model, log_freq=1000)
         print("start training...")
 
         for epoch in range(config["num_epochs"]):
@@ -446,6 +456,8 @@ def main(args):
 
             f1_score = f1_score/ (step+1)
             acc_score = torch.cat(acc).float().sum() / len(labels)
+            if config["tune"]:
+                report(epoch, loss.item())
             print("Epoch {:04d} | Loss {:.04f} | Acc {:.04f} | F score {:.04f} |".format(epoch, loss, acc_score, f1_score))
         torch.save(model.state_dict(), model_path)
 
@@ -474,18 +486,21 @@ def main(args):
         acc = torch.eq(labels[idx], torch.argmax(val_prediction[idx].cpu(), dim=1)).float().sum() / len(labels[idx])
         fscore = f1(val_prediction[idx].cpu(), labels[idx], average="macro", num_classes=2)
         Χ_val = val_prediction[idx].detach().cpu()
-        y_val = labels[idx].detach().cpu()
+        # y_val = labels[idx].detach().cpu()
         print("Validation Score : Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
-        return X_train, y_train, Χ_val, y_val
+        train_set = to_sequences(labels, X_train, train_nids, score_duration, piece_idx, onsets)
+        val_set = to_sequences(labels, Χ_val, idx, score_duration, piece_idx, onsets)
+        return train_set, val_set
     else:
         print(X_train.shape, y_train.shape)
-        return to_sequences(labels, X_train, train_nids, score_duration, piece_idx)
+        train_set = to_sequences(labels, X_train, train_nids, score_duration, piece_idx, onsets)
+        return train_set
 
 
 if __name__ == '__main__':
     import argparse
     import pickle
-    argparser = argparse.ArgumentParser(description='GraphSAGE')
+    argparser = argparse.ArgumentParser(description='Cadence Learning GraphSMOTE')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument('--num-epochs', type=int, default=50)
@@ -498,10 +513,11 @@ if __name__ == '__main__':
     argparser.add_argument("--gamma", type=float, default=0.001248,
                            help="weight of decoder regularization loss.")
     argparser.add_argument("--ext-mode", type=str, default=None, choices=["lstm", "attention"])
-    argparser.add_argument("--fan-out", default=[5, 10])
+    argparser.add_argument("--fan-out", type=str, default='5, 10')
     argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument("--batch-size", type=int, default=2048)
     argparser.add_argument("--num-workers", type=int, default=10)
+    argparser.add_argument("--tune", type=bool, default=False)
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
                                 "on GPU when using it to save time for data copy. This may "
@@ -518,7 +534,7 @@ if __name__ == '__main__':
 
     print(args)
     if not args.postprocess:
-        X_train, y_train = main(args)
+        (X_train, y_train), (X_val, y_val) = main(args)
         pred_path = os.path.join(args.data_dir, "cad_basis_homo", "preds.pkl")
         posttrain_label_path = os.path.join(args.data_dir, "cad_basis_homo", "post_train_labels.pkl")
         with open(pred_path, "wb") as f:
@@ -551,38 +567,54 @@ if __name__ == '__main__':
         # y_pred = model.predict(X_train, algorithm='viterbi')
 
 
-        # ------------- HMM Learn -------------------------
-        from hmmlearn import hmm
+    # ------------- HMM Learn -------------------------
+    from hmmlearn import hmm
 
-        pm = hmm.GaussianHMM(n_components=2, covariance_type="diag", init_params="cm", params="cmt")
-        pm.startprob_ = np.array([1.0, 0.0])
-        pm.transmat_ = np.array([[0.95, 0.05],
-                                  [1.00, 0.00]])
-        pm.fit(np.concatenate(X_train), [len(x) for x in X_train])
-        over_acc = 0
-        over_f1 = 0
-        for i, seq in enumerate(X_train):
-            y_pred = pm.predict(seq)
-            acc = np.equal(y_train[i], y_pred).astype(float).sum() / len(y_pred)
-            over_acc += acc
-            fscore = f1_score(y_train[i], y_pred, average="macro")
-            over_f1 += fscore
-            print("Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
-        over_acc = over_acc / (i+1)
-        over_f1 = over_f1 / (i+1)
-        print("Mean Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+    pm = hmm.GaussianHMM(n_components=2, covariance_type="diag", init_params="cm", params="cmts", n_iter=100)
+    pm.startprob_ = np.array([1.0, 0.0])
+    pm.transmat_ = np.array([[0.95, 0.05],
+                              [1.00, 0.00]])
 
-        over_acc = 0
-        over_f1 = 0
-        for i, seq in enumerate(X_train):
-            y_pred = X_train[i].argmax(axis=1)
-            acc = np.equal(y_train[i], y_pred).astype(float).sum() / len(y_pred)
-            over_acc += acc
-            fscore = f1_score(y_train[i], y_pred, average="macro")
-            over_f1 += fscore
-        over_acc = over_acc / (i+1)
-        over_f1 = over_f1 / (i+1)
-        print("Mean Post-Process Thresholding: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+    pm.fit(np.concatenate(X_train), [len(x) for x in X_train])
+    over_acc = 0
+    over_f1 = 0
+    for i, seq in enumerate(X_train):
+        y_pred = pm.predict(seq)
+        acc = np.equal(y_train[i], y_pred).astype(float).sum() / len(y_pred)
+        over_acc += acc
+        fscore = f1_score(y_train[i], y_pred, average="macro")
+        over_f1 += fscore
+        print("Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+    over_acc = over_acc / (i+1)
+    over_f1 = over_f1 / (i+1)
+    print("Mean Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+    #
+    # over_acc = 0
+    # over_f1 = 0
+    # for i, seq in enumerate(X_train):
+    #     y_pred = X_train[i][:,].argmax(axis=1)
+    #     acc = np.equal(y_train[i], y_pred).astype(float).sum() / len(y_pred)
+    #     over_acc += acc
+    #     fscore = f1_score(y_train[i], y_pred, average="macro")
+    #     over_f1 += fscore
+    # over_acc = over_acc / (i+1)
+    # over_f1 = over_f1 / (i+1)
+    # print("Mean Post-Process Thresholding: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+
+
+    # Validation Post-Process Loop
+    over_acc = 0
+    over_f1 = 0
+    for i, seq in enumerate(X_val):
+        y_pred = pm.predict(seq)
+        acc = np.equal(y_val[i], y_pred).astype(float).sum() / len(y_pred)
+        over_acc += acc
+        fscore = f1_score(y_val[i], y_pred, average="macro")
+        over_f1 += fscore
+        print("Post-Process Validation: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+    over_acc = over_acc / (i + 1)
+    over_f1 = over_f1 / (i + 1)
+    print("Mean Post-Process Validation: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
 
 
 
