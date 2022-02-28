@@ -1,0 +1,13 @@
+cluster_name: rk0103
+provider:
+    type: local
+    head_ip: 140.78.124.132 #rk0
+    worker_ips: [140.78.124.133, 140.78.124.134] #rk1, rk2
+auth: {ssh_user: manos} #, ssh_private_key: /share/home/manos/.ssh/authorized_keys}
+## Typically for local clusters, min_workers == max_workers.
+min_workers: 6
+max_workers: 6
+setup_commands: [] # Set up each node.
+#    - conda activate musym
+head_start_ray_commands:
+    - conda activate musym
