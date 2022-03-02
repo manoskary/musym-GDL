@@ -7,7 +7,9 @@ import os
 
 
 argparser = argparse.ArgumentParser(description='Cadence Learning GraphSMOTE')
+argparser.add_argument('--dataset', type=str, default="mozart")
 argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
+argparser.add_argument("--gpu", type=int, default=0)
 argparser.add_argument('--num-epochs', type=int, default=50)
 argparser.add_argument('--num-hidden', type=int, default=128)
 argparser.add_argument('--num-layers', type=int, default=2)
@@ -23,6 +25,7 @@ argparser.add_argument('--shuffle', type=int, default=True)
 argparser.add_argument("--tune", type=bool, default=True)
 argparser.add_argument("--batch-size", type=int, default=2048)
 argparser.add_argument("--num-workers", type=int, default=10)
+argparser.add_argument("--num-samples", type=int, default=32)
 argparser.add_argument('--data-cpu', action='store_true',
                        help="By default the script puts all node features and labels "
                             "on GPU when using it to save time for data copy. This may "
@@ -58,8 +61,7 @@ scheduler = ASHAScheduler(
 
 analysis = tune.run(
         tune.with_parameters(
-            main,
-            num_gpus=gpus_per_trial,
+            main
             ),
         resources_per_trial={
             "cpu": 1,
@@ -68,10 +70,10 @@ analysis = tune.run(
         metric="loss",
         mode="min",
         config=config,
-        num_samples=300,
+        num_samples=config["num_samples"],
         scheduler=scheduler,
         progress_reporter=reporter,
-        name="tune_{}_{}_{}".format(config["dataset"], config["model"], config["run_name"]))
+        name="tune_{}".format(config["dataset"]))
 
 print("Best hyperparameters found were: ", analysis.best_config)
 

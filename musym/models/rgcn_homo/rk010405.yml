@@ -1,0 +1,47 @@
+cluster_name: rk010405
+provider:
+    type: local
+    head_ip: 140.78.124.132 #rk0
+    worker_ips: [140.78.124.136, 140.78.124.137] #rk4, rk5
+auth: {ssh_user: manos} #, ssh_private_key: /share/home/manos/.ssh/authorized_keys}
+## Typically for local clusters, min_workers == max_workers.
+min_workers: 3
+max_workers: 3
+
+initialization_commands: []
+
+setup_commands:
+    - conda init bash
+    - conda activate musym
+    # If we have e.g. conda dependencies stored in "/path1/on/local/machine/environment.yaml", we can prepare the
+    # work environment on each worker by:
+    #   1. making sure each worker has access to this file i.e. see the `file_mounts` section
+    #   2. adding a command here that creates a new conda environment on each node or if the environment already exists,
+    #     it updates it:
+    #      conda env create -q -n my_venv -f /path1/on/local/machine/environment.yaml || conda env update -q -n my_venv -f /path1/on/local/machine/environment.yaml
+    #
+    # Ray developers:
+    # you probably want to create a Docker image that
+    # has your Ray repo pre-cloned. Then, you can replace the pip installs
+    # below with a git checkout <your_sha> (and possibly a recompile).
+    # To run the nightly version of ray (as opposed to the latest), either use a rayproject docker image
+    # that has the "nightly" (e.g. "rayproject/ray-ml:nightly-gpu") or uncomment the following line:
+    # - pip install -U "ray[default] @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-2.0.0.dev0-cp37-cp37m-manylinux2014_x86_64.whl"
+
+# Custom commands that will be run on the head node after common setup.
+head_setup_commands: []
+
+# Custom commands that will be run on worker nodes after common setup.
+worker_setup_commands: []
+
+# Command to start ray on the head node. You don't need to change this.
+head_start_ray_commands:
+    - conda init bash
+    - conda activate musym && ray stop
+    - conda activate musym && ulimit -c unlimited && ray start --head --port=6379 # --autoscaling-config=~/ray_bootstrap_config.yaml
+
+# Command to start ray on worker nodes. You don't need to change this.
+worker_start_ray_commands:
+    - conda init bash
+    - conda activate my_venv && ray stop
+    - ray start --address=$RAY_HEAD_IP:6379
