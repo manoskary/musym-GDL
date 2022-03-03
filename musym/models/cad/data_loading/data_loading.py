@@ -31,23 +31,19 @@ def filter_cadences_from_annotations(annotations, include_type=False):
 
 
 def data_loading_mps(args):
-	"""
-	Create a Trainset from annotations and scores.
+	"""Data Loading for Mozart Piano Sonatas.
 
 	Parameters
 	----------
-	tsv_dir : path
-		Path for tsv file with annotations.
-	score_dir : path
-		Path for folder with scores.
+	args : argparse Object
+
 	Returns
 	-------
 	scores : dict
-		Keys are piece names, i.e. K279-1. 
-		Values are individual score directories.
+		A dictionary with keys of score names and values of score paths.
 	annotations : dict
-		Keys are piece names, i.e. K279-1.
-		Values are cadence onset beats.
+		A dictionary with keys of score names and values Cadence positions.
+
 	"""
 	par_directory = os.path.join(args.par_dir, "mozart_piano_sonatas", "utils")
 	sys.path.append(par_directory)
@@ -64,7 +60,21 @@ def data_loading_mps(args):
 	return scores, annotations
 
 
-def data_loading_msq(args):	
+def data_loading_msq(args):
+	"""Data Loading for Mozart String Quartets.
+
+
+	Parameters
+	----------
+	args : argparse Object
+
+	Returns
+	-------
+	scores : dict
+		A dictionary with keys of score names and values of score paths.
+	annotations : dict
+		A dictionary with keys of score names and values Cadence positions.
+	"""
 	scores = dict()
 	annotations = dict()
 	for score_name in os.listdir(args.score_dir):
@@ -75,6 +85,59 @@ def data_loading_msq(args):
 			link = "https://gitlab.com/algomus.fr/algomus-data/-/raw/master/quartets/mozart/"+ fn +"-ref.dez"           
 		with urllib.request.urlopen(link) as url:
 			annotations[key] = [dv["start"] for dv in yaml.load(url)["labels"] if dv['type'] == 'Cadence'] 
+	return scores, annotations
+
+
+def data_loading_hsq(args):
+	"""Data Loading for Haydn String Quartets.
+
+
+	Parameters
+	----------
+	args : argparse Object
+
+	Returns
+	-------
+	scores : dict
+		A dictionary with keys of score names and values of score paths.
+	annotations : dict
+		A dictionary with keys of score names and values Cadence positions.
+	"""
+	scores = dict()
+	annotations = dict()
+	for score_name in os.listdir(os.path.join(args.score_dir, "kern")):
+		if score_name.endswith(".krn"):
+			key = os.path.splitext(score_name)[0]
+			scores[key] = os.path.join(args.score_dir, "kern", score_name)
+			annotations[key] = []
+	return scores, annotations
+
+
+def data_loading_wtf(args):
+	"""Data loading for Bach Well Tempered Clavier Fugues.
+
+
+	Parameters
+	----------
+	args : argparse Object
+
+	Returns
+	-------
+	scores : dict
+		A dictionary with keys of score names and values of score paths.
+	annotations : dict
+		A dictionary with keys of score names and values Cadence positions.
+	"""
+	scores = dict()
+	annotations = dict()
+	for score_name in os.listdir(args.score_dir):
+		if score_name.endswith(".krn"):
+			key = os.path.splitext(score_name)[0]
+			scores[key] = os.path.join(args.score_dir, score_name)
+			fn = key.replace("k0", "k").replace("-0", ".")
+			link = "https://gitlab.com/algomus.fr/algomus-data/-/raw/master/fugues/bach-wtc-i/"+ fn +"-ref.dez"
+		with urllib.request.urlopen(link) as url:
+			annotations[key] = [dv["start"] for dv in yaml.load(url)["labels"] if dv['type'] == 'Cadence']
 	return scores, annotations
 
 
@@ -106,6 +169,10 @@ def data_loading(args):
 			os.chdir(os.path.join(args.par_dir, "mozart_piano_sonatas"))
 			os.system('python '+ python_script_dir + " -C")
 		scores, annotations = data_loading_mps(args)
+	elif args.source == "haydn_string_quartets":
+		scores, annotation = data_loading_hsq(args)
+	elif args.source == "bach_fugues":
+		scores, annotation = data_loading_wtf(args)
 	elif args.source == "all" or args.source == "mix":
 		# Calls data_loading individually for each source
 		args.source = "mps"
