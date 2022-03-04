@@ -1,6 +1,20 @@
 import os, sys
 import yaml, urllib
 import urllib.request
+import pandas as pd
+import numpy as np
+
+def retrieve_haydn_cad_annotations(annotation_path):
+	df = pd.read_csv(annotation_path, encoding='cp1252')
+	sub_table = df[np.where(df["Descriptive Information"] == "Cad Cat.")[0][0] : ].to_numpy()
+	new_df_keys = sub_table[0, :].tolist()
+	new_df_keys = [ for key in ]
+	new_df_values = [sub_table[1:, i].tolist() for i in range(len(new_df_keys))]
+	new_df = pd.DataFrame(data=dict(zip(new_df_keys, new_df_values))).dropna(how="all", axis=1)
+	new_df = new_df.dropna(how="all", axis=0)
+	# TODO fetch time signature from table or part.
+	bars = new_df["Bar #"]
+	beats = new_df["Pulse #"]
 
 
 def filter_cadences_from_annotations(annotations, include_type=False):
@@ -49,9 +63,8 @@ def data_loading_mps(args):
 	sys.path.append(par_directory)
 	for p in sys.path:
 		print(p)
-	from feature_matrices import load_tsv
-
-	annotations = filter_cadences_from_annotations(load_tsv(args.tsv_dir, stringtype=False))
+	# annotations = filter_cadences_from_annotations(load_tsv(args.tsv_dir, stringtype=False))
+	annotations = []
 	scores = dict()
 	for score_name in os.listdir(args.score_dir):
 		if score_name.endswith(".musicxml"):
@@ -88,7 +101,7 @@ def data_loading_msq(args):
 	return scores, annotations
 
 
-def data_loading_hsq(args):
+def data_loading_hsq(score_dir):
 	"""Data Loading for Haydn String Quartets.
 
 
@@ -105,15 +118,16 @@ def data_loading_hsq(args):
 	"""
 	scores = dict()
 	annotations = dict()
-	for score_name in os.listdir(os.path.join(args.score_dir, "kern")):
+	annotation_dir = os.path.join(score_dir, "annotations", "cadences_keys")
+	for score_name in os.listdir(os.path.join(score_dir, "kern")):
 		if score_name.endswith(".krn"):
 			key = os.path.splitext(score_name)[0]
-			scores[key] = os.path.join(args.score_dir, "kern", score_name)
-			annotations[key] = []
+			scores[key] = os.path.join(score_dir, "kern", score_name)
+			annotations[key] = retrieve_haydn_cad_annotations(os.path.join(annotation_dir, key + ".csv"))
 	return scores, annotations
 
 
-def data_loading_wtf(args):
+def data_loading_wtf(score_dir):
 	"""Data loading for Bach Well Tempered Clavier Fugues.
 
 
@@ -130,12 +144,13 @@ def data_loading_wtf(args):
 	"""
 	scores = dict()
 	annotations = dict()
-	for score_name in os.listdir(args.score_dir):
+	for score_name in os.listdir(score_dir):
 		if score_name.endswith(".krn"):
 			key = os.path.splitext(score_name)[0]
-			scores[key] = os.path.join(args.score_dir, score_name)
-			fn = key.replace("k0", "k").replace("-0", ".")
-			link = "https://gitlab.com/algomus.fr/algomus-data/-/raw/master/fugues/bach-wtc-i/"+ fn +"-ref.dez"
+			scores[key] = os.path.join(score_dir, score_name)
+			fugue_num = key[-2:]
+			fn = "{}-bwv{}-ref.dez".format(fugue_num, 845 + int(fugue_num))
+			link = "https://gitlab.com/algomus.fr/algomus-data/-/raw/master/fugues/bach-wtc-i/" + fn
 		with urllib.request.urlopen(link) as url:
 			annotations[key] = [dv["start"] for dv in yaml.load(url)["labels"] if dv['type'] == 'Cadence']
 	return scores, annotations
@@ -185,3 +200,8 @@ def data_loading(args):
 		raise ValueError("The Specified Source {} does not exist".format(args.source))
 
 	return scores, annotations
+
+if __name__ == "__main__":
+	scores, annotations = data_loading_hsq("/home/manos/Desktop/JKU/data/haydn_string_quartets/")
+	print(scores.keys())
+	print(annotations)
