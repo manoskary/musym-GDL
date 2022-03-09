@@ -5,8 +5,6 @@ import pandas as pd
 
 # modified perso imports
 import partitura
-# from basismixer.basisfunctions import list_basis_functions, make_basis
-
 # Local Imports
 from data_loading import data_loading
 
@@ -22,16 +20,16 @@ def join_struct_arrays(arrays):
     return joint.ravel().view(dtype)
 
 
-def align_basis(na, ba):
+def align_feature(na, ba):
     pitch_norm = na["pitch"] / 127.
-    if np.all(np.isclose(pitch_norm, ba["polynomial_pitch_basis.pitch"])):
+    if np.all(np.isclose(pitch_norm, ba["polynomial_pitch_feature.pitch"])):
         return join_struct_arrays([na, ba])
     else:
-        print(np.nonzero(np.isclose(pitch_norm, ba["polynomial_pitch_basis.pitch"]))[0].shape)
+        print(np.nonzero(np.isclose(pitch_norm, ba["polynomial_pitch_feature.pitch"]))[0].shape)
         raise ValueError
 
 
-def graph_csv_from_na(na, ra, t_sig, labels, basis_fn=None, norm2bar=True):
+def graph_csv_from_na(na, ra, t_sig, labels, feature_fn=None, norm2bar=True):
     '''Turn note_array to homogeneous graph dictionary.
 
     Parameters
@@ -52,7 +50,7 @@ def graph_csv_from_na(na, ra, t_sig, labels, basis_fn=None, norm2bar=True):
         "ts": np.array(list(map(lambda x: select_ts(x, t_sig), na))),
         "label": labels
     }
-    for k in basis_fn:
+    for k in feature_fn:
         note_dict[k] = na[k]
     note = pd.DataFrame(note_dict)
 
@@ -108,7 +106,7 @@ def graph_csv_from_na(na, ra, t_sig, labels, basis_fn=None, norm2bar=True):
             "ts": np.array(list(map(lambda x: select_ts(x, t_sig), re))),
             "label": np.zeros(len(re))
         }
-        for k in basis_fn:
+        for k in feature_fn:
             rest_dict[k] = np.zeros(len(re))
         rest = pd.DataFrame(rest_dict
 
@@ -182,12 +180,12 @@ def create_data(args):
             dtype=[('onset_beat', '<f4'), ('end_beat', '<f4'), ("nominator", "<i4"), ("denominator", "<i4")]
         )
         na = partitura.utils.ensure_notearray(part)
-        # Old version from basis mixer.
-        # base_fn = [x for x in list_basis_functions() if
-        #            x not in ["metrical_basis", "metrical_strength_basis", "articulation_basis"]]
-        ba, basis_fn = partitura.musicanalysis.make_note_feats(part, "all")
-        ba = np.array([tuple(x) for x in ba], dtype=[(x, '<f8') for x in basis_fn])
-        note_array = align_basis(na, ba)
+        # Old version from feature mixer.
+        # base_fn = [x for x in list_feature_functions() if
+        #            x not in ["metrical_feature", "metrical_strength_feature", "articulation_feature"]]
+        ba, feature_fn = partitura.musicanalysis.make_note_feats(part, "all")
+        ba = np.array([tuple(x) for x in ba], dtype=[(x, '<f8') for x in feature_fn])
+        note_array = align_feature(na, ba)
         labels = np.zeros(note_array.shape[0])
         # In case annotation are of the form Bar & Beat transform to global beat.
         if isinstance(annotations[key][0], tuple):
@@ -195,9 +193,9 @@ def create_data(args):
             annotations[key] = list(map(lambda x: measures[x[0]] + x[1], annotations[key]))
 
         # Corrections of annotations with respect to time signature.
-        if time_signature["denominator"][0] == 2:
+        if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:
             annotations[key] = list(map(lambda x: x/2, annotations[key]))
-        elif time_signature["denominator"][0] == 8:
+        elif time_signature["denominator"][0] == 8 and args.source in ["wtc", "msq"]:
             annotations[key] = list(map(lambda x: x*2, annotations[key]))
         else:
             pass
@@ -208,7 +206,7 @@ def create_data(args):
             if np.all((note_array["onset_beat"] == cad_onset) == False):
                 raise IndexError("Annotated beat {} does not match with any score beat in score {}.".format(cad_onset, key))
 
-        nodes, edges = graph_csv_from_na(note_array, rest_array, time_signature, labels, basis_fn=basis_fn,
+        nodes, edges = graph_csv_from_na(note_array, rest_array, time_signature, labels, feature_fn=feature_fn,
                                          norm2bar=args.norm2bar)
         if not os.path.exists(os.path.join(args.save_dir, key)):
             os.makedirs(os.path.join(args.save_dir, key))
@@ -224,7 +222,7 @@ if __name__ == "__main__":
                         choices=['msq', 'mps', "mozart piano sonatas", "mozart string quartets", "mix", "quartets", "hsq", "wtc", "piano", "mozart"],
                         help='Select from which dataset to create graph dataset.')
     parser.add_argument("--norm2bar", action="store_true", help="Resize Onset Beat relative to Bar Beat.")
-    parser.add_argument("--save-name", default="cad-basis-homo", help="Save Name in the Tonnetz Cadence.")
+    parser.add_argument("--save-name", default="cad-feature-homo", help="Save Name in the Tonnetz Cadence.")
     args = parser.parse_args()
 
     dirname = os.path.abspath(os.path.dirname(__file__))
