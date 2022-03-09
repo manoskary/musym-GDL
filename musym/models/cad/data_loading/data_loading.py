@@ -152,7 +152,7 @@ def data_loading_wtc(score_dir):
 			fn = "{}-bwv{}-ref.dez".format(fugue_num, 845 + int(fugue_num))
 			link = "https://gitlab.com/algomus.fr/algomus-data/-/raw/master/fugues/bach-wtc-i/" + fn
 			with urllib.request.urlopen(link) as url:
-				annotations[key] = [dv["start"] for dv in yaml.safe_load(url)["labels"] if dv['type'] == 'Cadence']
+				annotations[key] = [dv["start"] for dv in yaml.safe_load(url)["labels"] if (dv['type'] == 'Cadence') and ("PAC" in dv["tag"])]
 	return scores, annotations
 
 
