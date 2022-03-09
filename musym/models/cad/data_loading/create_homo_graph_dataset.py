@@ -5,10 +5,10 @@ import pandas as pd
 
 # modified perso imports
 import partitura
-from basismixer.basisfunctions import list_basis_functions, make_basis
+# from basismixer.basisfunctions import list_basis_functions, make_basis
 
 # Local Imports
-from musym.models.cad.data_loading import data_loading
+from data_loading import data_loading
 
 
 def join_struct_arrays(arrays):
@@ -163,7 +163,12 @@ def create_data(args):
     scores, annotations = data_loading(args)
     for key, fn in scores.items():
         print(key)
-        part = partitura.load_musicxml(fn)
+        if fn.endswith(".musicxml"):
+            part = partitura.load_musicxml(fn)
+        elif fn.endswith(".krn"):
+            part = partitura.load_kern(fn)
+        else:
+            raise ValueError("The score {} format is not recognized".format(fn))
         part = partitura.score.merge_parts(part)
 
         rest_array = np.array(
@@ -177,14 +182,31 @@ def create_data(args):
             dtype=[('onset_beat', '<f4'), ('end_beat', '<f4'), ("nominator", "<i4"), ("denominator", "<i4")]
         )
         na = partitura.utils.ensure_notearray(part)
-        base_fn = [x for x in list_basis_functions() if
-                   x not in ["metrical_basis", "metrical_strength_basis", "articulation_basis"]]
-        ba, basis_fn = make_basis(part, base_fn)
+        # Old version from basis mixer.
+        # base_fn = [x for x in list_basis_functions() if
+        #            x not in ["metrical_basis", "metrical_strength_basis", "articulation_basis"]]
+        ba, basis_fn = partitura.musicanalysis.make_note_feats(part, "all")
         ba = np.array([tuple(x) for x in ba], dtype=[(x, '<f8') for x in basis_fn])
         note_array = align_basis(na, ba)
         labels = np.zeros(note_array.shape[0])
+        # In case annotation are of the form Bar & Beat transform to global beat.
+        if isinstance(annotations[key][0], tuple):
+            measures = {m.number: part.beat_map(m.start.t) for m in part.iter_all(partitura.score.Measure)}
+            annotations[key] = list(map(lambda x: measures[x[0]] + x[1], annotations[key]))
+
+        # Corrections of annotations with respect to time signature.
+        if time_signature["denominator"][0] == 2:
+            annotations[key] = list(map(lambda x: x/2, annotations[key]))
+        elif time_signature["denominator"][0] == 8:
+            annotations[key] = list(map(lambda x: x*2, annotations[key]))
+        else:
+            pass
+
         for cad_onset in annotations[key]:
             labels[np.where(note_array["onset_beat"] == cad_onset)] = 1
+            # check for false annotation that does not have match
+            if np.all((note_array["onset_beat"] == cad_onset) == False):
+                raise IndexError("Annotated beat {} does not match with any score beat in score {}.".format(cad_onset, key))
 
         nodes, edges = graph_csv_from_na(note_array, rest_array, time_signature, labels, basis_fn=basis_fn,
                                          norm2bar=args.norm2bar)
@@ -199,15 +221,16 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser('Which Dataset to Create')
     parser.add_argument("-s", '--source', type=str, default="msq",
-                        choices=['msq', 'mps', "mozart piano sonatas", "mozart string quartets", "mix", "all"],
+                        choices=['msq', 'mps', "mozart piano sonatas", "mozart string quartets", "mix", "quartets", "hsq", "wtc", "piano", "mozart"],
                         help='Select from which dataset to create graph dataset.')
     parser.add_argument("--norm2bar", action="store_true", help="Resize Onset Beat relative to Bar Beat.")
+    parser.add_argument("--save-name", default="cad-basis-homo", help="Save Name in the Tonnetz Cadence.")
     args = parser.parse_args()
 
     dirname = os.path.abspath(os.path.dirname(__file__))
     par = lambda x: os.path.abspath(os.path.join(x, os.pardir))
     args.par_dir = par(par(dirname))
 
-    args.save_dir = os.path.join(par(args.par_dir), "tonnetzcad", "node_classification", "cad-basis-homo")
+    args.save_dir = os.path.join("/home/manos/Desktop/JKU/codes/tonnetzcad/node_classification", args.save_name)
 
     data = create_data(args)

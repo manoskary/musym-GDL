@@ -8,13 +8,13 @@ def retrieve_haydn_cad_annotations(annotation_path):
 	df = pd.read_csv(annotation_path, encoding='cp1252')
 	sub_table = df[np.where(df["Descriptive Information"] == "Cad Cat.")[0][0] : ].to_numpy()
 	new_df_keys = sub_table[0, :].tolist()
-	new_df_keys = [ for key in ]
 	new_df_values = [sub_table[1:, i].tolist() for i in range(len(new_df_keys))]
 	new_df = pd.DataFrame(data=dict(zip(new_df_keys, new_df_values))).dropna(how="all", axis=1)
 	new_df = new_df.dropna(how="all", axis=0)
 	# TODO fetch time signature from table or part.
-	bars = new_df["Bar #"]
-	beats = new_df["Pulse #"]
+	bars = list(map(int, new_df["Bar #"]))
+	beats = list(map(lambda x: float(x) - 1, new_df["Pulse #"]))
+	return list(zip(bars, beats))
 
 
 def filter_cadences_from_annotations(annotations, include_type=False):
@@ -73,7 +73,7 @@ def data_loading_mps(args):
 	return scores, annotations
 
 
-def data_loading_msq(args):
+def data_loading_msq(score_dir):
 	"""Data Loading for Mozart String Quartets.
 
 
@@ -90,14 +90,14 @@ def data_loading_msq(args):
 	"""
 	scores = dict()
 	annotations = dict()
-	for score_name in os.listdir(args.score_dir):
-		if score_name.endswith(".musicxml"):
+	for score_name in os.listdir(score_dir):
+		if score_name.endswith(".krn"):
 			key = os.path.splitext(score_name)[0]
-			scores[key] = os.path.join(args.score_dir, score_name)
+			scores[key] = os.path.join(score_dir, score_name)
 			fn = key.replace("k0", "k").replace("-0", ".")
 			link = "https://gitlab.com/algomus.fr/algomus-data/-/raw/master/quartets/mozart/"+ fn +"-ref.dez"           
-		with urllib.request.urlopen(link) as url:
-			annotations[key] = [dv["start"] for dv in yaml.load(url)["labels"] if dv['type'] == 'Cadence'] 
+			with urllib.request.urlopen(link) as url:
+				annotations[key] = [dv["start"] for dv in yaml.safe_load(url)["labels"] if dv['type'] == 'Cadence']
 	return scores, annotations
 
 
@@ -127,13 +127,13 @@ def data_loading_hsq(score_dir):
 	return scores, annotations
 
 
-def data_loading_wtf(score_dir):
+def data_loading_wtc(score_dir):
 	"""Data loading for Bach Well Tempered Clavier Fugues.
 
 
 	Parameters
 	----------
-	args : argparse Object
+	score_dir : The score Directory.
 
 	Returns
 	-------
@@ -151,8 +151,8 @@ def data_loading_wtf(score_dir):
 			fugue_num = key[-2:]
 			fn = "{}-bwv{}-ref.dez".format(fugue_num, 845 + int(fugue_num))
 			link = "https://gitlab.com/algomus.fr/algomus-data/-/raw/master/fugues/bach-wtc-i/" + fn
-		with urllib.request.urlopen(link) as url:
-			annotations[key] = [dv["start"] for dv in yaml.load(url)["labels"] if dv['type'] == 'Cadence']
+			with urllib.request.urlopen(link) as url:
+				annotations[key] = [dv["start"] for dv in yaml.safe_load(url)["labels"] if dv['type'] == 'Cadence']
 	return scores, annotations
 
 
@@ -169,9 +169,7 @@ def check_source_name(args):
 
 def data_loading(args):
 	if args.source == "msq" or args.source == "mozart string quartets":
-		args.source_name = "mozart_string_quartets"
-		args.score_dir = check_source_name(args)
-		scores, annotations = data_loading_msq(args)
+		scores, annotations = data_loading_msq(score_dir="/home/manos/Desktop/JKU/data/mozart_string_quartets/kern/")
 	elif args.source == "mps" or args.source == "mozart piano sonatas":
 		args.source_name = "mozart_piano_sonatas"
 		args.score_dir = check_source_name(args)
@@ -184,16 +182,32 @@ def data_loading(args):
 			os.chdir(os.path.join(args.par_dir, "mozart_piano_sonatas"))
 			os.system('python '+ python_script_dir + " -C")
 		scores, annotations = data_loading_mps(args)
-	elif args.source == "haydn_string_quartets":
-		scores, annotation = data_loading_hsq(args)
-	elif args.source == "bach_fugues":
-		scores, annotation = data_loading_wtf(args)
-	elif args.source == "all" or args.source == "mix":
-		# Calls data_loading individually for each source
+	elif args.source == "hsq":
+		scores, annotations = data_loading_hsq(score_dir="/home/manos/Desktop/JKU/data/haydn_string_quartets/")
+	elif args.source == "wtc":
+		scores, annotations = data_loading_wtc(score_dir="/home/manos/Desktop/JKU/data/wtc-fugues/")
+	elif args.source == "mozart":
 		args.source = "mps"
 		s2, a2 = data_loading(args)
 		args.source = "msq"
+		s1, a1 = data_loading_msq(score_dir="/home/manos/Desktop/JKU/data/mozart_string_quartets/kern/")
+		scores = dict(s1, **s2)
+		annotations = dict(a1, **a2)
+	elif args.source == "quartets":
+		s1, a1 = data_loading_msq(score_dir="/home/manos/Desktop/JKU/data/mozart_string_quartets/kern/")
+		s2, a2 = data_loading_hsq(score_dir="/home/manos/Desktop/JKU/data/haydn_string_quartets/")
+		scores = dict(s1, **s2)
+		annotations = dict(a1, **a2)
+	elif args.source == "piano":
+		s1, a1 = data_loading_mps()
+		s2, a2 = data_loading_wtc(score_dir="/home/manos/Desktop/JKU/data/wtc-fugues/")
+		scores = dict(s1, **s2)
+		annotations = dict(a1, **a2)
+	elif args.source == "mix":
+		args.source = "quartets"
 		s1, a1 = data_loading(args)
+		args.source = "piano"
+		s2, a2 = data_loading(args)
 		scores = dict(s1, **s2)
 		annotations = dict(a1, **a2)
 	else:

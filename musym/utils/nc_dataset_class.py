@@ -26,17 +26,61 @@ MOZART_PIANO_SONATAS = [
 	'K570-3', 'K576-1', 'K576-2', 'K576-3'
 	]
 
+
 MOZART_STRING_QUARTETS = [
-	'k080-01', 'k080-02', 'k155-01', 'k155-02', 'k156-01', 
-	'k156-02', 'k157-01', 'k157-02', 'k158-01', 'k159-01', 
-	'k159-02', 'k168-01', 'k168-02', 'k169-01', 'k171-01', 
-	'k171-03', 'k171-04', 'k172-01', 'k172-02', 'k172-04', 
-	'k173-01', 'k387-01', 'k421-01', 'k428-01', 'k428-02', 
-	'k458-01', 'k465-01', 'k465-04', 'k499-01', 'k499-03', 
-	'k589-01', 'k590-01'
+	"k080-02", "k156-01", "k157-01", "k158-01",
+	"k159-02", "k168-02", "k171-01", "k171-04",
+	"k172-02", "k173-01", "k428-02", "k499-01",
+	"k589-01", "k080-01", "k155-01", "k156-02",
+	"k157-02", "k159-01", "k168-01", "k169-01",
+	"k171-03", "k172-01", "k172-04", "k428-01",
+	"k465-04", "k499-03", "k590-01"]
+
+
+
+BACH_FUGUES = [
+	'wtc1f01', 'wtc1f07', 'wtc1f15', 'wtc1f13',
+	'wtc1f06', 'wtc1f03', 'wtc1f02', 'wtc1f18',
+	'wtc1f17', 'wtc1f09', 'wtc1f24', 'wtc1f10',
+	'wtc1f22', 'wtc1f16', 'wtc1f12', 'wtc1f23',
+	'wtc1f19', 'wtc1f05', 'wtc1f14', 'wtc1f04',
+	'wtc1f08', 'wtc1f20', 'wtc1f21',
 	]
 
-MIX = MOZART_STRING_QUARTETS + MOZART_PIANO_SONATAS
+HAYDN_STRING_QUARTETS = [
+	'haydn_op064_no06_mv01_1770', 'haydn_op050_no06_mv01_1756',
+	'haydn_op020_no06_mv02_1740', 'haydn_op020_no01_mv04_1733',
+	'haydn_op076_no05_mv02_1776', 'haydn_op020_no05_mv01_1739',
+	'haydn_op017_no02_mv01_1728', 'haydn_op033_no02_mv01_1743',
+	'haydn_op054_no03_mv01_1761', 'haydn_op050_no01_mv01_1748',
+	'haydn_op017_no06_mv01_1732', 'haydn_op064_no04_mv01_1768',
+	'haydn_op064_no04_mv04_1769', 'haydn_op017_no05_mv01_1731',
+	'haydn_op064_no03_mv04_1767', 'haydn_op054_no02_mv01_1760',
+	'haydn_op055_no02_mv02_1764', 'haydn_op064_no03_mv01_1766',
+	'haydn_op033_no03_mv03_1744', 'haydn_op074_no01_mv01_1772',
+	'haydn_op054_no01_mv01_1758', 'haydn_op076_no02_mv01_1774',
+	'haydn_op033_no05_mv02_1747', 'haydn_op055_no01_mv02_1763',
+	'haydn_op054_no01_mv02_1759', 'haydn_op050_no02_mv01_1750',
+	'haydn_op050_no03_mv04_1752', 'haydn_op020_no04_mv04_1738',
+	'haydn_op033_no01_mv03_1742', 'haydn_op033_no05_mv01_1746',
+	'haydn_op050_no06_mv02_1757', 'haydn_op020_no03_mv04_1736',
+	'haydn_op076_no04_mv01_1775', 'haydn_op050_no05_mv04_1755',
+	'haydn_op033_no01_mv01_1741', 'haydn_op054_no03_mv04_1762',
+	'haydn_op050_no04_mv01_1753', 'haydn_op050_no02_mv04_1751',
+	'haydn_op017_no01_mv01_1727', 'haydn_op033_no04_mv01_1745',
+	'haydn_op017_no03_mv04_1729', 'haydn_op050_no01_mv04_1749',
+	'haydn_op055_no03_mv01_1765', 'haydn_op074_no01_mv02_1773',
+	'haydn_op020_no03_mv03_1735'
+]
+
+
+PIANO = BACH_FUGUES + MOZART_PIANO_SONATAS
+
+QUARTETS = MOZART_STRING_QUARTETS + HAYDN_STRING_QUARTETS
+
+MOZART = MOZART_STRING_QUARTETS + MOZART_PIANO_SONATAS
+
+MIX = PIANO + QUARTETS
 
 FILE_LIST = [
 	'note-during-note.csv', 'note-follows-note.csv', 
@@ -48,7 +92,6 @@ BASIS_FN = [
 	'onset_basis.score_position', 'duration_basis.duration', 'fermata_basis.fermata',
 	'grace_basis.n_grace', 'grace_basis.grace_pos', 'onset_basis.onset',
 	'polynomial_pitch_basis.pitch', 'grace_basis.grace_note',
-	'polynomial_pitch_basis.pitch^2', 'polynomial_pitch_basis.pitch^3',
 	'relative_score_position_basis.score_position', 'slur_basis.slur_incr',
 	'slur_basis.slur_decr', 'time_signature_basis.time_signature_num_1',
 	'time_signature_basis.time_signature_num_2', 'time_signature_basis.time_signature_num_3',
@@ -73,7 +116,7 @@ def min_max_scaler(X):
 	return X_std
 
 
-class MozartPianoHomoGraphDataset(DGLDataset):
+class CadHomoGraphDataset(DGLDataset):
 	def __init__(self, name, url, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, save_path=None, piece_list=None):
 		if features:
 			self.features = features
@@ -323,228 +366,8 @@ class MozartPianoHomoGraphDataset(DGLDataset):
 
 
 
-class MozartPianoGraphDataset(DGLDataset):
-	def __init__(self, name, url, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, piece_list=None):
-		if features:
-			self.note_features = features
-			self.rest_features = features.remove("pitch") if "pitch" in features else features 
-		else :
-			self.note_features = ["onset", "duration", "ts", "pitch"]
-			self.rest_features = ["onset", "duration", "ts"]
 
-		if piece_list:
-			self.piece_list = piece_list
-		self.normalize = normalize
-		self.add_inverse_edges = add_inverse_edges
-		self.add_aug = add_aug
-		self.select_piece = select_piece
-		# url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/mozart_piano_sonatas/"
-		super().__init__(name=name, raw_dir=raw_dir, url=url)
-
-
-	def process(self):
-		if not hasattr(self, 'piece_list'):
-			self.piece_list = MOZART_PIANO_SONATAS
-		self.FILE_LIST = FILE_LIST
-		if self.select_piece and self.select_piece in self.piece_list:
-			edge_dict = dict()
-			for csv in self.FILE_LIST:
-				path = self.url + "/" + self.select_piece + "/" + csv
-				if csv == "note.csv":
-					notes = pd.read_csv(path)
-					note_node_features = torch.from_numpy(notes[self.note_features].to_numpy())
-					note_node_labels = torch.from_numpy(notes['label'].astype('category').cat.codes.to_numpy()).long()
-				elif csv == "rest.csv":      
-					rests = pd.read_csv(path)
-					a = rests[self.rest_features].to_numpy()
-					rest_node_features = torch.from_numpy(np.hstack((a,np.zeros((a.shape[0],1)))))
-					rest_node_labels = torch.from_numpy(rests['label'].astype('category').cat.codes.to_numpy()).long()
-				else :
-					name = tuple(csv.split(".")[0].split("-"))
-					edges_data = pd.read_csv(path)
-					if edges_data.empty:   
-						edges_src = torch.tensor([0])
-						edges_dst = torch.tensor([0])                       
-					else :
-						edges_src = torch.from_numpy(edges_data['src'].to_numpy())
-						edges_dst = torch.from_numpy(edges_data['des'].to_numpy())
-					edge_dict[name] = (edges_src, edges_dst)
-					if self.add_inverse_edges:
-						inv_name = (name[2], name[1]+"_inv", name[0])
-						edge_dict[inv_name] = (edges_dst, edges_src)
-
-			self.graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" :rests.shape[0]})
-			self.graph.nodes['note'].data['feat'] = note_node_features.float()
-			self.graph.nodes['note'].data['label'] = note_node_labels
-			self.graph.nodes['rest'].data['feat'] = rest_node_features.float()
-			self.graph.nodes['rest'].data['label'] = rest_node_labels
-		else:             
-			for fn in self.piece_list:
-				print(fn)
-				edge_dict = dict()
-				for csv in self.FILE_LIST:
-					path = self.url + "/" + fn + "/" + csv
-					if csv == "note.csv":
-						notes = pd.read_csv(path)
-						a = notes[self.note_features].to_numpy()
-						if self.normalize:
-							a = min_max_scaler(a)
-						note_node_features = torch.from_numpy(a)
-						note_node_labels = torch.from_numpy(notes['label'].astype('category').cat.codes.to_numpy()).long()
-					elif csv == "rest.csv":      
-						rests = pd.read_csv(path)
-						a = rests[self.rest_features].to_numpy()
-						if self.normalize:
-							a = min_max_scaler(a)
-						if len(self.note_features) > len(self.rest_features):
-							rest_node_features = torch.from_numpy(np.hstack((a,np.zeros((a.shape[0],1)))))
-						else : 
-							rest_node_features = torch.from_numpy(a)
-						rest_node_labels = torch.from_numpy(rests['label'].astype('category').cat.codes.to_numpy()).long()
-					# elif csv == "ts.csv":
-					#   ts = pd.read_csv(path)
-					#   rest_node_features = torch.from_numpy(np.zeros((ts.shape[0],3)))
-					#   rest_node_labels = torch.from_numpy(rests['label'].astype('category').cat.codes.to_numpy()).long()
-					else :
-						name = tuple(csv.split(".")[0].split("-"))
-						edges_data = pd.read_csv(path)
-						if edges_data.empty:   
-							edges_src = torch.tensor([0])
-							edges_dst = torch.tensor([0])                       
-						else :
-							edges_src = torch.from_numpy(edges_data['src'].to_numpy())
-							edges_dst = torch.from_numpy(edges_data['des'].to_numpy())
-						edge_dict[name] = (edges_src, edges_dst)
-						if self.add_inverse_edges:
-							inv_name = (name[2], name[1]+"_inv", name[0])
-							edge_dict[inv_name] = (edges_dst, edges_src)
-
-
-				try:
-					g = self.graph
-					
-					graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" :rests.shape[0]})
-					graph.nodes['note'].data['feat'] = note_node_features.float()
-					graph.nodes['note'].data['label'] = note_node_labels
-					graph.nodes['rest'].data['feat'] = rest_node_features.float()
-					graph.nodes['rest'].data['label'] = rest_node_labels
-					self.graph = dgl.batch_hetero([g, graph])
-				except AttributeError:
-					self.graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" : rests.shape[0]})
-					self.graph.nodes['note'].data['feat'] = note_node_features.float()
-					self.graph.nodes['note'].data['label'] = note_node_labels
-					self.graph.nodes['rest'].data['feat'] = rest_node_features.float()
-					self.graph.nodes['rest'].data['label'] = rest_node_labels
-
-
-				# Perform Data Augmentation
-				if self.add_aug:
-					for _ in range(5):
-						g = self.graph
-						resize_factor = random.choice([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5])
-						n = random.choice(range(-6, 6, 1))
-						if resize_factor != 1 or n != 0:
-							dur_resize = torch.tensor([resize_factor, resize_factor, resize_factor, 1]).float()
-							pitch_aug = torch.tensor([0, 0, 0, n]).float()
-							graph = dgl.heterograph(edge_dict, num_nodes_dict={"note" : notes.shape[0], "rest" :rests.shape[0]})
-							graph.nodes['note'].data['feat'] = note_node_features.float()*dur_resize + pitch_aug
-							graph.nodes['note'].data['label'] = note_node_labels
-							graph.nodes['rest'].data['feat'] = rest_node_features.float()
-							graph.nodes['rest'].data['label'] = rest_node_labels
-							self.graph = dgl.batch_hetero([g, graph])
-
-
-		# If your dataset is a node classification dataset, you will need to assign
-		# masks indicating whether a node belongs to training, validation, and test set.
-		self.num_classes = int(self.graph.nodes['note'].data['label'].max().item() + 1)
-		self.predict_category = "note"
-		n_nodes = self.graph.num_nodes("note")
-		n_train = int(n_nodes * 0.8)
-
-		train_mask = torch.zeros(n_nodes, dtype=torch.bool)
-		test_mask = torch.zeros(n_nodes, dtype=torch.bool)
-		train_mask[:n_train] = True
-		test_mask[n_train :] = True
-		self.graph.nodes['note'].data['train_mask'] = train_mask
-		self.graph.nodes['note'].data['test_mask'] = test_mask
-
-		
-		r_nodes = self.graph.num_nodes("rest")
-		train_mask = torch.zeros(r_nodes, dtype=torch.bool)
-		test_mask = torch.zeros(r_nodes, dtype=torch.bool)
-		self.graph.nodes['rest'].data['train_mask'] = train_mask
-		self.graph.nodes['rest'].data['test_mask'] = test_mask
-
-	def __getitem__(self, i):
-		return self.graph
-
-	def __len__(self):
-		return 1
-
-	def load(self):
-		pass
-
-	def save(self):
-		# save graphs and labels
-		graph_path = os.path.join(self.save_dir, 'mozart_piano_sonatas.bin')
-		save_graphs(graph_path, self.graph)
-		# save other information in python dict
-		info_path = os.path.join(self.save_path, self.mode + '_info.pkl')
-		save_info(info_path, {'num_classes': self.num_classes, "predict_category" : self.predict_category, "features" : self.note_features})
-
-
-class MPGD_cad(MozartPianoGraphDataset):
-	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
-		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_cadlab"
-		super().__init__(name='mpgd_cad', url=url)
-
-class MPGD_onset(MozartPianoGraphDataset): 
-	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=True, select_piece=None):
-		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_onlab/"
-		super().__init__(name='mpgd_onset', url=url)
-
-class MPGD_onset_test(MozartPianoGraphDataset):
-	def __init__(self, raw_dir=None, add_inverse_edges=False, add_aug=False, select_piece=None):
-		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/mps_ts_att_onlab/"
-		super().__init__(name='mpgd_onset', url=url, raw_dir=raw_dir, 
-				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, features = ["onset", "ts"], normalize=True)
-
-class MPGD_homo_onset(MozartPianoHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/mps_homo_onlab/"
-		super().__init__(name='mpgd_homo_onset', url=url, 
-				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=False, features=["onset", "ts"], save_path=save_path)
-
-class toy_homo_onset(MozartPianoHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
-		url = "https://media.githubusercontent.com/media/melkisedeath/tonnetzcad/main/node_classification/toy_homo_onlab/"
-		super().__init__(name='toy_homo_onset', url=url, 
-				add_inverse_edges=add_inverse_edges, add_aug=add_aug, select_piece=select_piece, normalize=True, features=None, save_path=save_path)
-
-class toy_01_homo(MozartPianoHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy-01-basis-homo/"
-		super().__init__(
-				name='toy_01_homo', url=url, 
-				add_inverse_edges=add_inverse_edges, add_aug=add_aug, 
-				select_piece=select_piece, normalize=True, 
-				features=None, save_path=save_path, 
-				piece_list = MIX)
-
-class toy_02_homo(MozartPianoHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		# url = os.path.dirname("C:\\Users\\melki\\Desktop\\JKU\\codes\\tonnetzcad\\node_classification\\toy_homo_onlab\\")
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/toy-02-basis-homo/"
-		super().__init__(
-				name='toy_02_homo', url=url, 
-				add_inverse_edges=add_inverse_edges, add_aug=add_aug, 
-				select_piece=select_piece, normalize=True, 
-				features=None, save_path=save_path, 
-				piece_list = MIX)
-
-class cad_basis_homo(MozartPianoHomoGraphDataset):
+class cad_basis_homo(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-homo/"
 		super().__init__(
@@ -553,6 +376,66 @@ class cad_basis_homo(MozartPianoHomoGraphDataset):
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = MIX)
+
+class cad_basis_hsq(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-hsq/"
+		super().__init__(
+				name='cad_basis_hsq', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = HAYDN_STRING_QUARTETS)
+
+class cad_basis_wtc(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-wtc/"
+		super().__init__(
+				name='cad_basis_wtc', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = BACH_FUGUES)
+
+class cad_basis_msq(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-msq/"
+		super().__init__(
+				name='cad_basis_msq', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = MOZART_STRING_QUARTETS)
+
+class cad_basis_quartets(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-quartets/"
+		super().__init__(
+				name='cad_basis_quartets', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = QUARTETS)
+
+class cad_basis_piano(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-piano/"
+		super().__init__(
+				name='cad_basis_piano', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = PIANO)
+
+class cad_basis_mozart(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-mozart/"
+		super().__init__(
+				name='cad_basis_mozart', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = MOZART)
 
 
 if __name__ == "__main__":

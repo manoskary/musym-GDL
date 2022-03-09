@@ -29,11 +29,7 @@ def load_and_save(name, data_dir=None, classname=None):
         print("NumTrainingSamples: ", torch.count_nonzero(g.ndata["train_mask"]).item())
         print("NumValidationSamples: ", torch.count_nonzero(g.ndata["val_mask"]).item())
         print("NumTestSamples: ", torch.count_nonzero(g.ndata["test_mask"]).item())
-        try :
-            score_encoding = load_info(info_path)['score_encoding']
-            return g, n_classes, score_encoding
-        except KeyError:
-            return g, n_classes
+        return g, n_classes
     else:
         if classname:
             dataset = str_to_class(classname)(save_path=data_dir)
