@@ -89,23 +89,23 @@ FILE_LIST = [
 	]
 
 BASIS_FN = [
-	'onset_basis.score_position', 'duration_basis.duration', 'fermata_basis.fermata',
-	'grace_basis.n_grace', 'grace_basis.grace_pos', 'onset_basis.onset',
-	'polynomial_pitch_basis.pitch', 'grace_basis.grace_note',
-	'relative_score_position_basis.score_position', 'slur_basis.slur_incr',
-	'slur_basis.slur_decr', 'time_signature_basis.time_signature_num_1',
-	'time_signature_basis.time_signature_num_2', 'time_signature_basis.time_signature_num_3',
-	'time_signature_basis.time_signature_num_4', 'time_signature_basis.time_signature_num_5',
-	'time_signature_basis.time_signature_num_6', 'time_signature_basis.time_signature_num_7',
-	'time_signature_basis.time_signature_num_8', 'time_signature_basis.time_signature_num_9',
-	'time_signature_basis.time_signature_num_10', 'time_signature_basis.time_signature_num_11',
-	'time_signature_basis.time_signature_num_12', 'time_signature_basis.time_signature_num_other',
-	'time_signature_basis.time_signature_den_1', 'time_signature_basis.time_signature_den_2',
-	'time_signature_basis.time_signature_den_4', 'time_signature_basis.time_signature_den_8',
-	'time_signature_basis.time_signature_den_16', 'time_signature_basis.time_signature_den_other',
-	'vertical_neighbor_basis.n_total', 'vertical_neighbor_basis.n_above', 'vertical_neighbor_basis.n_below',
-	'vertical_neighbor_basis.highest_pitch', 'vertical_neighbor_basis.lowest_pitch',
-	'vertical_neighbor_basis.pitch_range'
+	'onset_feature.score_position', 'duration_feature.duration', 'fermata_feature.fermata',
+	'grace_feature.n_grace', 'grace_feature.grace_pos', 'onset_feature.onset',
+	'polynomial_pitch_feature.pitch', 'grace_feature.grace_note',
+	'relative_score_position_feature.score_position', 'slur_feature.slur_incr',
+	'slur_feature.slur_decr', 'time_signature_feature.time_signature_num_1',
+	'time_signature_feature.time_signature_num_2', 'time_signature_feature.time_signature_num_3',
+	'time_signature_feature.time_signature_num_4', 'time_signature_feature.time_signature_num_5',
+	'time_signature_feature.time_signature_num_6', 'time_signature_feature.time_signature_num_7',
+	'time_signature_feature.time_signature_num_8', 'time_signature_feature.time_signature_num_9',
+	'time_signature_feature.time_signature_num_10', 'time_signature_feature.time_signature_num_11',
+	'time_signature_feature.time_signature_num_12', 'time_signature_feature.time_signature_num_other',
+	'time_signature_feature.time_signature_den_1', 'time_signature_feature.time_signature_den_2',
+	'time_signature_feature.time_signature_den_4', 'time_signature_feature.time_signature_den_8',
+	'time_signature_feature.time_signature_den_16', 'time_signature_feature.time_signature_den_other',
+	'vertical_neighbor_feature.n_total', 'vertical_neighbor_feature.n_above', 'vertical_neighbor_feature.n_below',
+	'vertical_neighbor_feature.highest_pitch', 'vertical_neighbor_feature.lowest_pitch',
+	'vertical_neighbor_feature.pitch_range'
 	]
 
 def min_max_scaler(X):
@@ -120,7 +120,7 @@ class CadHomoGraphDataset(DGLDataset):
 	def __init__(self, name, url, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, save_path=None, piece_list=None):
 		if features:
 			self.features = features
-		elif "basis" in url:
+		elif "feature" in url:
 			self.features = ["onset", "duration", "ts"] + BASIS_FN + ["pitch"]
 		else :
 			self.features = ["onset", "duration", "ts", "pitch"]
@@ -367,71 +367,71 @@ class CadHomoGraphDataset(DGLDataset):
 
 
 
-class cad_basis_homo(CadHomoGraphDataset):
+class cad_feature_homo(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-homo/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-homo/"
 		super().__init__(
-				name='cad_basis_homo', url=url,
+				name='cad_feature_homo', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = MIX)
 
-class cad_basis_hsq(CadHomoGraphDataset):
+class cad_feature_hsq(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-hsq/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-hsq/"
 		super().__init__(
-				name='cad_basis_hsq', url=url,
+				name='cad_feature_hsq', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = HAYDN_STRING_QUARTETS)
 
-class cad_basis_wtc(CadHomoGraphDataset):
+class cad_feature_wtc(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-wtc/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-wtc/"
 		super().__init__(
-				name='cad_basis_wtc', url=url,
+				name='cad_feature_wtc', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = BACH_FUGUES)
 
-class cad_basis_msq(CadHomoGraphDataset):
+class cad_feature_msq(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-msq/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-msq/"
 		super().__init__(
-				name='cad_basis_msq', url=url,
+				name='cad_feature_msq', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = MOZART_STRING_QUARTETS)
 
-class cad_basis_quartets(CadHomoGraphDataset):
+class cad_feature_quartets(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-quartets/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-quartets/"
 		super().__init__(
-				name='cad_basis_quartets', url=url,
+				name='cad_feature_quartets', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = QUARTETS)
 
-class cad_basis_piano(CadHomoGraphDataset):
+class cad_feature_piano(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-piano/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-piano/"
 		super().__init__(
-				name='cad_basis_piano', url=url,
+				name='cad_feature_piano', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = PIANO)
 
-class cad_basis_mozart(CadHomoGraphDataset):
+class cad_feature_mozart(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-basis-mozart/"
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-mozart/"
 		super().__init__(
-				name='cad_basis_mozart', url=url,
+				name='cad_feature_mozart', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
