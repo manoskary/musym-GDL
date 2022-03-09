@@ -12,7 +12,22 @@ from musym.utils import load_and_save
 from torchmetrics.functional import f1
 from ray.tune import report
 from hmmlearn import hmm
+import socket
+import torch.multiprocessing as mp
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
 
+
+def extract_ip():
+    st = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        st.connect(('10.255.255.255', 1))
+        IP = st.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        st.close()
+    return IP
 
 def post_evaluate(pm, X, target):
     over_acc = 0
@@ -100,6 +115,102 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
     return seqs, trues
 
 
+def train_step(epoch, model, train_dataloader, node_features, labels, device, optimizer, criterion, dataloader_device, config, n_classes):
+    model.train()
+    acc = list()
+    f1_score = 0
+    for step, (input_nodes, output_nodes, mfgs) in enumerate(
+            tqdm.tqdm(train_dataloader, position=0, leave=True, desc="Training Epoch %i" % epoch)):
+        batch_inputs = node_features[input_nodes].to(device)
+        batch_labels = labels[output_nodes].to(device)
+        if dataloader_device == "cpu":
+            mfgs = [mfg.int().to(device) for mfg in mfgs]
+        adj = mfgs[-1].adj().to_dense()[:len(batch_labels), :len(batch_labels)].to(device)
+        pred, upsampl_lab, embed_loss = model(mfgs, batch_inputs, adj, batch_labels)
+        loss = criterion(pred, upsampl_lab) + embed_loss * config["gamma"]
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        acc.append((torch.argmax(pred[:len(batch_labels)], dim=1) == batch_labels))
+        f1_score += f1(torch.argmax(pred[:len(batch_labels)], dim=1), batch_labels, average="macro",
+                       num_classes=n_classes).item()
+    f1_score = f1_score / (step + 1)
+    acc_score = torch.cat(acc).float().sum() / len(labels)
+    return loss, acc_score, f1_score
+
+
+def evaluate(model, dataloader, nids, node_features, labels, device):
+    model.eval()
+    prediction = model.inference(dataloader, node_features, labels, device)
+    loss = F.cross_entropy(prediction[nids].cpu(), labels[nids])
+    acc = torch.eq(labels[nids], torch.argmax(prediction[nids].cpu(), dim=1)).float().sum() / len(labels[nids])
+    fscore = f1(prediction[nids].cpu(), labels[nids], average="macro", num_classes=2)
+    return prediction, loss, acc, fscore
+
+
+def return_dataloaders(g, train_nids, val_nids, test_nids, sampler, device, shuffle, batch_size, drop_last, num_workers):
+    train_dataloader = dgl.dataloading.NodeDataLoader(g, train_nids, sampler, device=device, shuffle=shuffle,
+                                                      batch_size=batch_size, drop_last=False, num_workers=num_workers)
+    val_dataloader = dgl.dataloading.NodeDataLoader(g, val_nids, sampler, device=device, shuffle=shuffle,
+                                                    batch_size=batch_size, drop_last=drop_last, num_workers=num_workers)
+
+    test_dataloader = dgl.dataloading.NodeDataLoader(g, test_nids, sampler, device=device, shuffle=shuffle,
+                                                    batch_size=batch_size, drop_last=drop_last, num_workers=num_workers)
+    return train_dataloader, val_dataloader, test_dataloader
+
+
+def train(rank, n_gpus, config, data):
+
+    g, model, train_dataloader, sampler, \
+    val_dataloader, node_features, labels, device, \
+    optimizer, scheduler, criterion, dataloader_device, config, \
+    n_classes, train_nids, val_nids = data
+
+    if n_gpus > 1:
+        model = model.to(rank)
+        model = DistributedDataParallel(
+            model, device_ids=[rank], output_device=rank, find_unused_parameters=True)
+        device = dataloader_device = torch.device('cuda:' + str(rank))
+
+        train_dataloader = dgl.dataloading.NodeDataLoader(g, train_nids, sampler, device=device, shuffle=True,
+                                                          batch_size=config["batch_size"], drop_last=False,
+                                                          num_workers=0, use_ddp=True)
+    else:
+        model.to(device)
+
+    print("start training...")
+
+    for epoch in range(config["num_epochs"]):
+        loss, acc_score, f1_score = train_step(epoch, model, train_dataloader, node_features, labels, device,
+                                               optimizer, criterion, dataloader_device, config, n_classes)
+        if config["tune"]:
+            report(epoch, loss.item())
+        print("Epoch {:04d} | Loss {:.04f} | Acc {:.04f} | F score {:.04f} |".format(epoch, loss, acc_score,
+                                                                                     f1_score))
+        if n_gpus > 1:
+            torch.distributed.barrier()
+            if rank == 0 :
+                eval_model = model.module
+                eval_model.to(rank)
+                prediction, loss, acc_score, f1_score = evaluate(eval_model, val_dataloader, val_nids, node_features, labels, rank)
+        else:
+            eval_model = model
+            prediction, loss, acc_score, f1_score = evaluate(eval_model, val_dataloader, val_nids, node_features, labels, device)
+
+        scheduler.step(f1_score)
+        print("Validation Score : Loss {:.04f} | Accuracy {:.4f} | F score {:.4f} |".format(loss.item(), acc_score,
+                                                                                            f1_score))
+    return eval_model
+
+def init_process(rank, world_size, fn, config, data, backend='nccl'):
+    """ Initialize the distributed environment. """
+    os.environ['MASTER_ADDR'] = str(extract_ip())
+    os.environ['MASTER_PORT'] = str(1234)
+    torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
+    model = fn(rank, world_size, config, data)
+    return model
+
+
 def main(args):
     """
     Main Call for Node Classification with Node2Vec + GraphSMOTE + DBNN.
@@ -113,7 +224,7 @@ def main(args):
     config["shuffle"] = bool(config["shuffle"])
 
     # --------------- Dataset Loading -------------------------
-    g, n_classes = load_and_save("cad_basis_homo", config["data_dir"])
+    g, n_classes = load_and_save(config["dataset"], config["data_dir"])
     g = dgl.add_self_loop(dgl.add_reverse_edges(g))
     # training defs
     labels = g.ndata.pop('label')
@@ -134,7 +245,7 @@ def main(args):
 
 
     # ------------ Pre-Processing Node2Vec ----------------------
-    emb_path = os.path.join(config["data_dir"], "cad_basis_homo", "node_emb.pt")
+    emb_path = os.path.join(config["data_dir"], config["dataset"], "node_emb.pt")
     nodes = g.nodes()
     if config["preprocess"]:
         nodes_train, y_train = nodes[train_nids], labels[train_nids]
@@ -162,28 +273,26 @@ def main(args):
         g = g.to(device)
         dataloader_device = device
 
+
+
+
     # dataloader
     sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts=fanouts)
     # The edge dataloader returns a subgraph but iterates on the number of edges.
-    train_dataloader = dgl.dataloading.NodeDataLoader(
-        g,
-        train_nids,
-        sampler,
-        device=dataloader_device,
-        shuffle=config["shuffle"],
-        batch_size = config["batch_size"],
-        drop_last=False,
-        num_workers=config["num_workers"],
+
+    train_dataloader, val_dataloader, test_dataloader = return_dataloaders(
+        g=g, train_nids=train_nids, val_nids=val_nids, test_nids=test_nids, sampler=sampler,
+        device=dataloader_device, shuffle=config["shuffle"], batch_size=config["batch_size"],
+        drop_last=False, num_workers=config["num_workers"]
     )
-    model_path = os.path.join(config["data_dir"], "cad_basis_homo", "model_sd.pt")
+
+    model_path = os.path.join(config["data_dir"], config["dataset"], "model_sd.pt")
     model = GraphSMOTE(in_feats, n_hidden=config["num_hidden"], n_classes=n_classes, n_layers=config["num_layers"],
                        ext_mode=config["ext_mode"])
     print("Model Trainable Parameters : ", sum(p.numel() for p in model.parameters() if p.requires_grad))
 
-    if use_cuda:
-        model = model.cuda()
-
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
     criterion = nn.CrossEntropyLoss()
 
 
@@ -192,73 +301,55 @@ def main(args):
     else:
         # training loop
         # --------------------- Init WANDB ---------------------------------
-        wandb.init(
-            project="Cadence Detection",
-            group="GraphSMOTE-bs{}-l{}x{}".format(config["batch_size"], config["num_layers"], config["num_hidden"]),
-            job_type="Cadence-Detection",
-            config=config)
-        wandb.watch(model, log_freq=1000)
-        print("start training...")
+        # wandb.init(
+        #     project="Cadence Detection",
+        #     group=config["dataset"],
+        #     job_type="GraphSMOTE-bs{}-l{}x{}".format(config["batch_size"], config["num_layers"], config["num_hidden"]),
+        #     config=config,
+        #     reinit=True,
+        #     settings=wandb.Settings(start_method='fork')
+        # )
+        # wandb.watch(model, log_freq=1000)
+        n_gpus = torch.cuda.device_count()
+        if n_gpus > 1:
+            g.create_formats_()
+        processes = []
+        batch_data = g, model, train_dataloader, sampler, val_dataloader, node_features, labels, \
+               device, optimizer, scheduler, criterion, dataloader_device, config, n_classes, train_nids, val_nids
 
-        for epoch in range(config["num_epochs"]):
-            model.train()
-            acc = list()
-            f1_score = 0
-            for step, (input_nodes, output_nodes, mfgs) in enumerate(tqdm.tqdm(train_dataloader, position=0, leave=True, desc="Training Epoch %i" % epoch)):
-                batch_inputs = node_features[input_nodes].to(device)
-                batch_labels = labels[output_nodes].to(device)
-                if dataloader_device == "cpu":
-                    mfgs = [mfg.int().to(device) for mfg in mfgs]
-                adj = mfgs[-1].adj().to_dense()[:len(batch_labels), :len(batch_labels)].to(device)
-                pred, upsampl_lab, embed_loss = model(mfgs, batch_inputs, adj, batch_labels)
-                loss = criterion(pred, upsampl_lab) + embed_loss * config["gamma"]
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                acc.append((torch.argmax(pred[:len(batch_labels)], dim=1) == batch_labels))
-                f1_score += f1(torch.argmax(pred[:len(batch_labels)], dim=1), batch_labels, average="macro", num_classes=n_classes).item()
+        mp.set_start_method("spawn", force=True)
+        for rank in range(n_gpus):
+            p = mp.Process(target=init_process, args=(rank, n_gpus, train, config, batch_data))
+            p.start()
+            processes.append(p)
 
-            f1_score = f1_score/ (step+1)
-            acc_score = torch.cat(acc).float().sum() / len(labels)
-            if config["tune"]:
-                report(epoch, loss.item())
-            print("Epoch {:04d} | Loss {:.04f} | Acc {:.04f} | F score {:.04f} |".format(epoch, loss, acc_score, f1_score))
+        for p in processes:
+            p.join()
+
         torch.save(model.state_dict(), model_path)
 
+
     model.eval()
-    train_prediction = model.inference(train_dataloader, node_features, labels[train_nids], device)
+    train_prediction = model.inference(train_dataloader, node_features, labels, device)
     # pred_path = os.path.join(config["data_dir"], "cad_basis_homo", "preds.pt")
     # posttrain_label_path = os.path.join(config["data_dir"], "cad_basis_homo", "post_train_labels.pt")
     # torch.save(train_prediction.detach().cpu(), pred_path)
     # torch.save(labels[train_nids].detach().cpu(), posttrain_label_path)
     # TODO needs to address post-processing using Dynamic Bayesian Model.
-    X_train = train_prediction.detach().cpu()
-    y_train = labels[train_nids].detach().cpu()
+    X_train = train_prediction[train_nids].detach().cpu()
     if config["eval"]:
-        val_dataloader = dgl.dataloading.NodeDataLoader(
-            g,
-            torch.cat((val_nids, test_nids)),
-            sampler,
-            device=dataloader_device,
-            shuffle=config["shuffle"],
-            batch_size = config["batch_size"],
-            drop_last=False,
-            num_workers=config["num_workers"],
-        )
-        idx = torch.cat((val_nids, test_nids))
-        val_prediction = model.inference(val_dataloader, node_features, labels, device)
-        acc = torch.eq(labels[idx], torch.argmax(val_prediction[idx].cpu(), dim=1)).float().sum() / len(labels[idx])
-        fscore = f1(val_prediction[idx].cpu(), labels[idx], average="macro", num_classes=2)
-        Χ_val = val_prediction[idx].detach().cpu()
-        # y_val = labels[idx].detach().cpu()
-        print("Validation Score : Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+        test_prediction, loss, acc_score, f1_score = evaluate(model, test_dataloader, test_nids, node_features, labels, device)
+        print("Test Score : Loss {:.04f} | Accuracy {:.4f} | F score {:.4f} |".format(loss.item(), acc_score, f1_score))
+        Χ_test = test_prediction[test_nids].detach().cpu()
         train_set = to_sequences(labels, X_train, train_nids, score_duration, piece_idx, onsets)
-        val_set = to_sequences(labels, Χ_val, idx, score_duration, piece_idx, onsets)
-        return train_set, val_set
+        test_set = to_sequences(labels, Χ_test, test_nids, score_duration, piece_idx, onsets)
+        return train_set, test_set
     else:
         print(X_train.shape, y_train.shape)
         train_set = to_sequences(labels, X_train, train_nids, score_duration, piece_idx, onsets)
         return train_set
+
+
 
 
 if __name__ == '__main__':
@@ -267,6 +358,7 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Cadence Learning GraphSMOTE')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
+    argparser.add_argument("--dataset", type=str, default="cad_basis_homo")
     argparser.add_argument('--num-epochs', type=int, default=50)
     argparser.add_argument('--num-hidden', type=int, default=128)
     argparser.add_argument('--num-layers', type=int, default=2)
@@ -299,15 +391,15 @@ if __name__ == '__main__':
     print(args)
     if not args.postprocess:
         (X_train, y_train), (X_val, y_val) = main(args)
-        pred_path = os.path.join(args.data_dir, "cad_basis_homo", "preds.pkl")
-        posttrain_label_path = os.path.join(args.data_dir, "cad_basis_homo", "post_train_labels.pkl")
+        pred_path = os.path.join(args.data_dir, args.dataset, "preds.pkl")
+        posttrain_label_path = os.path.join(args.data_dir, args.dataset, "post_train_labels.pkl")
         with open(pred_path, "wb") as f:
             pickle.dump(X_train, f)
         with open(posttrain_label_path, "wb") as f:
             pickle.dump(y_train, f)
     else :
-        pred_path = os.path.join(args.data_dir, "cad_basis_homo", "preds.pkl")
-        posttrain_label_path = os.path.join(args.data_dir, "cad_basis_homo", "post_train_labels.pkl")
+        pred_path = os.path.join(args.data_dir, args.dataset, "preds.pkl")
+        posttrain_label_path = os.path.join(args.data_dir, config["dataset"], "post_train_labels.pkl")
         # X_train, y_train = torch.load(pred_path).numpy(), torch.load(posttrain_label_path).numpy()
         with open(pred_path, "rb") as f:
             X_train = pickle.load(f)
