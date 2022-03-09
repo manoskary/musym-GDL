@@ -3,7 +3,7 @@ provider:
     type: local
     head_ip: 140.78.124.132 #rk0
     worker_ips: [140.78.124.136, 140.78.124.137] #rk4, rk5
-auth: {ssh_user: manos} #, ssh_private_key: /share/home/manos/.ssh/authorized_keys}
+auth: {ssh_user: manos}
 ## Typically for local clusters, min_workers == max_workers.
 min_workers: 3
 max_workers: 3
@@ -11,7 +11,7 @@ max_workers: 3
 initialization_commands: []
 
 setup_commands:
-    - conda init bash
+    - bash
     - conda activate musym
     # If we have e.g. conda dependencies stored in "/path1/on/local/machine/environment.yaml", we can prepare the
     # work environment on each worker by:
@@ -34,14 +34,15 @@ head_setup_commands: []
 # Custom commands that will be run on worker nodes after common setup.
 worker_setup_commands: []
 
+
 # Command to start ray on the head node. You don't need to change this.
 head_start_ray_commands:
-    - conda init bash
+    - bash
     - conda activate musym && ray stop
     - conda activate musym && ulimit -c unlimited && ray start --head --port=6379 # --autoscaling-config=~/ray_bootstrap_config.yaml
 
 # Command to start ray on worker nodes. You don't need to change this.
 worker_start_ray_commands:
-    - conda init bash
+    - bash
     - conda activate my_venv && ray stop
     - ray start --address=$RAY_HEAD_IP:6379
