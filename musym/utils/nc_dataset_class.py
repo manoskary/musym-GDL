@@ -139,20 +139,20 @@ class CadHomoGraphDataset(DGLDataset):
 		piece_list_retracing = ["augmented_piece"] + self.piece_list
 		self.piece_encoding = dict(zip(range(len(piece_list_retracing)), piece_list_retracing))
 		self.inverse_piece_encoding = dict(zip(piece_list_retracing, range(len(piece_list_retracing))))
-		self.test_piece_list = random.sample(self.piece_list, int(0.2*len(self.piece_list)))
-		self.val_piece_list = random.sample(list(set(self.piece_list)-set(self.test_piece_list)), int(0.2*len(self.piece_list))) 
+		self.test_piece_list = random.sample(self.piece_list, int(0.1*len(self.piece_list)))
+		self.val_piece_list = random.sample(list(set(self.piece_list)-set(self.test_piece_list)), int(0.1*len(self.piece_list)))
 		self.train_piece_list = list(set(self.piece_list)-(set(self.test_piece_list).union(set(self.val_piece_list))))
 		self.FILE_LIST = ["nodes.csv", "edges.csv"]
 		if self.select_piece and self.select_piece in self.piece_list:          
 			self._process_select_piece()
 			n_nodes = self.graph.num_nodes()
-			n_train = int(n_nodes * 0.6)
-			n_val = n_train + int(n_nodes*0.2)
+			n_train = int(n_nodes * 0.8)
+			n_val = n_train + int(n_nodes*0.1)
 		elif self.name == "toy_homo_onset":
 			self._process_toy()
 			n_nodes = self.graph.num_nodes()
-			n_train = int(n_nodes * 0.6)
-			n_val = n_train + int(n_nodes*0.2)
+			n_train = int(n_nodes * 0.8)
+			n_val = n_train + int(n_nodes*0.1)
 		else:             
 			print("------- Loading Train Pieces -------")
 			self._process_loop(self.train_piece_list)
