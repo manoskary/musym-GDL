@@ -31,7 +31,6 @@ def main(args):
     piece_idx = g.ndata.pop("score_name")
     onsets = node_features[:, 0]
     score_duration = node_features[:, 3]
-    node_features = min_max_scaler(node_features)
     if args.add_PE:
         pos_enc = positional_encoding(g, 10)
         node_features = torch.cat((node_features, pos_enc), dim=1)
@@ -51,8 +50,8 @@ def main(args):
         nodes_train, y_train = nodes[train_nids], labels[train_nids]
         nodes_val, y_val = nodes[val_nids], labels[val_nids]
         eval_set = [(nodes_train, y_train), (nodes_val, y_val)]
-        pp_model = Node2vecModel(g=g, embedding_dim=256, walk_length=50, p=0.25, q=4.0, num_walks=10, device=device, eval_set=eval_set, eval_steps=1)
-        pp_model.train(epochs=5, batch_size=128)
+        pp_model = Node2vecModel(g=g, embedding_dim=64, walk_length=20, p=0.25, q=4.0, num_walks=10, device=device, eval_set=eval_set, eval_steps=1)
+        pp_model.train(epochs=10, batch_size=256)
         node_emb = pp_model.embedding().detach().cpu()
         node_features = torch.cat((node_features, node_emb), dim=1)
         torch.save(node_features, emb_path)
@@ -61,7 +60,7 @@ def main(args):
         node_features = torch.load(emb_path)
     except:
         print("Node embedding was not found continuing with standard node features.")
-
+    node_features = min_max_scaler(node_features)
     # create model
     datamodule = CadDataModule(
         g=g, n_classes=n_classes, in_feats=node_features.shape[1],
