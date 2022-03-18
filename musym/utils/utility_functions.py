@@ -1,10 +1,5 @@
 import sys
-import os
-from dgl.data.utils import load_info, load_graphs
-from dgl import to_bidirected
-import torch
-from sklearn import metrics
-
+from sklearn.metrics import auc, roc_curve, precision_recall_fscore_support
 from .nc_dataset_class import *
 
 
@@ -47,10 +42,16 @@ def compute_metrics(y_pred, y_true):
         y_pred = y_pred.cpu().numpy()
         y_true = y_true.cpu().numpy()
         metrics_out = dict()
-        fpr, tpr, thresholds = metrics.roc_curve(y_true, y_pred, pos_label=1)
-        metrics_out["auc"] = metrics.auc(fpr, tpr)
-        metrics_out["precision"], metrics_out["recall"], metrics_out["fscore"], _ = metrics.precision_recall_fscore_support(y_true, y_pred, average='micro', zero_division=1   )
+        fpr, tpr, thresholds = roc_curve(y_true, y_pred, pos_label=1)
+        metrics_out["auc"] = auc(fpr, tpr)
+        metrics_out["precision"], metrics_out["recall"], metrics_out["fscore"], _ = precision_recall_fscore_support(y_true, y_pred, average='micro', zero_division=1   )
         return metrics_out
+
+
+def min_max_scaler(x):
+    x_std = (x - x.min(axis=0)[0]) / (x.max(axis=0)[0] - x.min(axis=0)[0])
+    x_scaled = x_std * (x.max - x.min) + x.min
+    return x_scaled
 
 
 def get_sample_weights(labels):
