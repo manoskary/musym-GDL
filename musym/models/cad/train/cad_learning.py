@@ -350,8 +350,6 @@ def main(args):
         return train_set
 
 
-
-
 if __name__ == '__main__':
     import argparse
     import pickle
