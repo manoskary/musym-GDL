@@ -9,6 +9,27 @@ import partitura
 from data_loading import data_loading
 
 
+MOZART_STRING_QUARTETS = [
+	'k590-01', 'k155-02', 'k156-01', 'k080-02', 'k172-01',
+	'k171-01', 'k172-04', 'k157-01', 'k589-01', 'k458-01',
+	'k169-01', 'k387-01', 'k158-01', 'k157-02', 'k171-03',
+	'k159-02', 'k428-02', 'k173-01', 'k499-03', 'k156-02',
+	'k168-01', 'k080-01', 'k421-01', 'k171-04', 'k168-02',
+	'k428-01', 'k499-01', 'k172-02', 'k465-04', 'k155-01',
+	'k465-01', 'k159-01'
+	]
+
+
+BACH_FUGUES = [
+	'wtc1f01', 'wtc1f07', 'wtc1f15', 'wtc1f13',
+	'wtc1f06', 'wtc1f03', 'wtc1f02', 'wtc1f18',
+	'wtc1f17', 'wtc1f09', 'wtc1f24', 'wtc1f10',
+	'wtc1f22', 'wtc1f16', 'wtc1f12', 'wtc1f23',
+	'wtc1f19', 'wtc1f05', 'wtc1f14', 'wtc1f04',
+	'wtc1f08', 'wtc1f20', 'wtc1f21',
+	]
+
+
 def join_struct_arrays(arrays):
     sizes = np.array([a.itemsize for a in arrays])
     offsets = np.r_[0, sizes.cumsum()]
@@ -160,58 +181,69 @@ def create_data(args):
         os.makedirs(args.save_dir)
     scores, annotations = data_loading(args)
     for key, fn in scores.items():
-        print(key)
-        if fn.endswith(".musicxml"):
-            part = partitura.load_musicxml(fn)
-        elif fn.endswith(".krn"):
-            part = partitura.load_kern(fn)
-        else:
-            raise ValueError("The score {} format is not recognized".format(fn))
-        part = partitura.score.merge_parts(part)
-
-        rest_array = np.array(
-            [(part.beat_map(r.start.t), part.beat_map(r.duration)) for r in part.iter_all(partitura.score.Rest)],
-            dtype=[('onset_beat', '<f4'), ('duration_beat', '<f4')])
-        time_signature = np.array(
-            [
-                (part.beat_map(ts.start.t), filter_ts_end(ts, part), ts.beats, ts.beat_type) for ts in
-                part.iter_all(partitura.score.TimeSignature)
-            ],
-            dtype=[('onset_beat', '<f4'), ('end_beat', '<f4'), ("nominator", "<i4"), ("denominator", "<i4")]
-        )
-        na = partitura.utils.ensure_notearray(part)
-        # Old version from feature mixer.
-        # base_fn = [x for x in list_feature_functions() if
-        #            x not in ["metrical_feature", "metrical_strength_feature", "articulation_feature"]]
-        ba, feature_fn = partitura.musicanalysis.make_note_feats(part, "all")
-        ba = np.array([tuple(x) for x in ba], dtype=[(x, '<f8') for x in feature_fn])
-        note_array = align_feature(na, ba)
-        labels = np.zeros(note_array.shape[0])
-        # In case annotation are of the form Bar & Beat transform to global beat.
-        if isinstance(annotations[key][0], tuple):
-            measures = {m.number: part.beat_map(m.start.t) for m in part.iter_all(partitura.score.Measure)}
-            annotations[key] = list(map(lambda x: measures[x[0]] + x[1], annotations[key]))
-
-        # Corrections of annotations with respect to time signature.
-        if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:
-            annotations[key] = list(map(lambda x: x/2, annotations[key]))
-        elif time_signature["denominator"][0] == 8 and args.source in ["wtc", "msq"]:
-            annotations[key] = list(map(lambda x: x*2, annotations[key]))
-        else:
-            pass
-
-        for cad_onset in annotations[key]:
-            labels[np.where(note_array["onset_beat"] == cad_onset)] = 1
-            # check for false annotation that does not have match
-            if np.all((note_array["onset_beat"] == cad_onset) == False):
-                raise IndexError("Annotated beat {} does not match with any score beat in score {}.".format(cad_onset, key))
-
-        nodes, edges = graph_csv_from_na(note_array, rest_array, time_signature, labels, feature_fn=feature_fn,
-                                         norm2bar=args.norm2bar)
         if not os.path.exists(os.path.join(args.save_dir, key)):
-            os.makedirs(os.path.join(args.save_dir, key))
-        nodes.to_csv(os.path.join(args.save_dir, key, "nodes.csv"))
-        edges.to_csv(os.path.join(args.save_dir, key, "edges.csv"))
+            print(key)
+            if fn.endswith(".musicxml"):
+                part = partitura.load_musicxml(fn, force_note_ids=True)
+            elif fn.endswith(".krn"):
+                part = partitura.load_kern(fn)
+            else:
+                raise ValueError("The score {} format is not recognized".format(fn))
+            part = partitura.score.merge_parts(part)
+            # Not sure If I have to unfold
+            part = partitura.score.unfold_part_maximal(part)
+
+            rest_array = np.array(
+                [(part.beat_map(r.start.t), part.beat_map(r.duration)) for r in part.iter_all(partitura.score.Rest)],
+                dtype=[('onset_beat', '<f4'), ('duration_beat', '<f4')])
+            time_signature = np.array(
+                [
+                    (part.beat_map(ts.start.t), filter_ts_end(ts, part), ts.beats, ts.beat_type) for ts in
+                    part.iter_all(partitura.score.TimeSignature)
+                ],
+                dtype=[('onset_beat', '<f4'), ('end_beat', '<f4'), ("nominator", "<i4"), ("denominator", "<i4")]
+            )
+            na = partitura.utils.ensure_notearray(part)
+            ba, feature_fn = partitura.musicanalysis.make_note_feats(part, "all")
+            ba = np.array([tuple(x) for x in ba], dtype=[(x, '<f8') for x in feature_fn])
+            note_array = align_feature(na, ba)
+            labels = np.zeros(note_array.shape[0])
+
+            if (not np.all(na["onset_beat"] >= 0)) and (args.source != "mps"):
+                annotations[key] += min(na["onset_beat"])
+            # In case annotation are of the form Bar & Beat transform to global beat.
+            if isinstance(annotations[key][0], tuple):
+                measures = {m.number: part.beat_map(m.start.t) for m in part.iter_all(partitura.score.Measure)}
+                annotations[key] = list(map(lambda x: measures[x[0]] + x[1], annotations[key]))
+
+
+            if key in MOZART_STRING_QUARTETS:
+                args.source = "msq"
+            elif key in BACH_FUGUES:
+                args.source = "wtc"
+            else:
+                args.source = "hsq"
+
+            # Corrections of annotations with respect to time signature.
+            if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:
+                annotations[key] = list(map(lambda x: x/2, annotations[key]))
+            elif time_signature["denominator"][0] == 8 and args.source in ["wtc", "msq"]:
+                annotations[key] = list(map(lambda x: x*2, annotations[key]))
+            else:
+                pass
+
+            for cad_onset in annotations[key]:
+                labels[np.where(note_array["onset_beat"] == cad_onset)] = 1
+                # check for false annotation that does not have match
+                if np.all((note_array["onset_beat"] == cad_onset) == False):
+                    raise IndexError("Annotated beat {} does not match with any score beat in score {}.".format(cad_onset, key))
+
+            nodes, edges = graph_csv_from_na(note_array, rest_array, time_signature, labels, feature_fn=feature_fn,
+                                             norm2bar=args.norm2bar)
+            if not os.path.exists(os.path.join(args.save_dir, key)):
+                os.makedirs(os.path.join(args.save_dir, key))
+            nodes.to_csv(os.path.join(args.save_dir, key, "nodes.csv"))
+            edges.to_csv(os.path.join(args.save_dir, key, "edges.csv"))
 
 
 if __name__ == "__main__":
@@ -223,7 +255,10 @@ if __name__ == "__main__":
                         help='Select from which dataset to create graph dataset.')
     parser.add_argument("--norm2bar", action="store_true", help="Resize Onset Beat relative to Bar Beat.")
     parser.add_argument("--save-name", default="cad-feature-homo", help="Save Name in the Tonnetz Cadence.")
+    parser.add_argument("--cad-type", default="all", choices=["all", "pac"], help="Choose type of Cadence to parse in dataset.")
     args = parser.parse_args()
+
+    args.save_name = "cad-{}-{}".format(args.cad_type, args.source) if args.cad_type == "pac" else "cad-feature-{}".format(args.source)
 
     dirname = os.path.abspath(os.path.dirname(__file__))
     par = lambda x: os.path.abspath(os.path.join(x, os.pardir))
