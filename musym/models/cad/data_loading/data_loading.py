@@ -82,6 +82,12 @@ def data_loading_mps(score_dir):
 		if score_name.endswith(".musicxml"):
 			key = os.path.splitext(score_name)[0]
 			scores[key] = os.path.join(score_dir, score_name)
+	# TODO Fix the problematic pieces.
+	# Remove problematic Pieces
+	problematic_pieces = ["K331-2"]
+	for key in problematic_pieces:
+		scores.pop(key, None)
+		annotations.pop(key, None)
 	return scores, annotations
 
 
