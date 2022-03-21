@@ -213,8 +213,16 @@ def create_data(args):
                 annotations[key] += min(na["onset_beat"])
             # In case annotation are of the form Bar & Beat transform to global beat.
             if isinstance(annotations[key][0], tuple):
-                measures = {m.number: part.beat_map(m.start.t) for m in part.iter_all(partitura.score.Measure)}
-                annotations[key] = list(map(lambda x: measures[x[0]] + x[1], annotations[key]))
+                measures = dict()
+                for m in part.iter_all(partitura.score.Measure):
+                    # Account for repeat unfolding
+                    if m.number in measures.keys():
+                        measures[m.number].append(part.beat_map(m.start.t))
+                    else:
+                        measures[m.number] = [part.beat_map(m.start.t)]
+                tmp = [b_map + onset for bar, onset in annotations[key] for b_map in measures[bar]]
+                # transform to list of beats
+                annotations[key] = tmp
 
 
             if key in MOZART_STRING_QUARTETS:
