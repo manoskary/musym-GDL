@@ -209,8 +209,7 @@ def create_data(args):
             note_array = align_feature(na, ba)
             labels = np.zeros(note_array.shape[0])
 
-            if (not np.all(na["onset_beat"] >= 0)) and (args.source != "mps"):
-                annotations[key] += min(na["onset_beat"])
+
             # In case annotation are of the form Bar & Beat transform to global beat.
             if isinstance(annotations[key][0], tuple):
                 measures = dict()
@@ -224,6 +223,8 @@ def create_data(args):
                 # transform to list of beats
                 annotations[key] = tmp
 
+            if (not np.all(na["onset_beat"] >= 0)) and (args.source != "mps"):
+                annotations[key] += min(na["onset_beat"])
 
             if key in MOZART_STRING_QUARTETS:
                 args.source = "msq"
@@ -272,6 +273,9 @@ if __name__ == "__main__":
     par = lambda x: os.path.abspath(os.path.join(x, os.pardir))
     args.par_dir = par(par(dirname))
 
-    args.save_dir = os.path.join("/home/manos/Desktop/JKU/codes/tonnetzcad/node_classification", args.save_name)
-
+    import platform
+    if platform.system() == "Windows":
+        args.save_dir = os.path.join("C:\\Users\\melki\\Desktop\\codes", args.save_name)
+    elif platform.system() == "Linux":
+        args.save_dir = os.path.join("/home/manos/Desktop/JKU/codes/tonnetzcad/node_classification", args.save_name)
     data = create_data(args)

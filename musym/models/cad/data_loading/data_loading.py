@@ -3,6 +3,7 @@ import yaml, urllib
 import urllib.request
 import pandas as pd
 import numpy as np
+import platform
 
 
 def retrieve_haydn_cad_annotations(annotation_path, cad_type):
@@ -189,10 +190,15 @@ def check_source_name(args):
 
 
 def data_loading(args):
+	if platform.system() == "Linux":
+		base_dir = "/home/manos/Desktop/JKU/"
+	elif platform.system() == "Windows":
+		base_dir = "C:\\Users\\melki\\Desktop"
 	if args.source == "msq" or args.source == "mozart string quartets":
-		scores, annotations = data_loading_msq(score_dir="/home/manos/Desktop/JKU/data/mozart_string_quartets/kern/", cad_type=args.cad_type)
+		score_dir = os.path.join(base_dir, "data", "mozart_string_quartets", "kern")
+		scores, annotations = data_loading_msq(score_dir=score_dir, cad_type=args.cad_type)
 	elif args.source == "mps" or args.source == "mozart piano sonatas":
-		score_dir = "/home/manos/Desktop/JKU/codes/mozart_piano_sonatas/"
+		score_dir = os.path.join(base_dir, "codes", "mozart_piano_sonatas")
 		tsv_dir = os.path.join(score_dir, "formatted", "-Ce_cadences.tsv")
 		if not os.path.exists(tsv_dir):
 			python_script_dir = os.path.join(score_dir, "mozart_loader.py")
@@ -200,24 +206,30 @@ def data_loading(args):
 			os.system('python '+ python_script_dir + " -C")
 		scores, annotations = data_loading_mps(score_dir)
 	elif args.source == "hsq":
-		scores, annotations = data_loading_hsq(score_dir="/home/manos/Desktop/JKU/data/haydn_string_quartets/", cad_type=args.cad_type)
+		score_dir = os.path.join(base_dir, "data", "haydn_string_quartets")
+		scores, annotations = data_loading_hsq(score_dir=score_dir, cad_type=args.cad_type)
 	elif args.source == "wtc":
-		scores, annotations = data_loading_wtc(score_dir="/home/manos/Desktop/JKU/data/wtc-fugues/", cad_type=args.cad_type)
+		score_dir = os.path.join(base_dir, "data", "wtc-fugues")
+		scores, annotations = data_loading_wtc(score_dir=score_dir, cad_type=args.cad_type)
 	elif args.source == "mozart":
 		args.source = "mps"
-		s2, a2 = data_loading_mps(score_dir="/home/manos/Desktop/JKU/codes/mozart_piano_sonatas/")
+		s2, a2 = data_loading(args)
 		args.source = "msq"
-		s1, a1 = data_loading_msq(score_dir="/home/manos/Desktop/JKU/data/mozart_string_quartets/kern/", cad_type=args.cad_type)
+		s1, a1 = data_loading(args)
 		scores = dict(s1, **s2)
 		annotations = dict(a1, **a2)
 	elif args.source == "quartets":
-		s1, a1 = data_loading_msq(score_dir="/home/manos/Desktop/JKU/data/mozart_string_quartets/kern/", cad_type=args.cad_type)
-		s2, a2 = data_loading_hsq(score_dir="/home/manos/Desktop/JKU/data/haydn_string_quartets/", cad_type=args.cad_type)
+		args.source = "msq"
+		s1, a1 = data_loading(args)
+		args.source = "hsq"
+		s2, a2 = data_loading(args)
 		scores = dict(s1, **s2)
 		annotations = dict(a1, **a2)
 	elif args.source == "piano":
-		s2, a2 = data_loading_mps(score_dir="/home/manos/Desktop/JKU/codes/mozart_piano_sonatas/")
-		s2, a2 = data_loading_wtc(score_dir="/home/manos/Desktop/JKU/data/wtc-fugues/", cad_type=args.cad_type)
+		args.source = "mps"
+		s1, a1 = data_loading(args)
+		args.source = "wtc"
+		s2, a2 = data_loading(args)
 		scores = dict(s1, **s2)
 		annotations = dict(a1, **a2)
 	elif args.source == "mix":
