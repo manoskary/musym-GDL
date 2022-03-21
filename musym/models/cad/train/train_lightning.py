@@ -5,6 +5,7 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 import dgl
 import torch
+from datetime import datetime
 import os
 from musym.utils import load_and_save, min_max_scaler
 from pytorch_lightning.callbacks import EarlyStopping
@@ -75,7 +76,16 @@ def main(args):
         loss_weight=args.gamma, ext_mode="lstm")
 
     # Train
-    checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=5)
+    dt = datetime.today()
+    dt_str = "{}.{}.{}.{}.{}".format(dt.year, dt.month, dt.day, dt.hour, dt.minute)
+    checkpoint_callback = ModelCheckpoint(
+        dirpath="./cad_checkpoints/GraphSMOTE-{}-{}".format(args.num_layers, dt_str),
+        monitor='val_fscore_epoch',
+        mode="max",
+        save_top_k=5,
+        save_last=True,
+        filename='{epoch}-{val_fscore_epoch:.2f}-{train_loss:.2f}'
+    )
     # early_stopping = EarlyStopping('val_fscore', mode="max", patience=10)
     trainer = Trainer(gpus=4,
                       auto_select_gpus=True,
