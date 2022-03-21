@@ -12,6 +12,7 @@ from dgl.data.utils import makedirs, save_info, load_info
 import networkx as nx
 import matplotlib.pyplot as plt
 from musym.utils.metadata import *
+from musym.models.cad.models import positional_encoding
 
 def min_max_scaler(X):
 	data_min = np.nanmin(X, axis=0)
@@ -22,7 +23,7 @@ def min_max_scaler(X):
 
 
 class CadHomoGraphDataset(DGLDataset):
-	def __init__(self, name, url, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, save_path=None, piece_list=None):
+	def __init__(self, name, url, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, save_path=None, piece_list=None, pos_enc_dim=0):
 		if features:
 			self.features = features
 		elif "feature" in url:
@@ -35,6 +36,7 @@ class CadHomoGraphDataset(DGLDataset):
 		if piece_list:
 			self.piece_list = piece_list
 		self.select_piece = select_piece
+		self.pos_enc_dim = pos_enc_dim
 		super().__init__(name=name, url=url, save_dir=save_path)
 
 	def process(self):
@@ -119,13 +121,21 @@ class CadHomoGraphDataset(DGLDataset):
 			try:
 				g = self.graph
 				graph = dgl.graph(edges)
-				graph.ndata['feat'] = note_node_features.float()
+				if self.pos_enc_dim > 0:
+					pos_enc = positional_encoding(graph, self.pos_enc_dim)
+					graph.ndata['feat'] = torch.cat((note_node_features.float(), pos_enc), dim=1)
+				else:
+					graph.ndata['feat'] = note_node_features.float()
 				graph.ndata['label'] = note_node_labels
 				graph.ndata['score_name'] = torch.tensor([self.inverse_piece_encoding[fn]]).repeat(len(note_node_labels))
 				self.graph = dgl.batch([g, graph])
 			except AttributeError:
 				self.graph = dgl.graph(edges)
-				self.graph.ndata['feat'] = note_node_features.float()
+				if self.pos_enc_dim > 0:
+					pos_enc = positional_encoding(graph, self.pos_enc_dim)
+					self.graph.ndata['feat'] = torch.cat((note_node_features.float(), pos_enc), dim=1)
+				else:
+					self.graph.ndata['feat'] = note_node_features.float()
 				self.graph.ndata['label'] = note_node_labels
 				self.graph.ndata['score_name'] = torch.tensor([self.inverse_piece_encoding[fn]]).repeat(len(note_node_labels))
 
@@ -273,74 +283,76 @@ class CadHomoGraphDataset(DGLDataset):
 
 
 class cad_feature_homo(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-homo/"
 		super().__init__(
 				name='cad_feature_homo', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = MIX)
+				piece_list = MIX, pos_enc_dim=20)
 
 class cad_feature_hsq(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-hsq/"
 		super().__init__(
 				name='cad_feature_hsq', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = HAYDN_STRING_QUARTETS)
+				piece_list = HAYDN_STRING_QUARTETS, pos_enc_dim=20)
 
 class cad_feature_wtc(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-wtc/"
 		super().__init__(
 				name='cad_feature_wtc', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = BACH_FUGUES)
+				piece_list = BACH_FUGUES, pos_enc_dim=20)
 
 class cad_feature_msq(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-msq/"
 		super().__init__(
 				name='cad_feature_msq', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = MOZART_STRING_QUARTETS)
+				piece_list = MOZART_STRING_QUARTETS, pos_enc_dim=20)
 
 class cad_feature_quartets(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-quartets/"
 		super().__init__(
 				name='cad_feature_quartets', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = QUARTETS)
+				piece_list=QUARTETS, pos_enc_dim=20)
+
 
 class cad_feature_piano(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-piano/"
 		super().__init__(
 				name='cad_feature_piano', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = PIANO)
+				piece_list = PIANO, pos_enc_dim=20)
+
 
 class cad_feature_mozart(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-mozart/"
 		super().__init__(
 				name='cad_feature_mozart', url=url,
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = MOZART)
+				piece_list = MOZART, pos_enc_dim=20)
 
 
 if __name__ == "__main__":
