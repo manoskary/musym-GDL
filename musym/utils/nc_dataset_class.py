@@ -132,7 +132,7 @@ class CadHomoGraphDataset(DGLDataset):
 			except AttributeError:
 				self.graph = dgl.graph(edges)
 				if self.pos_enc_dim > 0:
-					pos_enc = positional_encoding(graph, self.pos_enc_dim)
+					pos_enc = positional_encoding(self.graph, self.pos_enc_dim)
 					self.graph.ndata['feat'] = torch.cat((note_node_features.float(), pos_enc), dim=1)
 				else:
 					self.graph.ndata['feat'] = note_node_features.float()

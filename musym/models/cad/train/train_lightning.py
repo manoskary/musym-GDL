@@ -32,9 +32,6 @@ def main(args):
     piece_idx = g.ndata.pop("score_name")
     onsets = node_features[:, 0]
     score_duration = node_features[:, 3]
-    if args.add_PE:
-        pos_enc = positional_encoding(g, 10)
-        node_features = torch.cat((node_features, pos_enc), dim=1)
 
     # Validation and Testing
     val_nids = torch.nonzero(g.ndata.pop('val_mask'), as_tuple=True)[0]
@@ -87,7 +84,7 @@ def main(args):
         filename='{epoch}-{val_fscore_epoch:.2f}-{train_loss:.2f}'
     )
     # early_stopping = EarlyStopping('val_fscore', mode="max", patience=10)
-    trainer = Trainer(gpus=4,
+    trainer = Trainer(gpus=args.num_gpus,
                       auto_select_gpus=True,
                       max_epochs=args.num_epochs,
                       logger=WandbLogger(
@@ -108,6 +105,7 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Cadence Learning GraphSMOTE')
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
+    argparser.add_argument("--num-gpus", type=int, default=4)
     argparser.add_argument("--dataset", type=str, default="cad_basis_homo")
     argparser.add_argument('--num-epochs', type=int, default=50)
     argparser.add_argument('--num-hidden', type=int, default=128)
@@ -134,6 +132,6 @@ if __name__ == '__main__':
     argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
     argparser.add_argument("--load-model", action="store_true", help="Load pretrained model.")
     argparser.add_argument("--eval", action="store_true", help="Preview Results on Validation set.")
-    argparser.add_argument("--add_PE", action="store_true", help="Preview Results on Validation set.")
+    # argparser.add_argument("--add_PE", action="store_true", help="Preview Results on Validation set.")
     args = argparser.parse_args()
     prediction = main(args)
