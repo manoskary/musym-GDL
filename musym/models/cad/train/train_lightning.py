@@ -127,7 +127,7 @@ if __name__ == '__main__':
                                 "on GPU when using it to save time for data copy. This may "
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
-    argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../../rgcn_homo/data/"))
+    argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
     argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
     argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
     argparser.add_argument("--load-model", action="store_true", help="Load pretrained model.")
