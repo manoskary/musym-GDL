@@ -234,7 +234,7 @@ def create_data(args):
                 args.source = "hsq"
 
             # Corrections of annotations with respect to time signature.
-            if time_signature["denominator"][0] == 2 and args.source in ["wtc"]:
+            if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:
                 annotations[key] = list(map(lambda x: x/2, annotations[key]))
             elif time_signature["denominator"][0] == 8 and args.source in ["wtc", "msq"]:
                 annotations[key] = list(map(lambda x: x*2, annotations[key]))
