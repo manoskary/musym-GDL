@@ -312,6 +312,18 @@ class cad_feature_wtc(CadHomoGraphDataset):
 				features=None, save_path=save_path,
 				piece_list = BACH_FUGUES, pos_enc_dim=20)
 
+
+class cad_pac_wtc(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-pac-wtc/"
+		super().__init__(
+				name='cad_pac_wtc', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = BACH_FUGUES, pos_enc_dim=20)
+
+
 class cad_feature_msq(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-msq/"

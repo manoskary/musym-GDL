@@ -31,12 +31,12 @@ MOZART_STRING_QUARTETS = [
 
 
 BACH_FUGUES = [
-	'wtc1f01', 'wtc1f07', 'wtc1f15', 'wtc1f13',
-	'wtc1f06', 'wtc1f03', 'wtc1f02', 'wtc1f18',
-	'wtc1f17', 'wtc1f09', 'wtc1f24', 'wtc1f10',
-	'wtc1f22', 'wtc1f16', 'wtc1f12', 'wtc1f23',
-	'wtc1f19', 'wtc1f05', 'wtc1f14', 'wtc1f04',
-	'wtc1f08', 'wtc1f20', 'wtc1f21',
+	'wtc1f01', 'wtc1f02', 'wtc1f03', 'wtc1f04',
+	'wtc1f05', 'wtc1f06', 'wtc1f07', 'wtc1f08',
+	'wtc1f09', 'wtc1f12', 'wtc1f13', 'wtc1f14',
+	'wtc1f15', 'wtc1f16', 'wtc1f17', 'wtc1f18',
+	'wtc1f19', 'wtc1f20', 'wtc1f21', 'wtc1f22',
+	'wtc1f23', 'wtc1f24'
 	]
 
 HAYDN_STRING_QUARTETS = [
