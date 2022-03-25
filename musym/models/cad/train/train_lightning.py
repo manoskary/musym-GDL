@@ -90,7 +90,7 @@ def main(args):
                       logger=WandbLogger(
                           project="Cad Learning",
                           group=args.dataset,
-                          job_type="GraphSMOTE+preprocessing+pos_enc"),
+                          job_type="GraphSMOTE+preprocessing+pos_enc+change"),
                       callbacks=[checkpoint_callback])
     trainer.fit(model, datamodule=datamodule)
 

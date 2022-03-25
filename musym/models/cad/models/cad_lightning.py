@@ -59,7 +59,8 @@ class CadModelLightning(LightningModule):
         mfgs = [mfg.int().to(self.device) for mfg in mfgs]
         batch_inputs = self.node_features[input_nodes].to(self.device)
         batch_labels = self.labels[output_nodes].to(self.device)
-        adj = mfgs[-1].adj().to_dense()[:len(batch_labels), :len(batch_labels)].to(self.device)
+        # adj = mfgs[-1].adj().to_dense()[:len(batch_labels), :len(batch_labels)].to(self.device)
+        adj = mfgs[-1].adj().to(self.device)
         batch_pred, upsampl_lab, embed_loss = self.module(mfgs, batch_inputs, adj, batch_labels)
         loss = self.train_loss(batch_pred, upsampl_lab) + embed_loss * self.loss_weight
         self.train_acc(torch.softmax(batch_pred, 1), upsampl_lab)
@@ -78,10 +79,10 @@ class CadModelLightning(LightningModule):
         batch_labels = self.labels[output_nodes].to(self.device)
         batch_pred, prev_encs = self.module.encoder(mfgs, batch_inputs)
         pred_adj = self.module.decoder(batch_pred, prev_encs)
-        if pred_adj.get_device() >= 0 :
-            pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
-        else:
-            pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+        # if pred_adj.get_device() >= 0 :
+        #     pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
+        # else:
+        #     pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
         batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
         self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
@@ -99,10 +100,10 @@ class CadModelLightning(LightningModule):
         batch_labels = self.labels[output_nodes].to(self.device)
         batch_pred, prev_encs = self.module.encoder(mfgs, batch_inputs)
         pred_adj = self.module.decoder(batch_pred, prev_encs)
-        if pred_adj.get_device() >= 0 :
-            pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
-        else:
-            pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+        # if pred_adj.get_device() >= 0 :
+        #     pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
+        # else:
+        #     pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
         batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
         self.test_acc(torch.softmax(batch_pred, 1), batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
