@@ -419,9 +419,8 @@ class GraphSMOTE(nn.Module):
 		x, y = self.smote.fit_generate(x, batch_labels)
 		pred_adj = self.decoder(x, prev_feats)
 		loss = self.decoder_loss(pred_adj, adj)
-		# Thesholding Adjacency Removed for efficiency.
-		# dum =  torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
-		# pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
+		# Thesholding Adjacency with Harshrink since sigmoid output is positive.
+		pred_adj = nn.Hardshrink(pred_adj, lambd=0.0)
 		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
 
