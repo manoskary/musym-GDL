@@ -3,7 +3,7 @@ from ray.tune.schedulers import ASHAScheduler
 from ray.tune import CLIReporter
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from ray.tune.integration.pytorch_lightning import TuneReportCallback
+from ray.tune.integration.pytorch_lightning import TuneReportCallback, TuneReportCheckpointCallback
 from musym.utils import load_and_save, min_max_scaler
 import torch
 from musym.models.cad.models import CadModelLightning, CadDataModule
@@ -58,7 +58,15 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
                     "train_auroc": "train_auroc_epoch",
                     "train_fscore": "train_fscore_epoch"
                 },
-                on="validation_end")
+                on="validation_end"),
+            TuneReportCheckpointCallback(
+                metrics={
+                    "loss": "val_loss_epoch",
+                    "mean_accuracy": "val_fscore_epoch"
+                },
+                filename="tune_checkpoint",
+                on="validation_end"
+            )
         ])
     trainer.fit(model, datamodule=datamodule)
 
@@ -88,7 +96,7 @@ argparser.add_argument('--data-cpu', action='store_true',
                             "on GPU when using it to save time for data copy. This may "
                             "be undesired if they cannot fit in GPU memory at once. "
                             "This flag disables that.")
-argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../../rgcn_homo/data/"))
+argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
 argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
 argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
 argparser.add_argument("--load-model", action="store_true", help="Load pretrained model.")
@@ -97,7 +105,7 @@ args = argparser.parse_args()
 
 config = args if isinstance(args, dict) else vars(args)
 gpus_per_trial = args.gpus_per_trial
-config["fan_out"] = tune.choice(["5, 10", "5,5", "5,5,5", "5,10,15"])
+config["fan_out"] = tune.choice(["3,9", "5,5,5", "5,10,15", "3,5,15,25", "5,10,15,25"])
 config["lr"] = tune.uniform(0.0001, 0.01)
 config["weight_decay"] = tune.uniform(1e-5, 1e-2)
 config["gamma"] = tune.uniform(1e-5, 1e-2)
@@ -114,7 +122,6 @@ g = dgl.add_self_loop(dgl.add_reverse_edges(g))
 labels = g.ndata.pop('label')
 train_nids = torch.nonzero(g.ndata.pop('train_mask'), as_tuple=True)[0]
 node_features = g.ndata.pop('feat')
-node_features = min_max_scaler(node_features)
 # Validation and Testing
 val_nids = torch.nonzero(g.ndata.pop('val_mask'), as_tuple=True)[0]
 test_nids = torch.nonzero(g.ndata.pop('test_mask'), as_tuple=True)[0]
@@ -126,6 +133,7 @@ try:
     node_features = torch.load(emb_path)
 except FileNotFoundError as e:
     print("Node embedding was not found continuing with standard node features.")
+node_features = min_max_scaler(node_features)
 
 
 reporter = CLIReporter(
@@ -136,6 +144,7 @@ scheduler = ASHAScheduler(
         max_t=config["num_epochs"],
         grace_period=20,
         reduction_factor=2)
+
 
 analysis = tune.run(
         tune.with_parameters(
@@ -156,10 +165,6 @@ analysis = tune.run(
         metric="mean_accuracy",
         mode="max",
         # callbacks= [
-        #             WandbLoggerCallback(
-        #                 project="Cad Learning",
-        #                 group=config["dataset"],
-        #                 job_type="TUNE+preproc+PE"),
         #             ],
         config=config,
         num_samples=config["num_samples"],
