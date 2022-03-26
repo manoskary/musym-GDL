@@ -45,7 +45,7 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
         logger=WandbLogger(
             project="Cad Learning",
             group=config["dataset"],
-            job_type="TUNE+preproc+PE"),
+            job_type="TUNE+preproc+PE+sp"),
         callbacks=[
             TuneReportCallback(
                 {
@@ -72,10 +72,10 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
 
 
 argparser = argparse.ArgumentParser(description='Cadence Learning GraphSMOTE')
-argparser.add_argument('--dataset', type=str, default="cad_basis_homo")
-argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
+argparser.add_argument('--dataset', type=str, default="cad_feature_quartets")
+argparser.add_argument('--gpus-per-trial', type=float, default=1)
 argparser.add_argument("--gpu", type=int, default=0)
-argparser.add_argument('--num-epochs', type=int, default=50)
+argparser.add_argument('--num-epochs', type=int, default=100)
 argparser.add_argument('--num-hidden', type=int, default=128)
 argparser.add_argument('--num-layers', type=int, default=2)
 argparser.add_argument('--lr', type=float, default=0.001123)
@@ -90,7 +90,7 @@ argparser.add_argument('--shuffle', type=int, default=True)
 argparser.add_argument("--tune", type=bool, default=True)
 argparser.add_argument("--batch-size", type=int, default=2048)
 argparser.add_argument("--num-workers", type=int, default=0)
-argparser.add_argument("--num-samples", type=int, default=32)
+argparser.add_argument("--num-samples", type=int, default=150)
 argparser.add_argument('--data-cpu', action='store_true',
                        help="By default the script puts all node features and labels "
                             "on GPU when using it to save time for data copy. This may "

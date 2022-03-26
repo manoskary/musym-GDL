@@ -235,8 +235,9 @@ class SageConvLayer(nn.Module):
 			An embeded feature tensor.
 		"""
 		if not isinstance(adj, torch.sparse.FloatTensor):
-			if len(neigh_feats) != len(features):
-				adj.fill_diagonal_(1)
+			# NOTE: Diagonal with a rectangular adjacency doesn't make sense and raises a backward pass error.
+			# if len(neigh_feats) != len(features):
+			# 	adj.fill_diagonal_(1)
 			if len(adj.shape) == 3:
 				neigh_feature = torch.bmm(adj, neigh_feats) / (adj.sum(dim=1).reshape((adj.shape[0], adj.shape[1], -1)) + 1)
 			else:
@@ -323,7 +324,10 @@ class SageDecoder(nn.Module):
 	def forward(self, encoded_features, previous_features):
 		out = F.linear(encoded_features, self.de_weight)
 		out_prev = F.linear(previous_features, self.enc_weight)
-		adj_out = torch.sigmoid(torch.mm(out, out_prev.transpose(-1, -2)))
+		out = torch.transpose(out, 0, 1)
+		adj_out = torch.mm(out_prev, out)
+		adj_out = torch.transpose(adj_out, 0, 1)
+		adj_out = torch.sigmoid(adj_out)
 		return adj_out
 
 
@@ -332,13 +336,22 @@ class EdgeLoss(nn.Module):
 		super(EdgeLoss, self).__init__()
 
 	def forward(self, adj_rec, adj_tgt, adj_mask = None):
-		adj_rec = adj_rec[:adj_tgt.shape[0], :adj_tgt.shape[1]]
-		edge_num = adj_tgt.nonzero().shape[0]
-		total_num = adj_tgt.shape[0] ** 2
+		if adj_tgt.is_sparse:
+			shape = adj_tgt.size()
+			indices = adj_tgt._indices().T
+		else:
+			shape = adj_tgt.shape
+			indices = adj_tgt.nonzero()
+
+		edge_num = indices.shape[0]
+		total_num = shape[0] * shape[1]
+
+		new_adj = torch.transpose(adj_rec[:shape[1], :shape[0]], 0, 1)
 		neg_weight = edge_num / (total_num - edge_num)
-		weight_matrix = adj_rec.new(adj_tgt.shape).fill_(1.0)
-		weight_matrix[adj_tgt == 0] = neg_weight
-		loss = torch.sum(weight_matrix * (adj_rec - adj_tgt) ** 2)
+		# weight_matrix = new_adj.new(shape).fill_(neg_weight)
+		weight_matrix = torch.empty_like(new_adj).fill_(neg_weight)
+		weight_matrix[indices] = 1.0
+		loss = torch.sum(weight_matrix * torch.subtract(new_adj, adj_tgt) ** 2)
 		return loss
 
 
@@ -406,8 +419,9 @@ class GraphSMOTE(nn.Module):
 		x, y = self.smote.fit_generate(x, batch_labels)
 		pred_adj = self.decoder(x, prev_feats)
 		loss = self.decoder_loss(pred_adj, adj)
-		dum =  torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
-		pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
+		# Thesholding Adjacency Removed for efficiency.
+		# dum =  torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
+		# pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
 		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
 
@@ -416,15 +430,13 @@ class GraphSMOTE(nn.Module):
 		with torch.no_grad():
 			for input_nodes, seeds, mfgs in tqdm(dataloader, position=0, leave=True):
 				batch_inputs = node_features[input_nodes].to(device)
-				batch_labels = labels[seeds].to(device)
 				mfgs = [mfg.int().to(device) for mfg in mfgs]
 				batch_pred, prev_encs = self.encoder(mfgs, batch_inputs)
 				pred_adj = self.decoder(batch_pred, prev_encs)
-				if pred_adj.get_device() >= 0:
-					pred_adj = torch.where(pred_adj >= 0.5, pred_adj,
-										   torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
-				else:
-					pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+				# if pred_adj.get_device() >= 0:
+				# 	pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
+				# else:
+				# 	pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
 				prediction[seeds] = self.classifier(pred_adj, batch_pred, prev_encs)
 			return prediction
 

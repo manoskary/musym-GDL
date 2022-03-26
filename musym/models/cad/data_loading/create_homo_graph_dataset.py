@@ -209,7 +209,6 @@ def create_data(args):
             note_array = align_feature(na, ba)
             labels = np.zeros(note_array.shape[0])
 
-
             # In case annotation are of the form Bar & Beat transform to global beat.
             if isinstance(annotations[key][0], tuple):
                 measures = dict()
