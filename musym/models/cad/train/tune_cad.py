@@ -8,7 +8,7 @@ from musym.utils import load_and_save, min_max_scaler
 import torch
 from musym.models.cad.models import CadModelLightning, CadDataModule
 from pytorch_lightning.loggers import WandbLogger
-# from ray.tune.integration.wandb import WandbLoggerCallback
+from ray.tune.integration.wandb import WandbLoggerCallback
 import argparse
 import os
 import dgl
@@ -45,12 +45,13 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
         logger=WandbLogger(
             project="Cad Learning",
             group=config["dataset"],
-            job_type="TUNE+preproc+PE+sp"),
+            job_type="TUNE+preproc+PE+sp+t"),
         callbacks=[
             TuneReportCallback(
                 {
                     "loss": "val_loss_epoch",
-                    "mean_accuracy": "val_acc_epoch",
+                    "mean_accuracy": "val_fscore_epoch",
+                    "val_acc": "val_acc_epoch",
                     "val_fscore": "val_fscore_epoch",
                     "val_auroc": "val_auroc_epoch",
                     "train_loss": "train_loss_epoch",
@@ -105,13 +106,12 @@ args = argparser.parse_args()
 
 config = args if isinstance(args, dict) else vars(args)
 gpus_per_trial = args.gpus_per_trial
-config["fan_out"] = tune.choice(["3,9", "5,5,5", "5,10,15", "3,5,15,25", "5,10,15,25"])
+config["fan_out"] = tune.choice(["5,5,5", "5,10,15", "3,5,15,25", "5,10,15,25"])
 config["lr"] = tune.uniform(0.0001, 0.01)
 config["weight_decay"] = tune.uniform(1e-5, 1e-2)
-config["gamma"] = tune.uniform(1e-5, 1e-2)
+config["gamma"] = tune.uniform(1e-5, 1e-3)
 config["batch_size"] = tune.choice([256, 512, 1024, 2048])
-config["num_hidden"] = tune.choice([32, 64, 128, 256])
-config["dropout"] = tune.choice([0.2, 0.5])
+config["num_hidden"] = tune.choice([64, 128, 256])
 config["ext_mode"] = tune.choice(["lstm", "None"])
 
 
@@ -137,7 +137,7 @@ node_features = min_max_scaler(node_features)
 
 
 reporter = CLIReporter(
-        parameter_columns=["num_hidden", "fan_out", "lr", "gamma", "batch_size", "dropout", "weight_decay", "ext_mode"],
+        parameter_columns=["num_hidden", "fan_out", "lr", "gamma", "batch_size", "weight_decay", "ext_mode"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
 scheduler = ASHAScheduler(
@@ -164,12 +164,10 @@ analysis = tune.run(
         },
         metric="mean_accuracy",
         mode="max",
-        # callbacks= [
-        #             ],
         config=config,
         num_samples=config["num_samples"],
         scheduler=scheduler,
         progress_reporter=reporter,
-        name="tune_{}".format(config["dataset"]))
+        name="tune_{}_preproc+PE+sp+t".format(config["dataset"]))
 
 print("Best hyperparameters found were: ", analysis.best_config)
