@@ -311,22 +311,18 @@ class SageDecoder(nn.Module):
 	def __init__(self, num_hidden, num_feats, dropout=0.1):
 		super(SageDecoder, self).__init__()
 		self.dropout = dropout
-		self.de_weight = nn.Parameter(torch.FloatTensor(num_hidden, num_hidden))
-		self.enc_weight = nn.Parameter(torch.FloatTensor(num_feats, num_hidden))
+		self.layer_1 = nn.Linear(num_hidden, num_hidden)
+		self.layer_2 = nn.Linear(num_feats, num_hidden)
 		self.reset_parameters()
 
 	def reset_parameters(self):
-		stdv = 1. / math.sqrt(self.de_weight.size(1))
-		self.de_weight.data.uniform_(-stdv, stdv)
-		stdv = 1. / math.sqrt(self.enc_weight.size(1))
-		self.enc_weight.data.uniform_(-stdv, stdv)
+		nn.init.xavier_uniform_(self.layer_1.weight, gain=nn.init.calculate_gain('relu'))
+		nn.init.xavier_uniform_(self.layer_2.weight, gain=nn.init.calculate_gain('relu'))
 
 	def forward(self, encoded_features, previous_features):
-		out = F.linear(encoded_features, self.de_weight)
-		out_prev = F.linear(previous_features, self.enc_weight)
-		out = torch.transpose(out, 0, 1)
-		adj_out = torch.mm(out_prev, out)
-		adj_out = torch.transpose(adj_out, 0, 1)
+		out = self.layer_1(encoded_features)
+		out_prev = self.layer_2(previous_features)
+		adj_out = torch.mm(out, out_prev.T)
 		adj_out = torch.sigmoid(adj_out)
 		return adj_out
 
@@ -420,7 +416,7 @@ class GraphSMOTE(nn.Module):
 		pred_adj = self.decoder(x, prev_feats)
 		loss = self.decoder_loss(pred_adj, adj)
 		# Thesholding Adjacency with Harshrink since sigmoid output is positive.
-		pred_adj = nn.Hardshrink(pred_adj, lambd=0.0)
+		pred_adj = F.hardshrink(pred_adj, lambd=0.5)
 		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
 
@@ -431,11 +427,7 @@ class GraphSMOTE(nn.Module):
 				batch_inputs = node_features[input_nodes].to(device)
 				mfgs = [mfg.int().to(device) for mfg in mfgs]
 				batch_pred, prev_encs = self.encoder(mfgs, batch_inputs)
-				pred_adj = self.decoder(batch_pred, prev_encs)
-				# if pred_adj.get_device() >= 0:
-				# 	pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
-				# else:
-				# 	pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+				pred_adj = F.hardshrink(self.decoder(batch_pred, prev_encs), lambd=0.5)
 				prediction[seeds] = self.classifier(pred_adj, batch_pred, prev_encs)
 			return prediction
 
@@ -462,8 +454,7 @@ class GraphSMOTE(nn.Module):
 
 			adj = sub_g.adj(ctx=device).to_dense()
 			h = self.encoder(blocks, batch_inputs)
-			pred_adj = self.decoder(h)
-			pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(h.get_device()))
+			pred_adj = F.hardshrink(self.decoder(h), lambd=0.5)
 			h = self.classifier(pred_adj, h)
 			# TODO prediction may replace values because Edge dataloder repeats nodes, maybe take average or addition.
 			y[sub_g.ndata['idx']] = h.cpu()[:len(batch_labels)]
