@@ -70,7 +70,6 @@ class CadModelLightning(LightningModule):
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True)
         self.log("train_fscore", self.train_fscore, on_step=True, on_epoch=True, sync_dist=True)
         self.log("train_auroc", self.train_auroc, on_step=True, on_epoch=True, sync_dist=True)
-        self.log("train_batch_size", len(output_nodes), on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx):

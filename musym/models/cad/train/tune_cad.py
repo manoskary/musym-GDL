@@ -37,15 +37,19 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
         activation=F.relu, dropout=config["dropout"], lr=config["lr"],
         loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"])
 
+    wandb_logger = WandbLogger(
+            project="Cad Learning",
+            group=config["dataset"],
+            job_type="TUNE+preproc+PE+sp+t",
+            run="{}x{}_lr={}_bs={}_lw={}".format(config["fanout"], config["num_hidden"], config["lr"], config["batch_size"], config["gamma"])
+        )
+    wandb_logger.log_hyperparams(config)
     trainer = pl.Trainer(
         max_epochs=config["num_epochs"],
         # If fractional GPUs passed in, convert to int.
         gpus=math.ceil(num_gpus),
         progress_bar_refresh_rate=0,
-        logger=WandbLogger(
-            project="Cad Learning",
-            group=config["dataset"],
-            job_type="TUNE+preproc+PE+sp+t"),
+        logger=wandb_logger,
         callbacks=[
             TuneReportCallback(
                 {
@@ -159,7 +163,7 @@ analysis = tune.run(
             num_gpus=gpus_per_trial,
             ),
         resources_per_trial={
-            "cpu": 4,
+            "cpu": 2,
             "gpu": gpus_per_trial
         },
         metric="mean_accuracy",
