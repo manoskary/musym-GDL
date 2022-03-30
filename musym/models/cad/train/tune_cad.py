@@ -35,13 +35,13 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
         in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
         n_classes=datamodule.n_classes, n_layers=config["num_layers"],
         activation=F.relu, dropout=config["dropout"], lr=config["lr"],
-        loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"])
+        loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"], adj_thresh=config["adjacency_threshold"],)
 
     wandb_logger = WandbLogger(
             project="Cad Learning",
             group=config["dataset"],
-            job_type="TUNE+preproc+PE+sp+t",
-            run="{}x{}_lr={}_bs={}_lw={}".format(config["fanout"], config["num_hidden"], config["lr"], config["batch_size"], config["gamma"])
+            job_type="TUNE+preproc+PE+sp_t={:.04f}".format(config["adjacency_threshold"]),
+            name="Net-{}x{}_lr={:.04f}_bs={}_lw={:.04f}".format(config["fan_out"], config["num_hidden"], config["lr"], config["batch_size"], config["gamma"])
         )
     wandb_logger.log_hyperparams(config)
     trainer = pl.Trainer(
@@ -92,8 +92,9 @@ argparser.add_argument("--gamma", type=float, default=0.001248,
 argparser.add_argument("--ext-mode", type=str, default=None, choices=["lstm", "attention"])
 argparser.add_argument("--fan-out", default=[5, 10])
 argparser.add_argument('--shuffle', type=int, default=True)
+argparser.add_argument('--adjacency_threshold', type=float, default=0.01)
 argparser.add_argument("--tune", type=bool, default=True)
-argparser.add_argument("--batch-size", type=int, default=2048)
+argparser.add_argument("--batch-size", type=int, default=1024)
 argparser.add_argument("--num-workers", type=int, default=0)
 argparser.add_argument("--num-samples", type=int, default=150)
 argparser.add_argument('--data-cpu', action='store_true',
@@ -113,8 +114,8 @@ gpus_per_trial = args.gpus_per_trial
 config["fan_out"] = tune.choice(["5,5,5", "5,10,15", "3,5,15,25", "5,10,15,25"])
 config["lr"] = tune.uniform(0.0001, 0.01)
 config["weight_decay"] = tune.uniform(1e-5, 1e-2)
-config["gamma"] = tune.uniform(1e-5, 1e-3)
-config["batch_size"] = tune.choice([256, 512, 1024, 2048])
+config["gamma"] = tune.uniform(1e-5, 1e-2)
+config["batch_size"] = 1024
 config["num_hidden"] = tune.choice([64, 128, 256])
 config["ext_mode"] = tune.choice(["lstm", "None"])
 
@@ -141,7 +142,7 @@ node_features = min_max_scaler(node_features)
 
 
 reporter = CLIReporter(
-        parameter_columns=["num_hidden", "fan_out", "lr", "gamma", "batch_size", "weight_decay", "ext_mode"],
+        parameter_columns=["num_hidden", "fan_out", "lr", "gamma", "weight_decay", "ext_mode"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
 scheduler = ASHAScheduler(
