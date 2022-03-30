@@ -351,6 +351,23 @@ class EdgeLoss(nn.Module):
 		return loss
 
 
+class GaugLoss(nn.Module):
+	def __init__(self):
+		super(GaugLoss, self).__init__()
+
+	def forward(self, adj_rec, adj_tgt):
+		if adj_tgt.is_sparse:
+			shape = adj_tgt.size()
+			indices = adj_tgt._indices().T
+		else:
+			shape = adj_tgt.shape
+			indices = adj_tgt.nonzero()
+		adj_sum = torch.sparse.sum(adj_tgt)
+		bce_weight = (shape[0]*shape[1] - adj_sum) / adj_sum
+		norm_w = shape[0]*shape[1] / float((shape[0]*shape[1] - adj_sum) * 2)
+		bce_loss = norm_w * F.binary_cross_entropy_with_logits(torch.transpose(adj_rec[:shape[1], :shape[0]], 0, 1), adj_tgt.to_dense(), pos_weight=bce_weight)
+		return bce_loss
+
 
 class Encoder(nn.Module):
 	def __init__(self, in_feats, n_hidden, n_layers, activation, dropout, ext_mode=None):
@@ -393,7 +410,7 @@ class Encoder(nn.Module):
 
 
 class GraphSMOTE(nn.Module):
-	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1, ext_mode=None):
+	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1, ext_mode=None, adj_thresh=0.01):
 		super(GraphSMOTE, self).__init__()
 		self.n_layers = n_layers
 		self.n_classes = n_classes
@@ -407,7 +424,8 @@ class GraphSMOTE(nn.Module):
 		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
 		# self.smote = MBSMOTE(n_classes=n_classes, dims=n_hidden, k=2)
 		self.smote = SMOTE(dims=n_hidden, k=3)
-		self.decoder_loss = EdgeLoss()
+		self.decoder_loss = GaugLoss()
+		self.adj_thresh = adj_thresh
 
 	def forward(self, blocks, input_feats, adj, batch_labels):
 		x = input_feats
@@ -416,7 +434,7 @@ class GraphSMOTE(nn.Module):
 		pred_adj = self.decoder(x, prev_feats)
 		loss = self.decoder_loss(pred_adj, adj)
 		# Thesholding Adjacency with Harshrink since sigmoid output is positive.
-		pred_adj = F.hardshrink(pred_adj, lambd=0.5)
+		pred_adj = F.hardshrink(pred_adj, lambd=self.adj_thresh)
 		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
 
@@ -427,7 +445,7 @@ class GraphSMOTE(nn.Module):
 				batch_inputs = node_features[input_nodes].to(device)
 				mfgs = [mfg.int().to(device) for mfg in mfgs]
 				batch_pred, prev_encs = self.encoder(mfgs, batch_inputs)
-				pred_adj = F.hardshrink(self.decoder(batch_pred, prev_encs), lambd=0.5)
+				pred_adj = F.hardshrink(self.decoder(batch_pred, prev_encs), lambd=self.adj_thresh)
 				prediction[seeds] = self.classifier(pred_adj, batch_pred, prev_encs)
 			return prediction
 
@@ -454,7 +472,7 @@ class GraphSMOTE(nn.Module):
 
 			adj = sub_g.adj(ctx=device).to_dense()
 			h = self.encoder(blocks, batch_inputs)
-			pred_adj = F.hardshrink(self.decoder(h), lambd=0.5)
+			pred_adj = F.hardshrink(self.decoder(h), lambd=self.adj_thresh)
 			h = self.classifier(pred_adj, h)
 			# TODO prediction may replace values because Edge dataloder repeats nodes, maybe take average or addition.
 			y[sub_g.ndata['idx']] = h.cpu()[:len(batch_labels)]
@@ -515,7 +533,7 @@ class EmptyDecoder(object):
 
 
 class AblationSMOTE(nn.Module):
-	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1, rem_smote=False, rem_gnn_clf=False, rem_adjmix=False, rem_gnn_enc=False):
+	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1, ext_mode=None, adj_thresh=0.5, rem_smote=False, rem_gnn_clf=False, rem_adjmix=False, rem_gnn_enc=False):
 		super(AblationSMOTE, self).__init__()
 		self.n_layers = n_layers
 		self.n_classes = n_classes
@@ -556,17 +574,17 @@ class AblationSMOTE(nn.Module):
 			loss = torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device())
 		else:
 			loss = self.decoder_loss(pred_adj, adj)
-		dum =  torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
 		if (self.rem_adjmix or self.rem_gnn_enc):
-			pred_adj = torch.where(pred_adj >= 0.0, pred_adj, dum)
+			pred_adj = F.hardshrink(pred_adj, lambd=0.001)
 		else:
-			pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
+			pred_adj = F.hardshrink(pred_adj, lambd=0.5)
 		if self.rem_gnn_clf:
 			x = self.classifier(x)
-			x = F.relu(x)
+			x = torch.softmax(x)
 		elif self.rem_gnn_enc:
 			x = self.classifier(pred_adj)
 			x = F.relu(x)
+			x = torch.softmax(x)
 		else:
 			x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
@@ -576,14 +594,13 @@ class AblationSMOTE(nn.Module):
 		y = batch_labels
 		x, prev_feats = self.encoder(blocks, x)
 		pred_adj = self.decoder(x, prev_feats)
-		dum = torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()) if pred_adj.get_device() >= 0 else torch.tensor(0, dtype=pred_adj.dtype)
-		if self.rem_adjmix or self.rem_gnn_enc:
-			pred_adj = torch.where(pred_adj >= 0.0, pred_adj, dum)
+		if (self.rem_adjmix or self.rem_gnn_enc):
+			pred_adj = F.hardshrink(pred_adj, lambd=0.001)
 		else:
-			pred_adj = torch.where(pred_adj >= 0.5, pred_adj, dum)
+			pred_adj = F.hardshrink(pred_adj, lambd=0.5)
 		if self.rem_gnn_clf:
 			x = self.classifier(x)
-			x = F.relu(x)
+			x = torch.softmax(x)
 		elif self.rem_gnn_enc:
 			x = self.classifier(pred_adj)
 			x = F.relu(x)
