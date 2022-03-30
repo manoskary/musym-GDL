@@ -135,6 +135,7 @@ class CadHomoGraphDataset(DGLDataset):
 					pos_enc = positional_encoding(self.graph, self.pos_enc_dim)
 					self.graph.ndata['feat'] = torch.cat((note_node_features.float(), pos_enc), dim=1)
 				else:
+					pos_enc = torch.tensor([])
 					self.graph.ndata['feat'] = note_node_features.float()
 				self.graph.ndata['label'] = note_node_labels
 				self.graph.ndata['score_name'] = torch.tensor([self.inverse_piece_encoding[fn]]).repeat(len(note_node_labels))
@@ -142,7 +143,7 @@ class CadHomoGraphDataset(DGLDataset):
 
 			# Perform Data Augmentation
 			if self.add_aug:
-				for _ in range(5):
+				for _ in range(10):
 					g = self.graph
 					resize_factor = random.choice([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5])
 					n = random.choice(range(-6, 6, 1))
@@ -152,7 +153,7 @@ class CadHomoGraphDataset(DGLDataset):
 							dur_resize = torch.tensor([resize_factor for _ in range(3)] + [1 for _ in range(num_feat-3)]).float()
 							pitch_aug = torch.tensor([0 for _ in  range(num_feat-1)] + [n]).float()
 							graph = dgl.graph(edges)
-							graph.ndata['feat'] = note_node_features.float()*dur_resize + pitch_aug
+							graph.ndata['feat'] = torch.cat((note_node_features.float()*dur_resize + pitch_aug, pos_enc), dim=1)
 							graph.ndata['label'] = note_node_labels
 							graph.ndata['score_name'] = torch.tensor([0]).repeat(len(note_node_labels))
 							self.graph = dgl.batch([g, graph])
@@ -283,7 +284,7 @@ class CadHomoGraphDataset(DGLDataset):
 
 
 class cad_feature_homo(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-homo/"
 		super().__init__(
 				name='cad_feature_homo', url=url,
@@ -293,7 +294,7 @@ class cad_feature_homo(CadHomoGraphDataset):
 				piece_list = MIX, pos_enc_dim=20)
 
 class cad_feature_hsq(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-hsq/"
 		super().__init__(
 				name='cad_feature_hsq', url=url,
@@ -303,7 +304,7 @@ class cad_feature_hsq(CadHomoGraphDataset):
 				piece_list = HAYDN_STRING_QUARTETS, pos_enc_dim=20)
 
 class cad_feature_wtc(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-wtc/"
 		super().__init__(
 				name='cad_feature_wtc', url=url,
@@ -314,7 +315,7 @@ class cad_feature_wtc(CadHomoGraphDataset):
 
 
 class cad_pac_wtc(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-pac-wtc/"
 		super().__init__(
 				name='cad_pac_wtc', url=url,
@@ -325,7 +326,7 @@ class cad_pac_wtc(CadHomoGraphDataset):
 
 
 class cad_feature_msq(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-msq/"
 		super().__init__(
 				name='cad_feature_msq', url=url,
@@ -335,7 +336,7 @@ class cad_feature_msq(CadHomoGraphDataset):
 				piece_list = MOZART_STRING_QUARTETS, pos_enc_dim=20)
 
 class cad_feature_quartets(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-quartets/"
 		super().__init__(
 				name='cad_feature_quartets', url=url,
@@ -346,7 +347,7 @@ class cad_feature_quartets(CadHomoGraphDataset):
 
 
 class cad_feature_piano(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-piano/"
 		super().__init__(
 				name='cad_feature_piano', url=url,
@@ -357,7 +358,7 @@ class cad_feature_piano(CadHomoGraphDataset):
 
 
 class cad_feature_mozart(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-mozart/"
 		super().__init__(
 				name='cad_feature_mozart', url=url,
@@ -367,22 +368,3 @@ class cad_feature_mozart(CadHomoGraphDataset):
 				piece_list = MOZART, pos_enc_dim=20)
 
 
-if __name__ == "__main__":
-	import dgl
-	
-
-	dirname = os.path.dirname(__file__)
-	
-
-	dirname = os.path.dirname(__file__)
-	par = lambda x: os.path.abspath(os.path.join(x, os.pardir))
-	par_dir = par(par(dirname))    
-	# raw_dir = os.path.join(par_dir, "artifacts", "data", "cadences", "graph_t345.pkl")
-	# name = "dummyExample"
-	# dataset = MyGraphDataset(name, raw_dir=raw_dir)
-	# print(dataset.graphs, dataset.labels)
-	# dataset.save()
-	raw_dir = os.path.join(par_dir, "artifacts", "data", "cadences", "mozart_piano_sonatas")
-	# name = "dummyExample"
-	dataset = MozartPianoGraphDataset()
-	print(dataset.num_classes, dataset[0])
