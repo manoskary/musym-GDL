@@ -62,6 +62,7 @@ def main(args):
 
     try:
         node_features = torch.load(emb_path)
+        print("Loaded Node features of size {}.".format(node_features.shape[1]))
     except:
         print("Node embedding was not found continuing with standard node features.")
     node_features = min_max_scaler(node_features)
