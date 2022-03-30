@@ -34,11 +34,12 @@ class CadModelLightning(LightningModule):
                  loss_weight = 0.0001,
                  ext_mode=None,
                  weight_decay=5e-4,
+                 adj_thresh=0.01
         ):
         super(CadModelLightning, self).__init__()
         self.save_hyperparameters()
         self.loss_weight = loss_weight
-        self.module = GraphSMOTE(in_feats, n_hidden, n_classes, n_layers, activation, dropout, ext_mode=ext_mode)
+        self.module = GraphSMOTE(in_feats, n_hidden, n_classes, n_layers, activation, dropout, ext_mode=ext_mode, adj_thresh=adj_thresh)
         self.lr = lr
         self.weight_decay = weight_decay
         self.train_acc = Accuracy()
@@ -63,9 +64,9 @@ class CadModelLightning(LightningModule):
         adj = mfgs[-1].adj().to(self.device)
         batch_pred, upsampl_lab, embed_loss = self.module(mfgs, batch_inputs, adj, batch_labels)
         loss = self.train_loss(batch_pred, upsampl_lab) + embed_loss * self.loss_weight
-        self.train_acc(torch.softmax(batch_pred, 1), upsampl_lab)
-        self.train_fscore(torch.softmax(batch_pred[:len(batch_labels)], 1), batch_labels)
-        self.train_auroc(torch.softmax(batch_pred[:len(batch_labels)], 1), batch_labels)
+        self.train_acc(batch_pred, upsampl_lab)
+        self.train_fscore(batch_pred[:len(batch_labels)], batch_labels)
+        self.train_auroc(batch_pred[:len(batch_labels)], batch_labels)
         self.log('train_loss', loss.item(), prog_bar=True, on_step=True, on_epoch=True)
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True)
         self.log("train_fscore", self.train_fscore, on_step=True, on_epoch=True, sync_dist=True)
@@ -78,16 +79,12 @@ class CadModelLightning(LightningModule):
         batch_inputs = self.node_features[input_nodes].to(self.device)
         batch_labels = self.labels[output_nodes].to(self.device)
         batch_pred, prev_encs = self.module.encoder(mfgs, batch_inputs)
-        pred_adj = self.module.decoder(batch_pred, prev_encs)
-        # if pred_adj.get_device() >= 0 :
-        #     pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
-        # else:
-        #     pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+        pred_adj = F.hardshrink(self.module.decoder(batch_pred, prev_encs), lambd=self.module.adj_thresh)
         batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
-        self.val_acc(torch.softmax(batch_pred, 1), batch_labels)
+        self.val_acc(batch_pred, batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
-        self.val_fscore(torch.softmax(batch_pred, 1), batch_labels)
-        self.val_auroc(torch.softmax(batch_pred, 1), batch_labels)
+        self.val_fscore(batch_pred, batch_labels)
+        self.val_auroc(batch_pred, batch_labels)
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
         self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)
@@ -99,16 +96,12 @@ class CadModelLightning(LightningModule):
         batch_inputs = self.node_features[input_nodes].to(self.device)
         batch_labels = self.labels[output_nodes].to(self.device)
         batch_pred, prev_encs = self.module.encoder(mfgs, batch_inputs)
-        pred_adj = self.module.decoder(batch_pred, prev_encs)
-        # if pred_adj.get_device() >= 0 :
-        #     pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(batch_pred.get_device()))
-        # else:
-        #     pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype))
+        pred_adj = F.hardshrink(self.module.decoder(batch_pred, prev_encs), lambd=self.module.adj_thresh)
         batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
-        self.test_acc(torch.softmax(batch_pred, 1), batch_labels)
+        self.test_acc(batch_pred, batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
-        self.test_fscore(torch.softmax(batch_pred, 1), batch_labels)
-        self.test_auroc(torch.softmax(batch_pred, 1), batch_labels)
+        self.test_fscore(batch_pred, batch_labels)
+        self.test_auroc(batch_pred, batch_labels)
         output = {
             'test_loss': loss,
             'test_acc': self.test_acc,
