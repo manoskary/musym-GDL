@@ -61,7 +61,7 @@ def main(args):
         torch.save(node_features, emb_path)
 
     try:
-        node_features = torch.load(emb_path)
+        # node_features = torch.load(emb_path)
         print("Loaded Node features of size {}.".format(node_features.shape[1]))
     except:
         print("Node embedding was not found continuing with standard node features.")
@@ -98,7 +98,7 @@ def main(args):
                       logger=WandbLogger(
                           project="Cad Learning",
                           group=config["dataset"],
-                          job_type="GraphSMOTE+preprocessing+pos_enc+thresh",
+                          job_type="GraphSMOTE+pos_enc+thresh",
                           name="Net-({})x{}_lr={:.04f}_bs={}_lw={:.04f}".format(
                               config["fan_out"], config["num_hidden"],
                               config["lr"], config["batch_size"], config["gamma"])

@@ -47,7 +47,7 @@ def filter_cadences_from_annotations(annotations, include_type=False):
 		cad_dict[filename] = list(zip(annotations.loc[annotations["filename"] == filename, "bar"].to_list(),
 									  annotations.loc[annotations["filename"] == filename, "onset_norm"].to_list()))
 
-		if filename == 'K311-3':
+		if filename == 'K309-3':
 			print(filename)
 
 		# else:

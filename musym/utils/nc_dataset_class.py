@@ -368,3 +368,12 @@ class cad_feature_mozart(CadHomoGraphDataset):
 				piece_list = MOZART, pos_enc_dim=20)
 
 
+class cad_feature_mix(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=True, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-mix/"
+		super().__init__(
+				name='cad_feature_mix', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = MIX, pos_enc_dim=20)

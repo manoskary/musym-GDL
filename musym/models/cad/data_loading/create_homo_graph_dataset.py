@@ -230,7 +230,7 @@ def create_data(args):
             elif key in BACH_FUGUES:
                 args.source = "wtc"
             else:
-                args.source = "hsq"
+                pass
 
             # Corrections of annotations with respect to time signature.
             if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:

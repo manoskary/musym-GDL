@@ -40,7 +40,7 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
     wandb_logger = WandbLogger(
             project="Cad Learning",
             group=config["dataset"],
-            job_type="TUNE+preproc+PE+sp_t={:.04f}".format(config["adjacency_threshold"]),
+            job_type="TUNE-1024+PE+sp_t={:.04f}".format(config["adjacency_threshold"]),
             name="Net-{}x{}_lr={:.04f}_bs={}_lw={:.04f}".format(config["fan_out"], config["num_hidden"], config["lr"], config["batch_size"], config["gamma"])
         )
     wandb_logger.log_hyperparams(config)
@@ -114,9 +114,9 @@ gpus_per_trial = args.gpus_per_trial
 config["fan_out"] = tune.choice(["5,5,5", "5,10,15", "3,5,15,25", "5,10,15,25"])
 config["lr"] = tune.uniform(0.0001, 0.01)
 config["weight_decay"] = tune.uniform(1e-5, 1e-2)
-config["gamma"] = tune.uniform(1e-5, 1e-2)
+config["gamma"] = tune.uniform(0.0, 1.0)
 config["batch_size"] = 1024
-config["num_hidden"] = tune.choice([64, 128, 256])
+config["num_hidden"] = tune.choice([32, 64, 128, 256])
 config["ext_mode"] = tune.choice(["lstm", "None"])
 
 
@@ -134,10 +134,10 @@ test_nids = torch.nonzero(g.ndata.pop('test_mask'), as_tuple=True)[0]
 # ------------ Pre-Processing Node2Vec ----------------------
 emb_path = os.path.join(config["data_dir"], config["dataset"], "node_emb.pt")
 
-try:
-    node_features = torch.load(emb_path)
-except FileNotFoundError as e:
-    print("Node embedding was not found continuing with standard node features.")
+# try:
+#     node_features = torch.load(emb_path)
+# except FileNotFoundError as e:
+#     print("Node embedding was not found continuing with standard node features.")
 node_features = min_max_scaler(node_features)
 
 
