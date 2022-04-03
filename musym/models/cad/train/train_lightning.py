@@ -1,3 +1,5 @@
+import json
+
 from musym.models.cad.models import Node2vecModel, CadModelLightning, CadDataModule, positional_encoding
 from pytorch_lightning import Trainer
 import torch.nn.functional as F
@@ -17,6 +19,11 @@ def main(args):
     """
     # --------------- Standarize Configuration ---------------------
     config = args if isinstance(args, dict) else vars(args)
+    if args.load_config:
+        with open(args.load_config, "r") as f:
+            new_config = json.load(f)
+        config = {k:(new_config[k] if k in new_config.keys() else v) for k,v in config.items()}
+
     # if args.config_path != "" and os.path.exists(args.config_path) and args.config_path.endswith(".json"):
     #     import json
     #     with open(args.config_path, "r") as f:
@@ -72,13 +79,24 @@ def main(args):
         train_nid=train_nids, val_nid=val_nids, test_nid=test_nids,
         data_cpu=args.data_cpu, fan_out=fanouts, batch_size=config["batch_size"],
         num_workers=config["num_workers"])
-    model = CadModelLightning(
-        node_features=node_features, labels=labels,
-        in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
-        n_classes=datamodule.n_classes, n_layers=config["num_layers"],
-        activation=F.relu, dropout=config["dropout"], lr=config["lr"],
-        loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
-        adj_thresh=config["adjacency_threshold"])
+    if args.load_from_checkpoints:
+        config["chk_path"] = "./cad_checkpoints/GraphSMOTE-3-2022.4.1.14.4/last.ckpt"
+        model = CadModelLightning.load_from_checkpoint(
+            checkpoint_path=config["chk_path"],
+            node_features=node_features, labels=labels,
+            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
+            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
+            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
+            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
+            adj_thresh=config["adjacency_threshold"])
+    else:
+        model = CadModelLightning(
+            node_features=node_features, labels=labels,
+            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
+            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
+            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
+            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
+            adj_thresh=config["adjacency_threshold"])
 
     # Train
     dt = datetime.today()
@@ -104,6 +122,7 @@ def main(args):
                               config["lr"], config["batch_size"], config["gamma"])
                       ),
                       callbacks=[checkpoint_callback])
+
     trainer.fit(model, datamodule=datamodule)
 
     # Test
@@ -142,9 +161,10 @@ if __name__ == '__main__':
     argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
     argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
     argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
-    argparser.add_argument("--load-model", action="store_true", help="Load pretrained model.")
     argparser.add_argument("--eval", action="store_true", help="Preview Results on Validation set.")
     argparser.add_argument("--config-path", type=str, default="")
-    # argparser.add_argument("--add_PE", action="store_true", help="Preview Results on Validation set.")
+    argparser.add_argument("--load_from_checkpoints", action="store_true")
+    argparser.add_argument("--skip_training", action="store_true")
+    argparser.add_argument("--load_config", action="store_true")
     args = argparser.parse_args()
     prediction = main(args)
