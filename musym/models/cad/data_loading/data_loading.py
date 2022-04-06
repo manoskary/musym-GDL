@@ -13,8 +13,12 @@ def retrieve_haydn_cad_annotations(annotation_path, cad_type):
 	new_df_values = [sub_table[1:, i].tolist() for i in range(len(new_df_keys))]
 	new_df = pd.DataFrame(data=dict(zip(new_df_keys, new_df_values))).dropna(how="all", axis=1)
 	new_df = new_df.dropna(how="all", axis=0)
-	# TODO add other cad types.
-	idx = np.where(new_df["Cad Cat."] == "PAC")[0].tolist() if cad_type == "pac" else list(range(len(new_df["Cad Cat."])))
+	if cad_type == "pac":
+		idx = np.where(new_df["Cad Cat."] == "PAC")[0].tolist()
+	elif cad_type == "hc":
+		idx = np.where(new_df["Cad Cat."] == "HC")[0].tolist()
+	else:
+		idx = list(range(len(new_df["Cad Cat."])))
 	bars = list(map(int, new_df["Bar #"][idx]))
 	beats = list(map(lambda x: float(x) - 1, new_df["Pulse #"][idx]))
 	return list(zip(bars, beats))
@@ -172,9 +176,14 @@ def data_loading_wtc(score_dir, cad_type):
 			fn = "{}-bwv{}-ref.dez".format(fugue_num, 845 + int(fugue_num))
 			link = "https://gitlab.com/algomus.fr/algomus-data/-/raw/master/fugues/bach-wtc-i/" + fn
 			# TODO add more cadence types
-			pac = lambda x : "PAC" in x["tag"] if cad_type == "pac" and "tag" in x.keys() else True
+			if cad_type == "pac":
+				cond = lambda x: "PAC" in x["tag"] if "tag" in x.keys() else False
+			elif cad_type == "riac":
+				cond = lambda x: "rIAC" in x["tag"] if "tag" in x.keys() else False
+			else:
+				cond = lambda x: True
 			with urllib.request.urlopen(link) as url:
-				annotations[key] = [dv["start"] for dv in yaml.safe_load(url)["labels"] if (dv['type'] == 'Cadence') and pac(dv)]
+				annotations[key] = [dv["start"] for dv in yaml.safe_load(url)["labels"] if (dv['type'] == 'Cadence') and cond(dv)]
 	return scores, annotations
 
 

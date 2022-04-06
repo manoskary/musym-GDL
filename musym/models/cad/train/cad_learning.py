@@ -36,12 +36,27 @@ def post_evaluate(pm, X, target):
         y_pred = pm.predict(seq)
         acc = np.equal(target[i], y_pred).astype(float).sum() / len(y_pred)
         over_acc += acc
-        fscore = f1_score(target[i], y_pred, average="macro")
+        fscore = f1_score(target[i], y_pred, average="binary")
         over_f1 += fscore
         print("Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
     over_acc = over_acc / (i+1)
     over_f1 = over_f1 / (i+1)
     print("Mean Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+    print()
+    return over_acc, over_f1
+    # over_acc = 0
+    # over_f1 = 0
+    # for i, seq in enumerate(X):
+    #     y_pred = np.argmax(seq, axis=1)
+    #     acc = np.equal(target[i], y_pred).astype(float).sum() / len(y_pred)
+    #     over_acc += acc
+    #     fscore = f1_score(target[i], y_pred, average="macro")
+    #     over_f1 += fscore
+    #     print("Post-Process Thresolding: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+    # over_acc = over_acc / (i + 1)
+    # over_f1 = over_f1 / (i + 1)
+    # print("Mean Post-Process Thresolding: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+
 
 
 def postprocess(X_train, y_train, X_val=None, y_val=None):
@@ -56,33 +71,23 @@ def postprocess(X_train, y_train, X_val=None, y_val=None):
     post_evaluate(pm, X_train, y_train)
     if X_val is not None:
         print("Post-Validation Evaluation :")
-        post_evaluate(pm, X_val, y_val)
-    return pm
+        val_acc, val_f1 = post_evaluate(pm, X_val, y_val)
+    return val_acc, val_f1
 
 
-    # Validation Post-Process Loop
-    over_acc = 0
-    over_f1 = 0
-    for i, seq in enumerate(X_val):
-        y_pred = pm.predict(seq)
-        acc = np.equal(y_val[i], y_pred).astype(float).sum() / len(y_pred)
-        over_acc += acc
-        fscore = f1_score(y_val[i], y_pred, average="macro")
-        over_f1 += fscore
-        print("Post-Process Validation: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
-    over_acc = over_acc / (i + 1)
-    over_f1 = over_f1 / (i + 1)
-    print("Mean Post-Process Validation: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
 
 
 def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
     seqs = list()
     trues = list()
+
     # Make args same dimensions as preds
     piece_idx = piece_idx[idx]
     labels = labels[idx]
     score_duration = score_duration[idx]
     onsets = onsets[idx]
+
+    # Select Downbeats
     o = torch.zeros(len(onsets))
     o[torch.nonzero(onsets == 0, as_tuple=True)[0]] = 1.00
     # Start Building Sequence per piece name.
@@ -112,7 +117,13 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
                     new_y.append(z)
             seqs.append(torch.vstack(new_X).numpy())
             trues.append(torch.cat(new_y).numpy())
-    return seqs, trues
+    # Filter out up-beat instances
+    mod_onsets = torch.remainder(onsets, 1)
+    filter_beats_idx = torch.nonzero(mod_onsets == 0, as_tuple=True)[0]
+    labels = labels[filter_beats_idx]
+    preds = preds[filter_beats_idx]
+    f1_score_binary = f1_score(labels.numpy(), preds.argmax(dim=1).numpy(), average="binary")
+    return seqs, trues, f1_score_binary, preds, labels
 
 
 def train_step(epoch, model, train_dataloader, node_features, labels, device, optimizer, criterion, dataloader_device, config, n_classes):
@@ -397,7 +408,7 @@ if __name__ == '__main__':
             pickle.dump(y_train, f)
     else :
         pred_path = os.path.join(args.data_dir, args.dataset, "preds.pkl")
-        posttrain_label_path = os.path.join(args.data_dir, config["dataset"], "post_train_labels.pkl")
+        posttrain_label_path = os.path.join(args.data_dir, args.dataset, "post_train_labels.pkl")
         # X_train, y_train = torch.load(pred_path).numpy(), torch.load(posttrain_label_path).numpy()
         with open(pred_path, "rb") as f:
             X_train = pickle.load(f)

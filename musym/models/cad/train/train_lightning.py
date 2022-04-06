@@ -11,7 +11,106 @@ from datetime import datetime
 import os
 from musym.utils import load_and_save, min_max_scaler
 from pytorch_lightning.callbacks import EarlyStopping
+from musym.models.cad.train.cad_learning import postprocess, to_sequences
+from sklearn.metrics import f1_score
+import wandb
 
+
+def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, node_features, score_duration, piece_idx, onsets, device):
+    sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.module.n_layers)
+    eval_model = model.module.to(device)
+    train_loader = dgl.dataloading.NodeDataLoader(g, train_nids, sampler, batch_size=batch_size)
+    val_loader = dgl.dataloading.NodeDataLoader(g, val_nids, sampler, batch_size=batch_size)
+    train_prediction = eval_model.inference(train_loader, node_features, labels, device)[train_nids]
+    val_prediction = eval_model.inference(val_loader, node_features, labels, device)[val_nids]
+    X_train, y_train, train_fscore, _ , _ = to_sequences(labels, train_prediction.detach().cpu(), train_nids, score_duration, piece_idx, onsets)
+    X_val, y_val, val_fscore, test_predictions, test_labels = to_sequences(labels, val_prediction.detach().cpu(), val_nids, score_duration, piece_idx, onsets)
+    postprocess_val_acc, postprocess_val_f1 = postprocess(X_train, y_train, X_val, y_val)
+    return postprocess_val_acc, postprocess_val_f1, val_fscore, test_predictions, test_labels
+
+
+def train(scidx, data, args):
+    g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
+    piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config = data
+
+
+    datamodule = CadDataModule(
+        g=g, n_classes=n_classes, in_feats=node_features.shape[1],
+        train_nid=train_nids, val_nid=val_nids, test_nid=test_nids,
+        data_cpu=args.data_cpu, fan_out=fanouts, batch_size=config["batch_size"],
+        num_workers=config["num_workers"], use_ddp=args.num_gpus > 1)
+    if config["load_from_checkpoints"]:
+        model = CadModelLightning.load_from_checkpoint(
+            checkpoint_path=config["chk_path"],
+            node_features=node_features, labels=labels,
+            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
+            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
+            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
+            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
+            adj_thresh=config["adjacency_threshold"])
+        model_name = "Pretrained-Net"
+    else:
+        model = CadModelLightning(
+            node_features=node_features, labels=labels,
+            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
+            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
+            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
+            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
+            adj_thresh=config["adjacency_threshold"])
+        model_name = "Net"
+    model_name = "{}_{}-({})x{}_lr={:.04f}_bs={}_lw={:.04f}".format(
+        model_name, scidx.item(),
+        config["fan_out"], config["num_hidden"],
+        config["lr"], config["batch_size"], config["gamma"])
+
+    wandb.init(
+        project="Cad Learning",
+        group=config["dataset"],
+        job_type="GraphSMOTE_LOOCV_Post_Metrics_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        reinit=True,
+        name=model_name
+    )
+    # Train
+    dt = datetime.today()
+    dt_str = "{}.{}.{}.{}.{}".format(dt.year, dt.month, dt.day, dt.hour, dt.minute)
+    checkpoint_callback = ModelCheckpoint(
+        dirpath="./cad_checkpoints/{}-{}".format(model_name, dt_str),
+        monitor='val_fscore_epoch',
+        mode="max",
+        save_top_k=5,
+        save_last=True,
+        filename='{epoch}-{val_fscore_epoch:.2f}-{train_loss:.2f}'
+    )
+    # early_stopping = EarlyStopping('val_fscore', mode="max", patience=10)
+    wandb_logger = WandbLogger(
+        project="Cad Learning",
+        group=config["dataset"],
+        job_type="GraphSMOTE_LOOCV_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        name=model_name,
+        reinit=True
+    )
+    trainer = Trainer(gpus=args.num_gpus,
+                      auto_select_gpus=True,
+                      max_epochs=config["num_epochs"],
+                      logger=wandb_logger,
+                      callbacks=[checkpoint_callback])
+
+    if not args.skip_training:
+        trainer.fit(model, datamodule=datamodule)
+
+    if args.postprocess:
+        postprocess_val_acc, postprocess_val_f1, binary_val_fscore, test_predictions, test_labels = prepare_and_postprocess(g, model, config["batch_size"],
+                                                                train_nids, test_nids,
+                                                                labels, node_features,
+                                                                score_duration, piece_idx,
+                                                                onsets, device)
+
+        print("Positive Class Val Fscore : ", binary_val_fscore)
+        wandb.log({"positive_class_val_fscore": binary_val_fscore,
+                   "Postprocess Onset-wise Val Accuracy" : postprocess_val_acc,
+                   "Postprocess Onset-wise Val F1": postprocess_val_f1,
+                   })
+        return test_predictions, test_labels
 
 def main(args):
     """
@@ -19,17 +118,12 @@ def main(args):
     """
     # --------------- Standarize Configuration ---------------------
     config = args if isinstance(args, dict) else vars(args)
-    if args.load_config:
-        with open(args.load_config, "r") as f:
-            new_config = json.load(f)
-        config = {k:(new_config[k] if k in new_config.keys() else v) for k,v in config.items()}
 
-    # if args.config_path != "" and os.path.exists(args.config_path) and args.config_path.endswith(".json"):
-    #     import json
-    #     with open(args.config_path, "r") as f:
-    #         config_update = json.load(f)
-    #     for key in config.keys():
-    #         config = {k: (config_update[k]["value"] if k in config_update.keys() else v) for k,v in config.items()}
+    if args.config_path != "" and os.path.exists(args.config_path) and args.config_path.endswith(".json"):
+        import json
+        with open(args.config_path, "r") as f:
+            config_update = json.load(f)
+        config = {k: (config_update[k]["value"] if k in config_update.keys() else v) for k,v in config.items()}
 
     fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
     config["num_layers"] = len(fanouts)
@@ -54,82 +148,25 @@ def main(args):
     device = torch.device('cuda:%d' % torch.cuda.current_device() if use_cuda else 'cpu')
     dataloader_device = "cpu"
 
-    # ------------ Pre-Processing Node2Vec ----------------------
-    emb_path = os.path.join(config["data_dir"], config["dataset"], "node_emb.pt")
-    nodes = g.nodes()
-    if config["preprocess"]:
-        nodes_train, y_train = nodes[train_nids], labels[train_nids]
-        nodes_val, y_val = nodes[val_nids], labels[val_nids]
-        eval_set = [(nodes_train, y_train), (nodes_val, y_val)]
-        pp_model = Node2vecModel(g=g, embedding_dim=64, walk_length=20, p=0.25, q=4.0, num_walks=10, device=device, eval_set=eval_set, eval_steps=1)
-        pp_model.train(epochs=30, batch_size=512)
-        node_emb = pp_model.embedding().detach().cpu()
-        node_features = torch.cat((node_features, node_emb), dim=1)
-        torch.save(node_features, emb_path)
 
-    try:
-        # node_features = torch.load(emb_path)
-        print("Loaded Node features of size {}.".format(node_features.shape[1]))
-    except:
-        print("Node embedding was not found continuing with standard node features.")
     node_features = min_max_scaler(node_features)
     # create model
-    datamodule = CadDataModule(
-        g=g, n_classes=n_classes, in_feats=node_features.shape[1],
-        train_nid=train_nids, val_nid=val_nids, test_nid=test_nids,
-        data_cpu=args.data_cpu, fan_out=fanouts, batch_size=config["batch_size"],
-        num_workers=config["num_workers"])
-    if args.load_from_checkpoints:
-        config["chk_path"] = "./cad_checkpoints/GraphSMOTE-3-2022.4.1.14.4/last.ckpt"
-        model = CadModelLightning.load_from_checkpoint(
-            checkpoint_path=config["chk_path"],
-            node_features=node_features, labels=labels,
-            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
-            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
-            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
-            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
-            adj_thresh=config["adjacency_threshold"])
-    else:
-        model = CadModelLightning(
-            node_features=node_features, labels=labels,
-            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
-            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
-            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
-            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
-            adj_thresh=config["adjacency_threshold"])
-
-    # Train
-    dt = datetime.today()
-    dt_str = "{}.{}.{}.{}.{}".format(dt.year, dt.month, dt.day, dt.hour, dt.minute)
-    checkpoint_callback = ModelCheckpoint(
-        dirpath="./cad_checkpoints/GraphSMOTE-{}-{}".format(config["num_layers"], dt_str),
-        monitor='val_fscore_epoch',
-        mode="max",
-        save_top_k=5,
-        save_last=True,
-        filename='{epoch}-{val_fscore_epoch:.2f}-{train_loss:.2f}'
-    )
-    # early_stopping = EarlyStopping('val_fscore', mode="max", patience=10)
-    trainer = Trainer(gpus=args.num_gpus,
-                      auto_select_gpus=True,
-                      max_epochs=config["num_epochs"],
-                      logger=WandbLogger(
-                          project="Cad Learning",
-                          group=config["dataset"],
-                          job_type="GraphSMOTE+pos_enc+thresh",
-                          name="Net-({})x{}_lr={:.04f}_bs={}_lw={:.04f}".format(
-                              config["fan_out"], config["num_hidden"],
-                              config["lr"], config["batch_size"], config["gamma"])
-                      ),
-                      callbacks=[checkpoint_callback])
-
-    trainer.fit(model, datamodule=datamodule)
-
-    # Test
-    pred = trainer.predict(datamodule=datamodule)
-    return pred
-
-
+    # ========= LOOCV TRAINING ============
+    unique_scores = torch.unique(piece_idx)
+    test_predictions = list()
+    test_labels = list()
+    for scidx in unique_scores:
+        val_nids = test_nids = torch.nonzero(piece_idx == scidx, as_tuple=True)[0]
+        train_nids = torch.nonzero(piece_idx != scidx, as_tuple=True)[0]
+        data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
+               piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
+        p, l = train(scidx, data, args)
+        test_predictions.append(p)
+        test_labels.append(l)
+    test_predictions = torch.cat(test_predictions)
+    test_labels = torch.cat(test_labels)
+    f1_score_binary = f1_score(test_labels.numpy(), test_predictions.argmax(dim=1).numpy(), average="binary")
+    print("Experiment Binary F1 : ", f1_score_binary)
 
 if __name__ == '__main__':
     import argparse
@@ -153,6 +190,8 @@ if __name__ == '__main__':
     argparser.add_argument("--batch-size", type=int, default=256)
     argparser.add_argument("--adjacency_threshold", type=float, default=0.5)
     argparser.add_argument("--num-workers", type=int, default=10)
+    argparser.add_argument("--chk_path", type=str, default="")
+    argparser.add_argument("--config-path", type=str, default="")
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "
                                 "on GPU when using it to save time for data copy. This may "
@@ -162,9 +201,7 @@ if __name__ == '__main__':
     argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
     argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
     argparser.add_argument("--eval", action="store_true", help="Preview Results on Validation set.")
-    argparser.add_argument("--config-path", type=str, default="")
     argparser.add_argument("--load_from_checkpoints", action="store_true")
     argparser.add_argument("--skip_training", action="store_true")
-    argparser.add_argument("--load_config", action="store_true")
     args = argparser.parse_args()
-    prediction = main(args)
+    pred = main(args)

@@ -1,13 +1,13 @@
 # General Imports
 import numpy as np
+import numpy.lib.recfunctions as rfn
 import os
 import pandas as pd
-
+from itertools import combinations
 # modified perso imports
 import partitura
 # Local Imports
 from data_loading import data_loading
-
 
 MOZART_STRING_QUARTETS = [
 	'k590-01', 'k155-02', 'k156-01', 'k080-02', 'k172-01',
@@ -29,22 +29,86 @@ BACH_FUGUES = [
 	'wtc1f08', 'wtc1f20', 'wtc1f21',
 	]
 
+CAD_FEATURES = [
+    "int_vec1", "int_vec2", "int_vec3",
+    "int_vec4", "int_vec5", "int_vec6",
+    "memb_of_triad", "memb_of_sus4",
+    "meb_of_v7", "hv_7", "hv_3", "hv_1",
+    "bass_from_5", "is_onset", "three_from_four",
+    "four_from_three", "one_from_seven", "one_from_two",
+    "bass_moves_2m", "bass_moves_2M"
+    ]
 
-def join_struct_arrays(arrays):
-    sizes = np.array([a.itemsize for a in arrays])
-    offsets = np.r_[0, sizes.cumsum()]
-    n = len(arrays[0])
-    joint = np.empty((n, offsets[-1]), dtype=np.uint8)
-    for a, size, offset in zip(arrays, sizes, offsets):
-        joint[:, offset:offset + size] = a.view(np.uint8).reshape(n, size)
-    dtype = sum((a.dtype.descr for a in arrays), [])
-    return joint.ravel().view(dtype)
+def chord_to_intervalVector(midi_pitches):
+	'''Given a chord it calculates the Interval Vector.
+	Parameters
+	----------
+	midi_pitches : list(int)
+		The midi_pitches, is a list of integers < 128.
+	Returns
+	-------
+	intervalVector : list(int)
+		The interval Vector is a list of six integer values.
+	'''
+	intervalVector = [0,0,0,0,0,0]
+	PC = set([mp%12 for mp in midi_pitches])
+	for p1, p2 in combinations(PC, 2):
+		interval = int(abs(p1 - p2))
+		if interval <= 6 :
+			index = interval
+		else :
+			index = 12 - interval
+		if index != 0:
+			index = index-1
+			intervalVector[index] += 1
+	return intervalVector
 
 
-def align_feature(na, ba):
+def make_cad_features(na):
+    ca = np.zeros((len(na), len(CAD_FEATURES)))
+    for i, n in enumerate(na):
+        n_onset = na[na["onset_beat"] == n["onset_beat"]]
+        n_dur = na[np.where((na["onset_beat"] < n["onset_beat"]) & (na["onset_beat"]+na["duration_beat"] > n["onset_beat"]))]
+        n_cons = na[na["onset_beat"]+na["duration_beat"] == n["onset_beat"]]
+        chord_pitch = np.hstack((n_onset["pitch"], n_dur["pitch"]))
+        int_vec = chord_to_intervalVector(chord_pitch.tolist())
+        memb_of_triad = 1 if int_vec == [0, 0, 1, 1, 1, 0] else 0
+        memb_of_sus4 = 1 if int_vec == [0, 1, 0, 0, 2, 0] else 0
+        meb_of_v7 = 1 if int_vec[1] > 0 and int_vec[2] > 1 and int_vec[3] > 0 and int_vec[4] > 1 and int_vec[5] > 0 else 0
+        hv_7 = 1 if (chord_pitch.max() - chord_pitch.min())%12 == 10 else 0
+        hv_3 = 1 if (chord_pitch.max() - chord_pitch.min())%12 in [3, 4] else 0
+        hv_1 = 1 if (chord_pitch.max() - chord_pitch.min())%12 == 0 and chord_pitch.max() != chord_pitch.min() else 0
+        is_onset = 1 if n["onset_beat"] % 1 == 0 else 0
+        if n_cons.size:
+            bass_from_5 = 1 if (chord_pitch.min()%12 - n_cons["pitch"].min()%12)%12 in [5, 7] else 0
+            three_from_four = 1 if (n["pitch"] - chord_pitch.min())%12 in [3, 4] and (n["pitch"]+1 in n_cons["pitch"] or n["pitch"]+2 in n_cons["pitch"]) else 0
+            four_from_three = 1 if (n["pitch"] - chord_pitch.min())%12 == 5 and (n["pitch"] - 1 in n_cons["pitch"] or n["pitch"] - 2 in n_cons["pitch"]) else 0
+            one_from_seven = 1 if (n["pitch"] - chord_pitch.min())%12 == 0 and n["pitch"] != chord_pitch.min() and n["pitch"] - 1 in n_cons["pitch"] else 0
+            one_from_two = 1 if (n["pitch"] - chord_pitch.min())%12 == 0 and n["pitch"] != chord_pitch.min() and (n["pitch"] + 1 in n_cons["pitch"] or n["pitch"] + 2 in n_cons["pitch"]) else 0
+            bass_moves_2m = 1 if n["pitch"] - chord_pitch.min() in [1, -1] else 0
+            bass_moves_2M = 1 if n["pitch"] - chord_pitch.min() in [2, -2] else 0
+        else :
+            bass_from_5 = 0
+            three_from_four = 0
+            four_from_three = 0
+            one_from_seven = 0
+            one_from_two = 0
+            bass_moves_2m = 0
+            bass_moves_2M = 0
+        ca[i] = np.array(int_vec +
+                         [memb_of_triad, memb_of_sus4, meb_of_v7,
+                          hv_7, hv_3, hv_1, bass_from_5, is_onset,
+                          three_from_four, four_from_three, one_from_seven,
+                          one_from_two, bass_moves_2m, bass_moves_2M])
+    feature_fn = CAD_FEATURES
+    ca = np.array([tuple(x) for x in ca], dtype=[(x, '<f8') for x in feature_fn])
+    return ca, feature_fn
+
+
+def align_feature(na, ba, ca):
     pitch_norm = na["pitch"] / 127.
     if np.all(np.isclose(pitch_norm, ba["polynomial_pitch_feature.pitch"])):
-        return join_struct_arrays([na, ba])
+        return rfn.merge_arrays([na, ca, ba], flatten=True, usemask=False)
     else:
         print(np.nonzero(np.isclose(pitch_norm, ba["polynomial_pitch_feature.pitch"]))[0].shape)
         raise ValueError
@@ -204,11 +268,12 @@ def create_data(args):
                 dtype=[('onset_beat', '<f4'), ('end_beat', '<f4'), ("nominator", "<i4"), ("denominator", "<i4")]
             )
             na = partitura.utils.ensure_notearray(part)
+            ca, cad_features = make_cad_features(na)
             ba, feature_fn = partitura.musicanalysis.make_note_feats(part, "all")
             ba = np.array([tuple(x) for x in ba], dtype=[(x, '<f8') for x in feature_fn])
-            note_array = align_feature(na, ba)
+            note_array = align_feature(na, ba, ca)
             labels = np.zeros(note_array.shape[0])
-
+            feature_fn = feature_fn + cad_features
             # In case annotation are of the form Bar & Beat transform to global beat.
             if isinstance(annotations[key][0], tuple):
                 measures = dict()
@@ -263,10 +328,10 @@ if __name__ == "__main__":
                         help='Select from which dataset to create graph dataset.')
     parser.add_argument("--norm2bar", action="store_true", help="Resize Onset Beat relative to Bar Beat.")
     parser.add_argument("--save-name", default="cad-feature-homo", help="Save Name in the Tonnetz Cadence.")
-    parser.add_argument("--cad-type", default="all", choices=["all", "pac"], help="Choose type of Cadence to parse in dataset.")
+    parser.add_argument("--cad-type", default="all", choices=["all", "pac", "riac", "hc"], help="Choose type of Cadence to parse in dataset.")
     args = parser.parse_args()
 
-    args.save_name = "cad-{}-{}".format(args.cad_type, args.source) if args.cad_type == "pac" else "cad-feature-{}".format(args.source)
+    args.save_name = "cad-{}-{}".format(args.cad_type, args.source) if args.cad_type != "all" else "cad-feature-{}".format(args.source)
 
     dirname = os.path.abspath(os.path.dirname(__file__))
     par = lambda x: os.path.abspath(os.path.join(x, os.pardir))

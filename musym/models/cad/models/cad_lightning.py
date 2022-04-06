@@ -2,8 +2,37 @@ import dgl
 import torch
 import torch.nn.functional as F
 from musym.models.cad.models import GraphSMOTE
-from torchmetrics import Accuracy, F1, AUROC
+from torchmetrics import Accuracy, AUROC, F1
 from pytorch_lightning import LightningDataModule, LightningModule
+
+
+def confusion(preds, target):
+    """ Returns the confusion matrix for the values in the `prediction` and `truth`
+    tensors, i.e. the amount of positions where the values of `prediction`
+    and `truth` are
+    - 1 and 1 (True Positive)
+    - 1 and 0 (False Positive)
+    - 0 and 0 (True Negative)
+    - 0 and 1 (False Negative)
+    """
+
+    confusion_vector = preds / target
+    # Element-wise division of the 2 tensors returns a new tensor which holds a
+    # unique value for each case:
+    #   1     where prediction and truth are 1 (True Positive)
+    #   inf   where prediction is 1 and truth is 0 (False Positive)
+    #   nan   where prediction and truth are 0 (True Negative)
+    #   0     where prediction is 0 and truth is 1 (False Negative)
+
+    true_positives = torch.sum(confusion_vector == 1).item()
+    false_positives = torch.sum(confusion_vector == float('inf')).item()
+    true_negatives = torch.sum(torch.isnan(confusion_vector)).item()
+    false_negatives = torch.sum(confusion_vector == 0).item()
+
+    precision = true_positives / (true_positives + false_positives)
+    recall = true_positives / (true_positives + false_negatives)
+
+    return true_positives, false_positives, true_negatives, false_negatives
 
 
 class MyLoader(dgl.dataloading.NodeDataLoader):
@@ -45,15 +74,16 @@ class CadModelLightning(LightningModule):
         self.train_acc = Accuracy()
         self.val_acc = Accuracy()
         self.test_acc = Accuracy()
-        self.train_fscore = F1(n_classes, average="macro")
+        self.train_fscore = F1(num_classes=n_classes, average="macro")
         self.train_auroc = AUROC(num_classes=n_classes, average="macro")
-        self.val_fscore = F1(n_classes, average="macro")
+        self.val_fscore = F1(num_classes=n_classes, average="macro")
         self.val_auroc = AUROC(num_classes=n_classes, average="macro")
         self.test_fscore = F1(n_classes, average="macro")
         self.test_auroc = AUROC(num_classes=n_classes, average="macro")
         self.train_loss = torch.nn.CrossEntropyLoss()
         self.node_features = node_features
         self.labels = labels
+        self.n_classes = n_classes
 
     def training_step(self, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
@@ -190,3 +220,5 @@ class CadDataModule(LightningDataModule):
             drop_last=False,
             use_ddp=self.use_ddp,
             num_workers=self.num_workers)
+
+

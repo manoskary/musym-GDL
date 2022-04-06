@@ -28,8 +28,6 @@ MOZART_STRING_QUARTETS = [
 # Problematic msq
 # 'K499-01',
 
-
-
 BACH_FUGUES = [
 	'wtc1f01', 'wtc1f02', 'wtc1f03', 'wtc1f04',
 	'wtc1f05', 'wtc1f06', 'wtc1f07', 'wtc1f08',
@@ -65,7 +63,6 @@ HAYDN_STRING_QUARTETS = [
 	'haydn_op020_no03_mv03_1735'
 	]
 
-
 PIANO = BACH_FUGUES + MOZART_PIANO_SONATAS
 
 QUARTETS = MOZART_STRING_QUARTETS + HAYDN_STRING_QUARTETS
@@ -98,4 +95,14 @@ BASIS_FN = [
 	'vertical_neighbor_feature.n_total', 'vertical_neighbor_feature.n_above', 'vertical_neighbor_feature.n_below',
 	'vertical_neighbor_feature.highest_pitch', 'vertical_neighbor_feature.lowest_pitch',
 	'vertical_neighbor_feature.pitch_range'
+	]
+
+CAD_FEATURES = [
+	"int_vec1", "int_vec2", "int_vec3",
+	"int_vec4", "int_vec5", "int_vec6",
+	"memb_of_triad", "memb_of_sus4",
+	"meb_of_v7", "hv_7", "hv_3", "hv_1",
+	"bass_from_5", "is_onset", "three_from_four",
+	"four_from_three", "one_from_seven", "one_from_two",
+	"bass_moves_2m", "bass_moves_2M"
 	]
