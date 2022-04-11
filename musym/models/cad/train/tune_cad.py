@@ -36,7 +36,10 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
         n_classes=datamodule.n_classes, n_layers=config["num_layers"],
         activation=F.relu, dropout=config["dropout"], lr=config["lr"],
         loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"], adj_thresh=config["adjacency_threshold"],)
-
+    model_name = "{}-({})x{}_lr={:.04f}_bs={}_lw={:.04f}".format(
+        model_name,
+        config["fan_out"], config["num_hidden"],
+        config["lr"], config["batch_size"], config["gamma"])
     wandb.init(
         project="Cad Learning",
         group=config["dataset"],
@@ -45,12 +48,26 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
         name=model_name
     )
 
+    # Train
+    dt = datetime.today()
+    dt_str = "{}.{}.{}.{}.{}".format(dt.year, dt.month, dt.day, dt.hour, dt.minute)
+    checkpoint_callback = ModelCheckpoint(
+        dirpath="./cad_checkpoints/{}-{}".format(model_name, dt_str),
+        monitor='val_fscore_epoch',
+        mode="max",
+        save_top_k=5,
+        save_last=True,
+        filename='{epoch}-{val_fscore_epoch:.2f}-{train_loss:.2f}'
+    )
+    # early_stopping = EarlyStopping('val_fscore', mode="max", patience=10)
     wandb_logger = WandbLogger(
-            project="Cad Learning",
-            group=config["dataset"],
-            job_type="TUNE-1024+PE+sp_t={:.04f}".format(config["adjacency_threshold"]),
-            name="Net-{}x{}_lr={:.04f}_bs={}_lw={:.04f}".format(config["fan_out"], config["num_hidden"], config["lr"], config["batch_size"], config["gamma"])
-        )
+        project="Cad Learning",
+        group=config["dataset"],
+        job_type="GraphSMOTE_LOOCV_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        name=model_name,
+        reinit=True
+    )
+
     wandb_logger.log_hyperparams(config)
     trainer = pl.Trainer(
         max_epochs=config["num_epochs"],
@@ -82,6 +99,19 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
             )
         ])
     trainer.fit(model, datamodule=datamodule)
+    model.freeze()
+    postprocess_val_acc, postprocess_val_f1, binary_val_fscore, test_predictions, test_labels = prepare_and_postprocess(
+        g, model, config["batch_size"],
+        train_nids, test_nids,
+        labels, node_features,
+        score_duration, piece_idx,
+        onsets, device)
+
+    print("Positive Class Val Fscore : ", binary_val_fscore)
+    wandb.log({"positive_class_val_fscore": binary_val_fscore,
+               "Postprocess Onset-wise Val Accuracy": postprocess_val_acc,
+               "Postprocess Onset-wise Val F1": postprocess_val_f1,
+               })
 
 
 argparser = argparse.ArgumentParser(description='Cadence Learning GraphSMOTE')
