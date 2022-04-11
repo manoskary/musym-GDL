@@ -1,18 +1,16 @@
 import os
 import numpy as np
 import torch as torch
-from torch import tensor
-from torch.nn.functional import normalize
 import pandas as pd
 import random
 import dgl
 from dgl.data import DGLDataset
 from dgl import save_graphs, load_graphs
-from dgl.data.utils import makedirs, save_info, load_info
+from dgl.data.utils import save_info, load_info
 import networkx as nx
 import matplotlib.pyplot as plt
 from musym.utils.metadata import *
-from musym.models.cad.models import positional_encoding
+from musym.utils.pos_enc import positional_encoding
 
 def min_max_scaler(X):
 	data_min = np.nanmin(X, axis=0)
@@ -46,11 +44,9 @@ class CadHomoGraphDataset(DGLDataset):
 		piece_list_retracing = ["augmented_piece"] + self.piece_list
 		self.piece_encoding = dict(zip(range(len(piece_list_retracing)), piece_list_retracing))
 		self.inverse_piece_encoding = dict(zip(piece_list_retracing, range(len(piece_list_retracing))))
-		# self.test_piece_list = random.sample(self.piece_list, int(0.1*len(self.piece_list)))
-		# self.val_piece_list = random.sample(list(set(self.piece_list)-set(self.test_piece_list)), int(0.1*len(self.piece_list)))
+		self.test_piece_list = random.sample(self.piece_list, int(0.5*len(self.piece_list)))
+		self.val_piece_list = random.sample(list(set(self.piece_list)-set(self.test_piece_list)), int(0.1*len(self.piece_list)))
 
-		# Leave One out Policy:
-		self.test_piece_list = self.val_piece_list = [random.choice(self.piece_list)]
 		self.train_piece_list = list(set(self.piece_list)-(set(self.test_piece_list).union(set(self.val_piece_list))))
 
 		self.FILE_LIST = ["nodes.csv", "edges.csv"]
@@ -415,3 +411,4 @@ class cad_riac_wtc(CadHomoGraphDataset):
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = BACH_FUGUES, pos_enc_dim=20)
+

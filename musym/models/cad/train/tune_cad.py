@@ -8,11 +8,11 @@ from musym.utils import load_and_save, min_max_scaler
 import torch
 from musym.models.cad.models import CadModelLightning, CadDataModule
 from pytorch_lightning.loggers import WandbLogger
-from ray.tune.integration.wandb import WandbLoggerCallback
 import argparse
 import os
 import dgl
 import math
+import wandb
 
 
 def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_nids, test_nids, num_gpus):
@@ -36,6 +36,14 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
         n_classes=datamodule.n_classes, n_layers=config["num_layers"],
         activation=F.relu, dropout=config["dropout"], lr=config["lr"],
         loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"], adj_thresh=config["adjacency_threshold"],)
+
+    wandb.init(
+        project="Cad Learning",
+        group=config["dataset"],
+        job_type="GraphSMOTE_LOOCV_Post_Metrics_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        reinit=True,
+        name=model_name
+    )
 
     wandb_logger = WandbLogger(
             project="Cad Learning",
@@ -111,12 +119,12 @@ args = argparser.parse_args()
 
 config = args if isinstance(args, dict) else vars(args)
 gpus_per_trial = args.gpus_per_trial
-config["fan_out"] = tune.choice(["5,5,5", "5,10,15", "3,5,15,25", "5,10,15,25"])
+config["fan_out"] = tune.choice(["5,5", "5,10", "5,5,5", "5,10,15"])
 config["lr"] = tune.uniform(0.0001, 0.01)
 config["weight_decay"] = tune.uniform(1e-5, 1e-2)
 config["gamma"] = tune.uniform(0.0, 1.0)
-config["batch_size"] = 1024
-config["num_hidden"] = tune.choice([32, 64, 128, 256])
+config["batch_size"] = 2048
+config["num_hidden"] = tune.choice([32, 64, 128])
 config["ext_mode"] = tune.choice(["lstm", "None"])
 
 
