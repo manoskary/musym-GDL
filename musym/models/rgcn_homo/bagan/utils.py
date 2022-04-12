@@ -22,8 +22,8 @@ def conditional_adj_generator(distribution, class_num, batch):
 	
 
 def batch2one(Z, y, z, class_num):
-	for i in range(y.shape[0]):
-		Z[y[i]] = torch.cat((Z[y[i]], z[i].cpu()), dim=0) # Z[label][0] should be deleted..
+	for i in range(class_num):
+		Z[i] = torch.cat((Z[i], z[y==i].cpu()), dim=0) # Z[label][0] should be deleted..
 	return Z			
 	
 class AverageMeter(object):

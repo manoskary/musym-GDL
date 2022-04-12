@@ -172,7 +172,7 @@ if __name__ == "__main__":
 		Z = []
 		with torch.no_grad():
 			for i in range(config.class_num):
-				Z.append(torch.zeros(config.df_dim, dtype=torch.float)) # Z : [class_num, df_dim]
+				Z.append(torch.zeros((1, config.df_dim), dtype=torch.float)) # Z : [class_num, df_dim]
 
 			for i, subg in enumerate(train_loader):
 				batch_inputs = subg.ndata['feat']
