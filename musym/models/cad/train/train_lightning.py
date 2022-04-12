@@ -8,22 +8,77 @@ import torch
 from datetime import datetime
 import os
 from musym.utils import load_and_save, min_max_scaler
-from musym.models.cad.train.cad_learning import postprocess, to_sequences
 from sklearn.metrics import f1_score, confusion_matrix
 import wandb
+import numpy as np
+
+
+def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
+    seqs = list()
+    trues = list()
+
+    # Make args same dimensions as preds
+    piece_idx = piece_idx[idx]
+    labels = labels[idx]
+    score_duration = score_duration[idx]
+    onsets = onsets[idx]
+
+    # Select Downbeats
+    o = torch.zeros(len(onsets))
+    o[torch.nonzero(onsets == 0, as_tuple=True)[0]] = 1.00
+    # Filter out up-beat instances
+    mod_onsets = torch.remainder(onsets, 1)
+    filter_beats_idx = torch.nonzero(mod_onsets == 0, as_tuple=True)[0]
+    labels = labels[filter_beats_idx]
+    preds = preds[filter_beats_idx]
+    piece_idx = piece_idx[filter_beats_idx]
+    score_duration = score_duration[filter_beats_idx]
+    onsets = onsets[filter_beats_idx]
+    f1_score_binary = f1_score(labels.numpy(), preds.argmax(dim=1).numpy(), average="binary")
+    # Start Building Sequence per piece name.
+    for name in torch.unique(piece_idx):
+        # Gather on non-augmented Pieces
+        if name != 0:
+            durs = score_duration[piece_idx == name]
+            is_onset = onsets[piece_idx == name]
+            X = preds[piece_idx == name]
+            y = labels[piece_idx == name]
+            sorted_durs, resorted_idx = torch.sort(durs)
+            X = X[resorted_idx]
+            y = y[resorted_idx]
+            is_onset = is_onset[resorted_idx]
+            new_X = []
+            new_y = []
+            # group by onset
+            for udur in torch.unique(sorted_durs):
+                # x = torch.cat((X[sorted_durs == udur], is_onset[sorted_durs == udur].unsqueeze(1)), dim=1)
+                x = X[sorted_durs == udur]
+                z = y[sorted_durs == udur]
+                if len(x.shape) > 1:
+                    # Can be Max or Mean aggregation of likelihoods.
+                    new_X.append(x.mean(dim=0))
+                    new_y.append(z.max().unsqueeze(0))
+                else:
+                    new_X.append(x)
+                    new_y.append(z)
+            seqs.append(torch.vstack(new_X))
+            trues.append(torch.cat(new_y))
+    seqs = torch.vstack(seqs).numpy()
+    trues = torch.cat(trues).numpy()
+    return seqs, trues, f1_score_binary
 
 
 def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, node_features, score_duration, piece_idx, onsets, device):
     sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.module.n_layers)
     eval_model = model.module.to(device)
-    train_loader = dgl.dataloading.NodeDataLoader(g, train_nids, sampler, batch_size=batch_size)
     val_loader = dgl.dataloading.NodeDataLoader(g, val_nids, sampler, batch_size=batch_size)
-    train_prediction = eval_model.inference(train_loader, node_features, labels, device)[train_nids]
     val_prediction = eval_model.inference(val_loader, node_features, labels, device)[val_nids]
-    X_train, y_train, train_fscore, _ , _ = to_sequences(labels, train_prediction.detach().cpu(), train_nids, score_duration, piece_idx, onsets)
-    X_val, y_val, val_fscore, test_predictions, test_labels = to_sequences(labels, val_prediction.detach().cpu(), val_nids, score_duration, piece_idx, onsets)
-    postprocess_val_acc, postprocess_val_f1 = postprocess(X_train, y_train, X_val, y_val)
-    return postprocess_val_acc, postprocess_val_f1, val_fscore, test_predictions, test_labels
+    X_val, y_val, val_fscore = to_sequences(labels, val_prediction.detach().cpu(), val_nids, score_duration, piece_idx, onsets)
+    y_pred = np.argmax(X_val, axis=1)
+    postprocess_val_acc = np.equal(y_pred, y_val).astype(float).sum() / len(y_val)
+    postprocess_val_f1 = f1_score(y_val, y_pred, average="binary")
+    return postprocess_val_acc, postprocess_val_f1, val_fscore
+
 
 def post_metrics(preds, target):
     tn, fp, fn, tp = confusion_matrix(target, preds).ravel()
@@ -75,7 +130,7 @@ def train(scidx, data, args):
     wandb.init(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="GraphSMOTE_LOOCV_Post_Metrics_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="GraphSMOTE_{}x{}".format(config["num_layers"], config["num_hidden"]),
         reinit=True,
         name=model_name
     )
@@ -94,7 +149,7 @@ def train(scidx, data, args):
     wandb_logger = WandbLogger(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="GraphSMOTE_LOOCV_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="GraphSMOTE_C_{}x{}".format(config["num_layers"], config["num_hidden"]),
         name=model_name,
         reinit=True
     )
@@ -109,18 +164,17 @@ def train(scidx, data, args):
 
     if args.postprocess:
         model.freeze()
-        postprocess_val_acc, postprocess_val_f1, binary_val_fscore, test_predictions, test_labels = prepare_and_postprocess(g, model, config["batch_size"],
+        postprocess_val_acc, postprocess_val_f1, binary_val_fscore = prepare_and_postprocess(g, model, config["batch_size"],
                                                                 train_nids, test_nids,
                                                                 labels, node_features,
                                                                 score_duration, piece_idx,
                                                                 onsets, device)
 
-        print("Positive Class Val Fscore : ", binary_val_fscore)
         wandb.log({"positive_class_val_fscore": binary_val_fscore,
                    "Postprocess Onset-wise Val Accuracy" : postprocess_val_acc,
                    "Postprocess Onset-wise Val F1": postprocess_val_f1,
                    })
-        return test_predictions, test_labels
+
 
 def main(args):
     """
@@ -195,19 +249,19 @@ if __name__ == '__main__':
     argparser.add_argument("--num-gpus", type=int, default=1)
     argparser.add_argument("--dataset", type=str, default="cad_pac_wtc")
     argparser.add_argument('--num-epochs', type=int, default=50)
-    argparser.add_argument('--num-hidden', type=int, default=64)
+    argparser.add_argument('--num-hidden', type=int, default=128)
     argparser.add_argument('--num-layers', type=int, default=2)
-    argparser.add_argument('--lr', type=float, default=5e-3)
+    argparser.add_argument('--lr', type=float, default=0.006913)
     argparser.add_argument('--dropout', type=float, default=0.5)
-    argparser.add_argument("--weight-decay", type=float, default=5e-4,
+    argparser.add_argument("--weight-decay", type=float, default=0.000532,
                            help="Weight for L2 loss")
-    argparser.add_argument("--gamma", type=float, default=0.1,
+    argparser.add_argument("--gamma", type=float, default=0.391666,
                            help="weight of decoder regularization loss.")
     argparser.add_argument("--ext-mode", type=str, default=None, choices=["None", "lstm", "attention"])
     argparser.add_argument("--fan-out", type=str, default='5,10')
     argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument("--batch-size", type=int, default=2048)
-    argparser.add_argument("--adjacency_threshold", type=float, default=0.5)
+    argparser.add_argument("--adjacency_threshold", type=float, default=0.01)
     argparser.add_argument("--num-workers", type=int, default=10)
     argparser.add_argument("--chk_path", type=str, default="")
     argparser.add_argument("--config-path", type=str, default="")

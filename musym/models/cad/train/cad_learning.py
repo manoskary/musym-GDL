@@ -44,18 +44,21 @@ def post_evaluate(pm, X, target):
     print("Mean Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
     print()
     return over_acc, over_f1
-    # over_acc = 0
-    # over_f1 = 0
-    # for i, seq in enumerate(X):
-    #     y_pred = np.argmax(seq, axis=1)
-    #     acc = np.equal(target[i], y_pred).astype(float).sum() / len(y_pred)
-    #     over_acc += acc
-    #     fscore = f1_score(target[i], y_pred, average="macro")
-    #     over_f1 += fscore
-    #     print("Post-Process Thresolding: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
-    # over_acc = over_acc / (i + 1)
-    # over_f1 = over_f1 / (i + 1)
-    # print("Mean Post-Process Thresolding: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+
+def post_evaluate_thresh(X, target):
+    over_acc = 0
+    over_f1 = 0
+    for i, seq in enumerate(X):
+        y_pred = np.argmax(seq, axis=1)
+        acc = np.equal(target[i], y_pred).astype(float).sum() / len(y_pred)
+        over_acc += acc
+        fscore = f1_score(target[i], y_pred, average="binary")
+        over_f1 += fscore
+        print("Post-Process Thresholding: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
+    over_acc = over_acc / (i + 1)
+    over_f1 = over_f1 / (i + 1)
+    print("Mean Post-Process Thresholding: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+    return over_acc, over_f1
 
 
 
@@ -77,6 +80,8 @@ def postprocess(X_train, y_train, X_val=None, y_val=None):
 
 
 
+
+
 def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
     seqs = list()
     trues = list()
@@ -90,6 +95,15 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
     # Select Downbeats
     o = torch.zeros(len(onsets))
     o[torch.nonzero(onsets == 0, as_tuple=True)[0]] = 1.00
+    # Filter out up-beat instances
+    mod_onsets = torch.remainder(onsets, 1)
+    filter_beats_idx = torch.nonzero(mod_onsets == 0, as_tuple=True)[0]
+    labels = labels[filter_beats_idx]
+    preds = preds[filter_beats_idx]
+    piece_idx = piece_idx[filter_beats_idx]
+    score_duration = score_duration[filter_beats_idx]
+    onsets = onsets[filter_beats_idx]
+    f1_score_binary = f1_score(labels.numpy(), preds.argmax(dim=1).numpy(), average="binary")
     # Start Building Sequence per piece name.
     for name in torch.unique(piece_idx):
         # Gather on non-augmented Pieces
@@ -117,12 +131,6 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
                     new_y.append(z)
             seqs.append(torch.vstack(new_X).numpy())
             trues.append(torch.cat(new_y).numpy())
-    # Filter out up-beat instances
-    mod_onsets = torch.remainder(onsets, 1)
-    filter_beats_idx = torch.nonzero(mod_onsets == 0, as_tuple=True)[0]
-    labels = labels[filter_beats_idx]
-    preds = preds[filter_beats_idx]
-    f1_score_binary = f1_score(labels.numpy(), preds.argmax(dim=1).numpy(), average="binary")
     return seqs, trues, f1_score_binary, preds, labels
 
 

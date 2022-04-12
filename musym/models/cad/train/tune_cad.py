@@ -8,17 +8,22 @@ from musym.utils import load_and_save, min_max_scaler
 import torch
 from musym.models.cad.models import CadModelLightning, CadDataModule
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 import argparse
 import os
 import dgl
 import math
 import wandb
+from datetime import datetime
+from train_lightning import prepare_and_postprocess
 
 
-def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_nids, test_nids, num_gpus):
+def train_cad_tune(config, data):
     """
         Main Call for Node Classification with Node2Vec + GraphSMOTE.
     """
+    g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
+    piece_idx, onsets, score_duration, num_gpus = data
 
     fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
     config["num_layers"] = len(fanouts)
@@ -37,13 +42,12 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
         activation=F.relu, dropout=config["dropout"], lr=config["lr"],
         loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"], adj_thresh=config["adjacency_threshold"],)
     model_name = "{}-({})x{}_lr={:.04f}_bs={}_lw={:.04f}".format(
-        model_name,
-        config["fan_out"], config["num_hidden"],
+        "Net", config["fan_out"], config["num_hidden"],
         config["lr"], config["batch_size"], config["gamma"])
     wandb.init(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="GraphSMOTE_LOOCV_Post_Metrics_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="TUNE_{}x{}".format(config["num_layers"], config["num_hidden"]),
         reinit=True,
         name=model_name
     )
@@ -63,7 +67,7 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
     wandb_logger = WandbLogger(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="GraphSMOTE_LOOCV_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="TUNE_C_{}x{}".format(config["num_layers"], config["num_hidden"]),
         name=model_name,
         reinit=True
     )
@@ -100,14 +104,12 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
         ])
     trainer.fit(model, datamodule=datamodule)
     model.freeze()
-    postprocess_val_acc, postprocess_val_f1, binary_val_fscore, test_predictions, test_labels = prepare_and_postprocess(
-        g, model, config["batch_size"],
-        train_nids, test_nids,
-        labels, node_features,
-        score_duration, piece_idx,
-        onsets, device)
+    postprocess_val_acc, postprocess_val_f1, binary_val_fscore = prepare_and_postprocess(g, model, config["batch_size"],
+                                                                                         train_nids, test_nids,
+                                                                                         labels, node_features,
+                                                                                         score_duration, piece_idx,
+                                                                                         onsets, 0)
 
-    print("Positive Class Val Fscore : ", binary_val_fscore)
     wandb.log({"positive_class_val_fscore": binary_val_fscore,
                "Postprocess Onset-wise Val Accuracy": postprocess_val_acc,
                "Postprocess Onset-wise Val F1": postprocess_val_f1,
@@ -115,8 +117,8 @@ def train_cad_tune(config, g, n_classes, node_features, labels, train_nids, val_
 
 
 argparser = argparse.ArgumentParser(description='Cadence Learning GraphSMOTE')
-argparser.add_argument('--dataset', type=str, default="cad_feature_quartets")
-argparser.add_argument('--gpus-per-trial', type=float, default=1)
+argparser.add_argument('--dataset', type=str, default="cad_pac_wtc")
+argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
 argparser.add_argument("--gpu", type=int, default=0)
 argparser.add_argument('--num-epochs', type=int, default=100)
 argparser.add_argument('--num-hidden', type=int, default=128)
@@ -131,7 +133,6 @@ argparser.add_argument("--ext-mode", type=str, default=None, choices=["lstm", "a
 argparser.add_argument("--fan-out", default=[5, 10])
 argparser.add_argument('--shuffle', type=int, default=True)
 argparser.add_argument('--adjacency_threshold', type=float, default=0.01)
-argparser.add_argument("--tune", type=bool, default=True)
 argparser.add_argument("--batch-size", type=int, default=1024)
 argparser.add_argument("--num-workers", type=int, default=0)
 argparser.add_argument("--num-samples", type=int, default=150)
@@ -141,21 +142,16 @@ argparser.add_argument('--data-cpu', action='store_true',
                             "be undesired if they cannot fit in GPU memory at once. "
                             "This flag disables that.")
 argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
-argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
-argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
-argparser.add_argument("--load-model", action="store_true", help="Load pretrained model.")
-argparser.add_argument("--eval", action="store_true", help="Preview Results on Validation set.")
 args = argparser.parse_args()
 
 config = args if isinstance(args, dict) else vars(args)
 gpus_per_trial = args.gpus_per_trial
-config["fan_out"] = tune.choice(["5,5", "5,10", "5,5,5", "5,10,15"])
+config["fan_out"] = tune.choice(["5,10", "5,10,15"])
 config["lr"] = tune.uniform(0.0001, 0.01)
 config["weight_decay"] = tune.uniform(1e-5, 1e-2)
 config["gamma"] = tune.uniform(0.0, 1.0)
 config["batch_size"] = 2048
-config["num_hidden"] = tune.choice([32, 64, 128])
-config["ext_mode"] = tune.choice(["lstm", "None"])
+config["num_hidden"] = tune.choice([64, 128, 256])
 
 
 # --------------- Dataset Loading -------------------------
@@ -163,24 +159,23 @@ g, n_classes = load_and_save(config["dataset"], config["data_dir"])
 g = dgl.add_self_loop(dgl.add_reverse_edges(g))
 # training defs
 labels = g.ndata.pop('label')
-train_nids = torch.nonzero(g.ndata.pop('train_mask'), as_tuple=True)[0]
 node_features = g.ndata.pop('feat')
+piece_idx = g.ndata.pop("score_name")
+onsets = node_features[:, 0]
+score_duration = node_features[:, 3]
+
 # Validation and Testing
+train_nids = torch.nonzero(g.ndata.pop('train_mask'), as_tuple=True)[0]
 val_nids = torch.nonzero(g.ndata.pop('val_mask'), as_tuple=True)[0]
-test_nids = torch.nonzero(g.ndata.pop('test_mask'), as_tuple=True)[0]
+train_nids = torch.cat((train_nids, val_nids))
+test_nids = val_nids = torch.nonzero(g.ndata.pop('test_mask'), as_tuple=True)[0]
 
-# ------------ Pre-Processing Node2Vec ----------------------
-emb_path = os.path.join(config["data_dir"], config["dataset"], "node_emb.pt")
 
-# try:
-#     node_features = torch.load(emb_path)
-# except FileNotFoundError as e:
-#     print("Node embedding was not found continuing with standard node features.")
 node_features = min_max_scaler(node_features)
 
 
 reporter = CLIReporter(
-        parameter_columns=["num_hidden", "fan_out", "lr", "gamma", "weight_decay", "ext_mode"],
+        parameter_columns=["num_hidden", "fan_out", "lr", "gamma", "weight_decay"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
 scheduler = ASHAScheduler(
@@ -188,18 +183,13 @@ scheduler = ASHAScheduler(
         grace_period=20,
         reduction_factor=2)
 
+data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
+           piece_idx, onsets, score_duration, gpus_per_trial
 
 analysis = tune.run(
         tune.with_parameters(
             train_cad_tune,
-            g=g,
-            n_classes=n_classes,
-            node_features=node_features,
-            labels=labels,
-            train_nids=train_nids,
-            val_nids=val_nids,
-            test_nids=test_nids,
-            num_gpus=gpus_per_trial,
+            data=data
             ),
         resources_per_trial={
             "cpu": 2,
