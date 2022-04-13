@@ -3,7 +3,7 @@ import torch
 import itertools
 
 
-def find_onsets(dataset="cad_pac_wtc", data_dir="../data/", num_comb=12):
+def find_onsets(dataset="cad_pac_wtc", data_dir="../data/", num_comb=13):
     g, n_classes = load_and_save(dataset, data_dir)
     node_features = g.ndata.pop('feat')
     piece_idx = g.ndata.pop("score_name")
@@ -15,15 +15,15 @@ def find_onsets(dataset="cad_pac_wtc", data_dir="../data/", num_comb=12):
     piece_idx = piece_idx[filter_beats_idx]
     score_duration = score_duration[filter_beats_idx]
     unique_pieces = torch.unique(piece_idx).tolist()
+    piece_onset_nums = dict()
+    for scidx in unique_pieces:
+        durs = score_duration[piece_idx == scidx]
+        piece_onset_nums[scidx] = len(torch.unique(durs))
     combinations = list(itertools.combinations(unique_pieces, num_comb))
     for comb in combinations:
-        num_onsets = 0
-        for scidx in comb:
-            durs = score_duration[piece_idx == scidx]
-            num_onsets += len(torch.unique(durs))
-        if num_onsets <= 2357:
+        num_onsets = sum(list(map(lambda x: piece_onset_nums[x], comb)))
+        if num_onsets == 2357:
             print(comb)
-
 
 if __name__ == "__main__":
     find_onsets()
