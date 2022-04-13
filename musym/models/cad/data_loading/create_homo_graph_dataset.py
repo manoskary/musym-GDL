@@ -66,6 +66,7 @@ def chord_to_intervalVector(midi_pitches):
 
 def make_cad_features(na):
     ca = np.zeros((len(na), len(CAD_FEATURES)))
+    bass_voice = na["voice"].max()
     for i, n in enumerate(na):
         n_onset = na[na["onset_beat"] == n["onset_beat"]]
         n_dur = na[np.where((na["onset_beat"] < n["onset_beat"]) & (na["onset_beat"]+na["duration_beat"] > n["onset_beat"]))]
@@ -85,9 +86,9 @@ def make_cad_features(na):
             four_from_three = 1 if (n["pitch"] - chord_pitch.min())%12 == 5 and (n["pitch"] - 1 in n_cons["pitch"] or n["pitch"] - 2 in n_cons["pitch"]) else 0
             one_from_seven = 1 if (n["pitch"] - chord_pitch.min())%12 == 0 and n["pitch"] != chord_pitch.min() and n["pitch"] - 1 in n_cons["pitch"] else 0
             one_from_two = 1 if (n["pitch"] - chord_pitch.min())%12 == 0 and n["pitch"] != chord_pitch.min() and (n["pitch"] + 1 in n_cons["pitch"] or n["pitch"] + 2 in n_cons["pitch"]) else 0
-            bass_moves_2m = 1 if n["pitch"] - chord_pitch.min() in [1, -1] else 0
-            bass_moves_2M = 1 if n["pitch"] - chord_pitch.min() in [2, -2] else 0
-        else :
+            bass_moves_2m = 1 if n["pitch"] - n_cons["pitch"].min() in [1, -1] and n["voice"] == bass_voice and bass_voice in n_cons[n_cons["pitch"] == n_cons["pitch"].min()]["voice"] else 0
+            bass_moves_2M = 1 if n["pitch"] - n_cons["pitch"].min() in [2, -2] and n["voice"] == bass_voice and bass_voice in n_cons[n_cons["pitch"] == n_cons["pitch"].min()]["voice"] else 0
+        else:
             bass_from_5 = 0
             three_from_four = 0
             four_from_three = 0
@@ -132,6 +133,7 @@ def graph_csv_from_na(na, ra, t_sig, labels, feature_fn=None, norm2bar=True):
         "pitch": na["pitch"],
         "onset": na["onset_beat"],
         "duration": na["duration_beat"],
+        "voice": na["voice"],
         "ts": np.array(list(map(lambda x: select_ts(x, t_sig), na))),
         "label": labels
     }
@@ -188,6 +190,7 @@ def graph_csv_from_na(na, ra, t_sig, labels, feature_fn=None, norm2bar=True):
             "pitch": np.zeros(len(re)),
             "onset": re["onset_beat"],
             "duration": re["duration_beat"],
+            "voice": np.zeros(len(re))+na[0]["voice"],
             "ts": np.array(list(map(lambda x: select_ts(x, t_sig), re))),
             "label": np.zeros(len(re))
         }
@@ -253,6 +256,12 @@ def create_data(args):
                 part = partitura.load_kern(fn)
             else:
                 raise ValueError("The score {} format is not recognized".format(fn))
+            # Assign Concistently Voices
+            if isinstance(part, list):
+                for i in range(len(part)):
+                    for note in part[i].iter_all(partitura.score.Note):
+                        note.voice = i
+
             part = partitura.score.merge_parts(part)
             # Not sure If I have to unfold
             part = partitura.score.unfold_part_maximal(part)

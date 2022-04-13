@@ -25,7 +25,7 @@ class CadHomoGraphDataset(DGLDataset):
 		if features:
 			self.features = features
 		elif "feature" in url or "pac" in url:
-			self.features = ["onset", "duration", "ts"] + BASIS_FN + CAD_FEATURES + ["pitch"]
+			self.features = ["onset", "duration", "ts"] + BASIS_FN + CAD_FEATURES + ["voice"]
 		else :
 			self.features = ["onset", "duration", "ts", "pitch"]
 		self.normalize = normalize
