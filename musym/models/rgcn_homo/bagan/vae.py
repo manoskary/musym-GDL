@@ -17,7 +17,7 @@ if __name__ == "__main__":
 	parser.add_argument('--pretrained', dest='pretrained', help="switch for using pretrained model", action='store_true', default=False)
 	parser.add_argument('--anomaly', dest='anomaly', help="switch for anomaly detecting", action='store_true', default=True)
 	parser.add_argument('--root_dir', type=str, dest='root_dir', help='the path of current directory')
-	parser.add_argument('--graph_dir', type=str, dest='graph_dir', help='the path of train data', default="./data/cad_feature_quartets/cad_feature_quartets_graph.bin")
+	parser.add_argument('--graph_dir', type=str, dest='graph_dir', help='the path of train data', default="./data/cad_pac_wtc/cad_pac_wtc_graph.bin")
 	parser.add_argument('--checkpoint_dir', type=str, dest='checkpoint_dir', help='the path of chekcpoint dir', default='./checkpoint')
 	parser.add_argument('--save_dir', type=str, dest='save_dir', help='the path of generated data dir', default='sample')
 	parser.add_argument('--distribution_dir', type=str, dest='distribution_dir', help='the path of class distribution dir', default='./distribution')
@@ -53,7 +53,7 @@ if __name__ == "__main__":
 	n_test_samples = test_mask.int().sum().item()
 
 	kwargs = {
-		'dn': "cad_quartets", 'g': g, 'train_nid': train_nid, 'num_workers_sampler': 2,
+		'dn': "cad_pac_wtc", 'g': g, 'train_nid': train_nid, 'num_workers_sampler': 2,
 	}
 
 	saint_sampler = SAINTNodeSampler(4000, **kwargs)
@@ -189,9 +189,9 @@ if __name__ == "__main__":
 
 			N = []
 			for i in range(config.class_num):
-				label_mean = torch.mean(Z[i][1:], dim=0)
-				label_cov = torch.from_numpy(np.cov(Z[i][1:].numpy(), rowvar=False))
+				label_mean = torch.mean(Z[i][1:], dim=0).double()
+				label_cov = torch.from_numpy(np.cov(Z[i][1:].numpy(), rowvar=False)).double()
 				m = mn.MultivariateNormal(label_mean, label_cov)
 				N.append(m)
 
-			torch.save({'distribution': N}, os.path.join(args.distribution_dir, 'class_distribution')+'.dt')
+			torch.save({'distribution': N}, os.path.join(args.distribution_dir, 'class_distribution.dt'))

@@ -7,23 +7,16 @@ import os
 
 def conditional_latent_generator(distribution, class_num, batch):
 	class_labels = torch.randint(0, class_num, (batch,), dtype=torch.long)
-	fake_z = distribution[class_labels[0].item()].sample((1,))
+	fake_z = distribution[class_labels[0].item()].sample((1, ))
 	for c in class_labels[1:]:
 		fake_z = torch.cat((fake_z, distribution[c.item()].sample((1,))), dim=0)
 	return fake_z, class_labels
 
-
-def conditional_adj_generator(distribution, class_num, batch):
-	class_labels = torch.randint(0, class_num, (batch,), dtype=torch.long)
-	fake_z = distribution[class_labels[0].item()].sample((1,))
-	for c in class_labels[1:]:
-		fake_z = torch.cat((fake_z, distribution[c.item()].sample((1,))), dim=0)
-	return fake_z, class_labels
-	
 
 def batch2one(Z, y, z, class_num):
 	for i in range(class_num):
-		Z[i] = torch.cat((Z[i], z[y==i].cpu()), dim=0) # Z[label][0] should be deleted..
+        # Z[label][0] should be deleted..
+		Z[i] = torch.cat((Z[i], z[y==i].cpu()), dim=0)
 	return Z			
 	
 class AverageMeter(object):

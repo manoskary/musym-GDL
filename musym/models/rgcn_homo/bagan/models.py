@@ -23,7 +23,7 @@ class AdjLoss(nn.Module):
 class AdjacencyGenerator(nn.Module):
     def __init__(self, n_hidden, activation=torch.sigmoid, dropout=0.5):
         super(AdjacencyGenerator, self).__init__()
-        self.adj_linear = nn.Linear(n_hidden, n_hidden)
+        self.adj_linear = nn.Linear(n_hidden*2, n_hidden)
         self.dropout = nn.Dropout(dropout)
         self.activation = activation
 
@@ -35,7 +35,7 @@ class AdjacencyGenerator(nn.Module):
                     nn.init.constant_(self.linear.bias, 0.)
 
     def forward(self, inputs, h):
-        z = torch.cat((inputs, h), dim=0)
+        z = torch.cat((inputs, h), dim=1)
         z = self.adj_linear(z)
         z = F.normalize(z)
         z = self.dropout(z)
@@ -67,7 +67,7 @@ class SageConvLayer(nn.Module):
 		combined : torch.tensor
 			An embeded feature tensor.
 		"""
-		if not isinstance(adj, torch.sparse.Tensor):
+		if not isinstance(adj, torch.sparse.FloatTensor):
 			if len(adj.shape) == 3:
 				neigh_feature = torch.bmm(adj, features) / (adj.sum(dim=1).reshape((adj.shape[0], adj.shape[1], -1)) + 1)
 			else:
@@ -162,7 +162,7 @@ class Encoder(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, in_feats, n_hidden, out_samples, n_layers, activation, dropout):
+    def __init__(self, in_feats, n_hidden, out_samples, n_layers, activation=F.relu, dropout=0.5):
         super(Generator, self).__init__()
         self.in_feats = in_feats
         self.n_hidden = n_hidden
@@ -246,7 +246,7 @@ class _ganLogits(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation, dropout):
+    def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.5):
         super(Discriminator, self).__init__()
         self.in_feats = in_feats
         self.n_hidden = n_hidden
