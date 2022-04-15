@@ -24,7 +24,7 @@ class CadHomoGraphDataset(DGLDataset):
 	def __init__(self, name, url, add_inverse_edges=False, add_aug=True, select_piece=None, features=None, normalize=False, save_path=None, piece_list=None, pos_enc_dim=0):
 		if features:
 			self.features = features
-		elif "feature" in url or "pac" in url:
+		elif "feature" in url or "pac" in url or "hc" in url:
 			self.features = ["onset", "duration", "ts"] + BASIS_FN + CAD_FEATURES + ["voice"]
 		else :
 			self.features = ["onset", "duration", "ts", "pitch"]
@@ -337,6 +337,28 @@ class cad_pac_wtc(CadHomoGraphDataset):
 				piece_list = BACH_FUGUES, pos_enc_dim=20)
 
 
+class cad_pac_riac(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-pac-riac/"
+		super().__init__(
+				name='cad_pac_riac', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = BACH_FUGUES, pos_enc_dim=20)
+
+
+class cad_hc_hsq(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-hc-hsq/"
+		super().__init__(
+				name='cad_hc_hsq', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = HAYDN_STRING_QUARTETS, pos_enc_dim=20)
+
+
 class cad_feature_msq(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
 		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-feature-msq/"
@@ -391,24 +413,7 @@ class cad_feature_mix(CadHomoGraphDataset):
 				piece_list = MIX, pos_enc_dim=20)
 
 
-class cad_hc_hsq(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-hc-hsq/"
-		super().__init__(
-				name='cad_hc_hsq', url=url,
-				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
-				select_piece=select_piece, normalize=False,
-				features=None, save_path=save_path,
-				piece_list = HAYDN_STRING_QUARTETS, pos_enc_dim=20)
 
 
-class cad_riac_wtc(CadHomoGraphDataset):
-	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
-		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad_riac_wtc/"
-		super().__init__(
-				name='cad_riac_wtc', url=url,
-				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
-				select_piece=select_piece, normalize=False,
-				features=None, save_path=save_path,
-				piece_list = BACH_FUGUES, pos_enc_dim=20)
+
 

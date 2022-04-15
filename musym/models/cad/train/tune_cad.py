@@ -47,7 +47,7 @@ def train_cad_tune(config, data):
     wandb.init(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="TUNE_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="TUNE_{}-Layers_A".format(config["num_layers"]),
         reinit=True,
         name=model_name
     )
@@ -67,7 +67,7 @@ def train_cad_tune(config, data):
     wandb_logger = WandbLogger(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="TUNE_C_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="TUNE_{}-Layers_A".format(config["num_layers"]),
         name=model_name,
         reinit=True
     )
@@ -130,12 +130,12 @@ argparser.add_argument("--weight-decay", type=float, default=5e-4,
 argparser.add_argument("--gamma", type=float, default=0.001248,
                        help="weight of decoder regularization loss.")
 argparser.add_argument("--ext-mode", type=str, default=None, choices=["lstm", "attention"])
-argparser.add_argument("--fan-out", default=[5, 10])
+argparser.add_argument("--fan-out", type=str, default="10,25")
 argparser.add_argument('--shuffle', type=int, default=True)
-argparser.add_argument('--adjacency_threshold', type=float, default=0.01)
-argparser.add_argument("--batch-size", type=int, default=1024)
+argparser.add_argument('--adjacency_threshold', type=float, default=0.00)
+argparser.add_argument("--batch-size", type=int, default=2048)
 argparser.add_argument("--num-workers", type=int, default=0)
-argparser.add_argument("--num-samples", type=int, default=150)
+argparser.add_argument("--num-samples", type=int, default=100)
 argparser.add_argument('--data-cpu', action='store_true',
                        help="By default the script puts all node features and labels "
                             "on GPU when using it to save time for data copy. This may "
@@ -146,12 +146,10 @@ args = argparser.parse_args()
 
 config = args if isinstance(args, dict) else vars(args)
 gpus_per_trial = args.gpus_per_trial
-config["fan_out"] = tune.choice(["5,10", "5,10,15"])
 config["lr"] = tune.uniform(0.0001, 0.01)
 config["weight_decay"] = tune.uniform(1e-5, 1e-2)
 config["gamma"] = tune.uniform(0.0, 1.0)
-config["batch_size"] = 2048
-config["num_hidden"] = tune.choice([64, 128, 256])
+config["num_hidden"] = tune.choice([128, 256])
 
 
 # --------------- Dataset Loading -------------------------
@@ -175,7 +173,7 @@ node_features = min_max_scaler(node_features)
 
 
 reporter = CLIReporter(
-        parameter_columns=["num_hidden", "fan_out", "lr", "gamma", "weight_decay"],
+        parameter_columns=["num_hidden", "lr", "gamma", "weight_decay"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
 scheduler = ASHAScheduler(

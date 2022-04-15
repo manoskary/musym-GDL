@@ -174,16 +174,15 @@ def data_loading_wtc(score_dir, cad_type):
 			scores[key] = os.path.join(score_dir, score_name)
 			fugue_num = key[-2:]
 			fn = "{}-bwv{}-ref.dez".format(fugue_num, 845 + int(fugue_num))
-			link = "https://gitlab.com/algomus.fr/algomus-data/-/raw/master/fugues/bach-wtc-i/" + fn
-			# TODO add more cadence types
+			annotation_dir = os.path.join(score_dir, "annotations", fn)
 			if cad_type == "pac":
 				cond = lambda x: "PAC" in x["tag"] if "tag" in x.keys() else False
 			elif cad_type == "riac":
-				cond = lambda x: "rIAC" in x["tag"] if "tag" in x.keys() else False
+				cond = lambda x: "rIAC" in x["tag"] or "PAC" in x["tag"] if "tag" in x.keys() else False
 			else:
 				cond = lambda x: True
-			with urllib.request.urlopen(link) as url:
-				annotations[key] = [dv["start"] for dv in yaml.safe_load(url)["labels"] if (dv['type'] == 'Cadence') and cond(dv)]
+			with open(annotation_dir, "r") as f:
+				annotations[key] = [dv["start"] for dv in yaml.safe_load(f)["labels"] if (dv['type'] == 'Cadence') and cond(dv)]
 	return scores, annotations
 
 

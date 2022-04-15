@@ -30,20 +30,16 @@ def extract_ip():
     return IP
 
 def post_evaluate(pm, X, target):
-    over_acc = 0
-    over_f1 = 0
+    y_pred = list()
     for i, seq in enumerate(X):
-        y_pred = pm.predict(seq)
-        acc = np.equal(target[i], y_pred).astype(float).sum() / len(y_pred)
-        over_acc += acc
-        fscore = f1_score(target[i], y_pred, average="binary")
-        over_f1 += fscore
-        print("Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
-    over_acc = over_acc / (i+1)
-    over_f1 = over_f1 / (i+1)
-    print("Mean Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(over_acc, over_f1))
+        y_pred.append(pm.predict(seq))
+    y_true = np.concatenate(target)
+    y_pred = np.concatenate(y_pred)
+    acc = np.mean((y_true == y_pred).astype(float))
+    fscore = f1_score(y_true, y_pred)
+    print("Mean Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
     print()
-    return over_acc, over_f1
+    return acc, fscore
 
 def post_evaluate_thresh(X, target):
     over_acc = 0
@@ -66,7 +62,7 @@ def postprocess(X_train, y_train, X_val=None, y_val=None):
     # ------------- HMM Learn -------------------------
     pm = hmm.GaussianHMM(n_components=2, covariance_type="diag", init_params="cm", params="cmts", n_iter=100)
     pm.startprob_ = np.array([1.0, 0.0])
-    pm.transmat_ = np.array([[0.95, 0.05],
+    pm.transmat_ = np.array([[0.97, 0.03],
                               [1.00, 0.00]])
 
     pm.fit(np.concatenate(X_train), [len(x) for x in X_train])

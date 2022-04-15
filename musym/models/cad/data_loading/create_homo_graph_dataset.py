@@ -32,11 +32,12 @@ BACH_FUGUES = [
 CAD_FEATURES = [
     "int_vec1", "int_vec2", "int_vec3",
     "int_vec4", "int_vec5", "int_vec6",
-    "memb_of_triad", "memb_of_sus4",
-    "meb_of_v7", "hv_7", "hv_3", "hv_1",
+    "memb_of_triad", "memb_of_sus4", "meb_of_v7",
+    "is_maj_triad", "is_min_triad", "is_pmaj_triad",
+    "hv_7", "hv_3", "hv_1",
     "bass_from_5", "is_onset", "three_from_four",
     "four_from_three", "one_from_seven", "one_from_two",
-    "bass_moves_2m", "bass_moves_2M"
+    "bass_moves_2m", "bass_moves_2M", "chord_has_2m", "chord_has_2M"
     ]
 
 def chord_to_intervalVector(midi_pitches):
@@ -61,7 +62,7 @@ def chord_to_intervalVector(midi_pitches):
 		if index != 0:
 			index = index-1
 			intervalVector[index] += 1
-	return intervalVector
+	return intervalVector, list(PC)
 
 
 def make_cad_features(na):
@@ -72,14 +73,22 @@ def make_cad_features(na):
         n_dur = na[np.where((na["onset_beat"] < n["onset_beat"]) & (na["onset_beat"]+na["duration_beat"] > n["onset_beat"]))]
         n_cons = na[na["onset_beat"]+na["duration_beat"] == n["onset_beat"]]
         chord_pitch = np.hstack((n_onset["pitch"], n_dur["pitch"]))
-        int_vec = chord_to_intervalVector(chord_pitch.tolist())
+        int_vec, pc_class = chord_to_intervalVector(chord_pitch.tolist())
+        pc_class_recentered = sorted(list(map(lambda x : x - min(pc_class), pc_class)))
         memb_of_triad = 1 if int_vec == [0, 0, 1, 1, 1, 0] else 0
         memb_of_sus4 = 1 if int_vec == [0, 1, 0, 0, 2, 0] else 0
         meb_of_v7 = 1 if int_vec[1] > 0 and int_vec[2] > 1 and int_vec[3] > 0 and int_vec[4] > 1 and int_vec[5] > 0 else 0
+        # New Featyres
+        is_maj_triad = 1 if memb_of_triad and pc_class_recentered in [[0, 4, 7], [0, 5, 9], [0, 3, 8]] else 0
+        is_min_triad = 1 if memb_of_triad and pc_class_recentered in [[0, 3, 7], [0, 5, 8], [0, 4, 9]] else 0
+        is_pmaj_triad = 1 if is_maj_triad and 4 in (chord_pitch - chord_pitch.min())%12 and 7 in (chord_pitch - chord_pitch.min())%12 else 0
+        # End of New Features
         hv_7 = 1 if (chord_pitch.max() - chord_pitch.min())%12 == 10 else 0
         hv_3 = 1 if (chord_pitch.max() - chord_pitch.min())%12 in [3, 4] else 0
         hv_1 = 1 if (chord_pitch.max() - chord_pitch.min())%12 == 0 and chord_pitch.max() != chord_pitch.min() else 0
         is_onset = 1 if n["onset_beat"] % 1 == 0 else 0
+        chord_has_2m = 1 if n["pitch"] - chord_pitch.min() in [1, -1] else 0
+        chord_has_2M = 1 if n["pitch"] - chord_pitch.min() in [2, -2] else 0
         if n_cons.size:
             bass_from_5 = 1 if (chord_pitch.min()%12 - n_cons["pitch"].min()%12)%12 in [5, 7] else 0
             three_from_four = 1 if (n["pitch"] - chord_pitch.min())%12 in [3, 4] and (n["pitch"]+1 in n_cons["pitch"] or n["pitch"]+2 in n_cons["pitch"]) else 0
@@ -98,9 +107,10 @@ def make_cad_features(na):
             bass_moves_2M = 0
         ca[i] = np.array(int_vec +
                          [memb_of_triad, memb_of_sus4, meb_of_v7,
+                          is_maj_triad, is_min_triad, is_pmaj_triad,
                           hv_7, hv_3, hv_1, bass_from_5, is_onset,
                           three_from_four, four_from_three, one_from_seven,
-                          one_from_two, bass_moves_2m, bass_moves_2M])
+                          one_from_two, bass_moves_2m, bass_moves_2M, chord_has_2m, chord_has_2M])
     feature_fn = CAD_FEATURES
     ca = np.array([tuple(x) for x in ca], dtype=[(x, '<f8') for x in feature_fn])
     return ca, feature_fn
@@ -150,7 +160,7 @@ def graph_csv_from_na(na, ra, t_sig, labels, feature_fn=None, norm2bar=True):
         np.where(((na["onset_beat"] < r["onset_beat"]) & (na["onset_beat"] + na["duration_beat"] > r["onset_beat"])))[0]
         if u.size == 0 and v.size == 0 and r["onset_beat"] < max_onset and r["duration_beat"] != 0:
             re.append(r)
-    re = np.unique(np.array(re, dtype=[('onset_beat', '<f4'), ('duration_beat', '<f4')]))
+    re = np.unique(np.array(re, dtype=[('onset_beat', '<f4'), ('duration_beat', '<f4'), ('voice', '<i4')]))
     filter_inds = [i for i in np.where(re["onset_beat"] + re["duration_beat"] == r["onset_beat"])[0] for r in re]
     if filter_inds:
         for ind in filter_inds:
@@ -190,7 +200,7 @@ def graph_csv_from_na(na, ra, t_sig, labels, feature_fn=None, norm2bar=True):
             "pitch": np.zeros(len(re)),
             "onset": re["onset_beat"],
             "duration": re["duration_beat"],
-            "voice": np.zeros(len(re))+na[0]["voice"],
+            "voice": re["voice"],
             "ts": np.array(list(map(lambda x: select_ts(x, t_sig), re))),
             "label": np.zeros(len(re))
         }
@@ -261,14 +271,16 @@ def create_data(args):
                 for i in range(len(part)):
                     for note in part[i].iter_all(partitura.score.Note):
                         note.voice = i
+                    for rest in part[i].iter_all(partitura.score.Rest):
+                        rest.voice = i
 
             part = partitura.score.merge_parts(part)
             # Not sure If I have to unfold
             part = partitura.score.unfold_part_maximal(part)
 
             rest_array = np.array(
-                [(part.beat_map(r.start.t), part.beat_map(r.duration)) for r in part.iter_all(partitura.score.Rest)],
-                dtype=[('onset_beat', '<f4'), ('duration_beat', '<f4')])
+                [(part.beat_map(r.start.t), part.beat_map(r.duration), r.voice) for r in part.iter_all(partitura.score.Rest)],
+                dtype=[('onset_beat', '<f4'), ('duration_beat', '<f4'), ('voice', '<i4')])
             time_signature = np.array(
                 [
                     (part.beat_map(ts.start.t), filter_ts_end(ts, part), ts.beats, ts.beat_type) for ts in
@@ -284,35 +296,36 @@ def create_data(args):
             labels = np.zeros(note_array.shape[0])
             feature_fn = feature_fn + cad_features
             # In case annotation are of the form Bar & Beat transform to global beat.
-            if isinstance(annotations[key][0], tuple):
-                measures = dict()
-                for m in part.iter_all(partitura.score.Measure):
-                    # Account for repeat unfolding
-                    if m.number in measures.keys():
-                        measures[m.number].append(part.beat_map(m.start.t))
-                    else:
-                        measures[m.number] = [part.beat_map(m.start.t)]
-                tmp = [b_map + onset for bar, onset in annotations[key] for b_map in measures[bar]]
-                # transform to list of beats
-                annotations[key] = tmp
+            if len(annotations[key]) >0:
+                if isinstance(annotations[key][0], tuple):
+                    measures = dict()
+                    for m in part.iter_all(partitura.score.Measure):
+                        # Account for repeat unfolding
+                        if m.number in measures.keys():
+                            measures[m.number].append(part.beat_map(m.start.t))
+                        else:
+                            measures[m.number] = [part.beat_map(m.start.t)]
+                    tmp = [b_map + onset for bar, onset in annotations[key] for b_map in measures[bar]]
+                    # transform to list of beats
+                    annotations[key] = tmp
 
-            if (not np.all(na["onset_beat"] >= 0)) and (args.source != "mps"):
-                annotations[key] += min(na["onset_beat"])
+                if (not np.all(na["onset_beat"] >= 0)) and (args.source != "mps"):
+                    annotations[key] += min(na["onset_beat"])
 
-            if key in MOZART_STRING_QUARTETS:
-                args.source = "msq"
-            elif key in BACH_FUGUES:
-                args.source = "wtc"
-            else:
-                pass
+                if key in MOZART_STRING_QUARTETS:
+                    args.source = "msq"
+                elif key in BACH_FUGUES:
+                    args.source = "wtc"
+                else:
+                    pass
 
-            # Corrections of annotations with respect to time signature.
-            if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:
-                annotations[key] = list(map(lambda x: x/2, annotations[key]))
-            elif time_signature["denominator"][0] == 8 and args.source in ["wtc", "msq"]:
-                annotations[key] = list(map(lambda x: x*2, annotations[key]))
-            else:
-                pass
+                # Corrections of annotations with respect to time signature.
+                if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:
+                    annotations[key] = list(map(lambda x: x/2, annotations[key]))
+                elif time_signature["denominator"][0] == 8 and args.source in ["wtc", "msq"]:
+                    annotations[key] = list(map(lambda x: x*2, annotations[key]))
+                else:
+                    pass
 
             for cad_onset in annotations[key]:
                 labels[np.where(note_array["onset_beat"] == cad_onset)] = 1
