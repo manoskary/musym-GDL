@@ -297,10 +297,11 @@ class SageClassifier(nn.Module):
 		h = inputs
 		for l, conv in enumerate(self.layers):
 			h = conv(adj, h, neigh_feats)
+			# Is activation on the correct position?
 			if l != self.n_layers - 1:
 				h = self.activation(h)
-				h = F.normalize(h)
-				h = self.dropout(h)
+			h = F.normalize(h)
+			h = self.dropout(h)
 		h = self.clf(h)
 		# Added softmax
 		return F.softmax(h, dim=1)
@@ -410,13 +411,17 @@ class Encoder(nn.Module):
 			h = conv(block, h)
 			if l == len(self.layers) - 2 and len(self.layers) > 1:
 				enc_feat_input = h
+				# Should I put normalization and dropout here?
+				enc_feat_input = F.normalize(enc_feat_input)
+				enc_feat_input = self.dropout(enc_feat_input)
 			if l != len(self.layers) - 1:
 				if self.attention:
 					h = h.flatten(1)
 				else:
 					h = self.activation(h)
-					h = F.normalize(h)
-					h = self.dropout(h)
+				# Should I put normalization and dropout here?
+				h = F.normalize(h)
+				h = self.dropout(h)
 		if self.attention:
 			h = h.mean(1)
 			enc_feat_input = enc_feat_input.mean(1)
