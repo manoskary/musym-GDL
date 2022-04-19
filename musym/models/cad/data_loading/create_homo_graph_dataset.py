@@ -34,11 +34,12 @@ CAD_FEATURES = [
     "int_vec4", "int_vec5", "int_vec6",
     "memb_of_triad", "memb_of_sus4", "meb_of_v7",
     "is_maj_triad", "is_min_triad", "is_pmaj_triad",
+    "is_dim", "ped_note",
     "hv_7", "hv_3", "hv_1",
     "bass_from_5", "is_onset", "three_from_four",
     "four_from_three", "one_from_seven", "one_from_two",
     "bass_moves_2m", "bass_moves_2M", "chord_has_2m", "chord_has_2M"
-    ]
+    ] + ["interval"+str(i) for i in range(13)]
 
 def chord_to_intervalVector(midi_pitches):
 	'''Given a chord it calculates the Interval Vector.
@@ -78,10 +79,12 @@ def make_cad_features(na):
         memb_of_triad = 1 if int_vec == [0, 0, 1, 1, 1, 0] else 0
         memb_of_sus4 = 1 if int_vec == [0, 1, 0, 0, 2, 0] else 0
         meb_of_v7 = 1 if int_vec[1] > 0 and int_vec[2] > 1 and int_vec[3] > 0 and int_vec[4] > 1 and int_vec[5] > 0 else 0
-        # New Featyres
         is_maj_triad = 1 if memb_of_triad and pc_class_recentered in [[0, 4, 7], [0, 5, 9], [0, 3, 8]] else 0
         is_min_triad = 1 if memb_of_triad and pc_class_recentered in [[0, 3, 7], [0, 5, 8], [0, 4, 9]] else 0
         is_pmaj_triad = 1 if is_maj_triad and 4 in (chord_pitch - chord_pitch.min())%12 and 7 in (chord_pitch - chord_pitch.min())%12 else 0
+        # New Featyres
+        is_dim = 1 if int_vec == [0, 0, 4, 0, 0, 2] else 0
+        ped_note = 1 if n["duration_beat"] >= 3 else 0
         # End of New Features
         hv_7 = 1 if (chord_pitch.max() - chord_pitch.min())%12 == 10 else 0
         hv_3 = 1 if (chord_pitch.max() - chord_pitch.min())%12 in [3, 4] else 0
@@ -97,6 +100,14 @@ def make_cad_features(na):
             one_from_two = 1 if (n["pitch"] - chord_pitch.min())%12 == 0 and n["pitch"] != chord_pitch.min() and (n["pitch"] + 1 in n_cons["pitch"] or n["pitch"] + 2 in n_cons["pitch"]) else 0
             bass_moves_2m = 1 if n["pitch"] - n_cons["pitch"].min() in [1, -1] and n["voice"] == bass_voice and bass_voice in n_cons[n_cons["pitch"] == n_cons["pitch"].min()]["voice"] else 0
             bass_moves_2M = 1 if n["pitch"] - n_cons["pitch"].min() in [2, -2] and n["voice"] == bass_voice and bass_voice in n_cons[n_cons["pitch"] == n_cons["pitch"].min()]["voice"] else 0
+            # New Features
+            n_cons_voice = n_cons[n_cons["voice"] == n["voice"]]
+            # same voice intervals
+            if n_cons_voice.size:
+                intervals = {"interval"+str(i): (1 if i in (n_cons_voice["pitch"] - n["pitch"]) or -i in (n_cons_voice["pitch"] - n["pitch"]) else 0) for i in range(13)}
+            else:
+                intervals = {"interval"+str(i): 0 for i in range(13)}
+            # End of New Features
         else:
             bass_from_5 = 0
             three_from_four = 0
@@ -105,12 +116,14 @@ def make_cad_features(na):
             one_from_two = 0
             bass_moves_2m = 0
             bass_moves_2M = 0
+            intervals = {"interval" + str(i): 0 for i in range(13)}
         ca[i] = np.array(int_vec +
                          [memb_of_triad, memb_of_sus4, meb_of_v7,
                           is_maj_triad, is_min_triad, is_pmaj_triad,
+                          is_dim, ped_note,
                           hv_7, hv_3, hv_1, bass_from_5, is_onset,
                           three_from_four, four_from_three, one_from_seven,
-                          one_from_two, bass_moves_2m, bass_moves_2M, chord_has_2m, chord_has_2M])
+                          one_from_two, bass_moves_2m, bass_moves_2M, chord_has_2m, chord_has_2M]+list(intervals.values()))
     feature_fn = CAD_FEATURES
     ca = np.array([tuple(x) for x in ca], dtype=[(x, '<f8') for x in feature_fn])
     return ca, feature_fn

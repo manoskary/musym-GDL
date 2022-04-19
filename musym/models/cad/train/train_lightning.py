@@ -153,7 +153,7 @@ def train(scidx, data, args):
     wandb.init(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="GraphSMOTE_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="LOOCV_{}x{}".format(config["num_layers"], config["num_hidden"]),
         reinit=True,
         name=model_name
     )
@@ -172,7 +172,7 @@ def train(scidx, data, args):
     wandb_logger = WandbLogger(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="GraphSMOTE_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="LOOCV_{}x{}".format(config["num_layers"], config["num_hidden"]),
         name=model_name,
         reinit=True
     )
@@ -236,8 +236,16 @@ def main(args):
 
     node_features = min_max_scaler(node_features)
     # create model
-    # ========= LOOCV TRAINING ============
-    if args.kfold:
+    # ========= kfold TRAINING ============
+    if args.loocv:
+        unique_scores = torch.unique(piece_idx)
+        for scidx in unique_scores:
+            val_nids = test_nids = torch.nonzero(piece_idx == scidx, as_tuple=True)[0]
+            train_nids = torch.nonzero(piece_idx != scidx, as_tuple=True)[0]
+            data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
+                   piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
+            train(scidx, data, args)
+    elif args.kfold:
         unique_scores = torch.unique(piece_idx)
         num_folds = args.kfold
         for fold_num in range(num_folds):
@@ -291,5 +299,6 @@ if __name__ == '__main__':
     argparser.add_argument("--load_from_checkpoints", action="store_true")
     argparser.add_argument("--kfold", type=int, default=0)
     argparser.add_argument("--skip_training", action="store_true")
+    argparser.add_argument("--loocv", action="store_true")
     args = argparser.parse_args()
     pred = main(args)

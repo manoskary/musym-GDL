@@ -102,8 +102,9 @@ CAD_FEATURES = [
     "int_vec4", "int_vec5", "int_vec6",
     "memb_of_triad", "memb_of_sus4", "meb_of_v7",
     "is_maj_triad", "is_min_triad", "is_pmaj_triad",
+    "is_dim", "ped_note",
     "hv_7", "hv_3", "hv_1",
     "bass_from_5", "is_onset", "three_from_four",
     "four_from_three", "one_from_seven", "one_from_two",
     "bass_moves_2m", "bass_moves_2M", "chord_has_2m", "chord_has_2M"
-    ]
+    ] + ["interval"+str(i) for i in range(13)]
