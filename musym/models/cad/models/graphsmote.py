@@ -211,13 +211,17 @@ class MBSMOTE(object):
 class SageConvLayer(nn.Module):
 	def __init__(self, in_features, out_features, bias=False):
 		super(SageConvLayer, self).__init__()
+		self.neigh_linear = nn.Linear(in_features, in_features, bias=bias)
 		self.linear = nn.Linear(in_features * 2, out_features, bias=bias)
 		self.reset_parameters()
 
 	def reset_parameters(self):
 		nn.init.xavier_uniform_(self.linear.weight, gain=nn.init.calculate_gain('relu'))
+		nn.init.xavier_uniform_(self.neigh_linear.weight, gain=nn.init.calculate_gain('relu'))
 		if self.linear.bias is not None:
 			nn.init.constant_(self.linear.bias, 0.)
+		if self.neigh_linear.bias is not None:
+			nn.init.constant_(self.neigh_linear.bias, 0.)
 
 	def forward(self, adj, features, neigh_feats):
 		"""
@@ -233,22 +237,20 @@ class SageConvLayer(nn.Module):
 		combined : torch.tensor
 			An embeded feature tensor.
 		"""
+		h = self.neigh_linear(neigh_feats)
 		if not isinstance(adj, torch.sparse.FloatTensor):
 			# NOTE: Diagonal with a rectangular adjacency doesn't make sense and raises a backward pass error.
-			# if len(neigh_feats) != len(features):
-			# 	adj.fill_diagonal_(1)
 			if len(adj.shape) == 3:
-				neigh_feature = torch.bmm(adj, neigh_feats) / (adj.sum(dim=1).reshape((adj.shape[0], adj.shape[1], -1)) + 1)
+				h = torch.bmm(adj, h) / (adj.sum(dim=1).reshape((adj.shape[0], adj.shape[1], -1)) + 1)
 			else:
-				neigh_feature = torch.mm(adj, neigh_feats) / (adj.sum(dim=1).reshape(adj.shape[0], -1) + 1)
+				h = torch.mm(adj, h) / (adj.sum(dim=1).reshape(adj.shape[0], -1) + 1)
 		# For Sparse Adjacency Matrices
 		else:
-			neigh_feature = torch.spmm(adj, neigh_feats) / (adj.to_dense().sum(dim=1).reshape(adj.shape[0], -1) + 1)
+			h = torch.spmm(adj, h) / (adj.to_dense().sum(dim=1).reshape(adj.shape[0], -1) + 1)
 
 		# perform conv
-		data = torch.cat([features, neigh_feature], dim=-1)
-		combined = self.linear(data)
-		return combined
+		z = self.linear(torch.cat([features, h], dim=-1))
+		return z
 
 
 class SageEncoder(nn.Module):

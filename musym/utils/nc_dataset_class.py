@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from musym.utils.metadata import *
 from musym.utils.pos_enc import positional_encoding
 
+
 def min_max_scaler(X):
 	data_min = np.nanmin(X, axis=0)
 	data_max = np.nanmax(X, axis=0)
@@ -321,7 +322,7 @@ class cad_feature_wtc(CadHomoGraphDataset):
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = BACH_FUGUES, pos_enc_dim=20)
+				piece_list = BACH_FUGUES_CAD, pos_enc_dim=20)
 
 
 class cad_pac_wtc(CadHomoGraphDataset):
@@ -332,7 +333,7 @@ class cad_pac_wtc(CadHomoGraphDataset):
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = BACH_FUGUES, pos_enc_dim=20)
+				piece_list = BACH_FUGUES_PAC, pos_enc_dim=20)
 
 
 class cad_riac_wtc(CadHomoGraphDataset):

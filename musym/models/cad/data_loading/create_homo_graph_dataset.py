@@ -177,23 +177,24 @@ def graph_csv_from_na(na, ra, t_sig, labels, feature_fn=None, norm2bar=True):
     filter_inds = [i for i in np.where(re["onset_beat"] + re["duration_beat"] == r["onset_beat"])[0] for r in re]
     if filter_inds:
         for ind in filter_inds:
-            re[ind]["duration_beat"] = re[ind + 1]["duration_beat"]
+            if ind+1 < len(re):
+                re[ind]["duration_beat"] = re[ind + 1]["duration_beat"]
         re = np.delete(re, filter_inds)
 
     edg_src = list()
     edg_dst = list()
     start_rest_index = len(na)
     for i, x in enumerate(na):
-        for j in np.where((np.isclose(na["onset_beat"], x["onset_beat"]) == True) & (na["pitch"] != x["pitch"]))[0]:
+        for j in np.where((np.isclose(na["onset_beat"], x["onset_beat"], rtol=1e-04, atol=1e-04) == True) & (na["pitch"] != x["pitch"]))[0]:
             edg_src.append(i)
             edg_dst.append(j)
 
-        for j in np.where(np.isclose(na["onset_beat"], x["onset_beat"] + x["duration_beat"]) == True)[0]:
+        for j in np.where(np.isclose(na["onset_beat"], x["onset_beat"] + x["duration_beat"], rtol=1e-04, atol=1e-04) == True)[0]:
             edg_src.append(i)
             edg_dst.append(j)
 
         if re.size > 0:
-            for j in np.where(np.isclose(re["onset_beat"], x["onset_beat"] + x["duration_beat"]) == True)[0]:
+            for j in np.where(np.isclose(re["onset_beat"], x["onset_beat"] + x["duration_beat"], rtol=1e-04, atol=1e-04) == True)[0]:
                 edg_src.append(i)
                 edg_dst.append(j + start_rest_index)
 
@@ -204,7 +205,7 @@ def graph_csv_from_na(na, ra, t_sig, labels, feature_fn=None, norm2bar=True):
 
     if re.size > 0:
         for i, r in enumerate(re):
-            for j in np.where(np.isclose(na["onset_beat"], r["onset_beat"] + r["duration_beat"]) == True)[0]:
+            for j in np.where(np.isclose(na["onset_beat"], r["onset_beat"] + r["duration_beat"], rtol=1e-04, atol=1e-04) == True)[0]:
                 edg_src.append(start_rest_index + i)
                 edg_dst.append(j)
 
@@ -243,7 +244,10 @@ def graph_csv_from_na(na, ra, t_sig, labels, feature_fn=None, norm2bar=True):
 def select_ts(x, t_sig):
     for y in t_sig:
         if (x["onset_beat"] < y["end_beat"] or y["end_beat"] == -1) and x["onset_beat"] >= y["onset_beat"]:
-            return y["nominator"]
+            if y["denominator"] == 8 and y["nominator"] in [6, 9, 12]:
+                return y["nominator"]/3
+            else:
+                return y["nominator"]
     print(t_sig, x)
 
 
@@ -290,7 +294,8 @@ def create_data(args):
             part = partitura.score.merge_parts(part)
             # Not sure If I have to unfold
             part = partitura.score.unfold_part_maximal(part)
-
+            # Conform beat for 3/8, 6/8 and 9/8 to be by three.
+            part.use_musical_beat({"6/8": 2, "3/8": 3, "9/8": 3, "12/8": 4, "6/4":6})
             rest_array = np.array(
                 [(part.beat_map(r.start.t), part.beat_map(r.duration), r.voice) for r in part.iter_all(partitura.score.Rest)],
                 dtype=[('onset_beat', '<f4'), ('duration_beat', '<f4'), ('voice', '<i4')])
@@ -309,7 +314,7 @@ def create_data(args):
             labels = np.zeros(note_array.shape[0])
             feature_fn = feature_fn + cad_features
             # In case annotation are of the form Bar & Beat transform to global beat.
-            if len(annotations[key]) >0:
+            if len(annotations[key]) > 0:
                 if isinstance(annotations[key][0], tuple):
                     measures = dict()
                     for m in part.iter_all(partitura.score.Measure):
@@ -336,12 +341,16 @@ def create_data(args):
                 if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:
                     annotations[key] = list(map(lambda x: x/2, annotations[key]))
                 elif time_signature["denominator"][0] == 8 and args.source in ["wtc", "msq"]:
-                    annotations[key] = list(map(lambda x: x*2, annotations[key]))
+                    if time_signature["nominator"][0] in [6, 9, 12]:
+                        annotations[key] = list(map(lambda x: 2 * x / 3, annotations[key]))
+                    else:
+                        annotations[key] = list(map(lambda x: 2 * x, annotations[key]))
                 else:
                     pass
 
+
             for cad_onset in annotations[key]:
-                labels[np.where(note_array["onset_beat"] == cad_onset)] = 1
+                labels[np.hstack((np.where(note_array["onset_beat"] == cad_onset)[0], np.where((note_array["onset_beat"]+note_array["duration_beat"] > cad_onset) & (note_array["onset_beat"] < cad_onset))[0]))] = 1
                 # check for false annotation that does not have match
                 if np.all((note_array["onset_beat"] == cad_onset) == False):
                     raise IndexError("Annotated beat {} does not match with any score beat in score {}.".format(cad_onset, key))

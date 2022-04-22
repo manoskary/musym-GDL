@@ -19,7 +19,7 @@ def retrieve_haydn_cad_annotations(annotation_path, cad_type):
 		idx = np.where(new_df["Cad Cat."] == "HC")[0].tolist()
 	else:
 		idx = list(range(len(new_df["Cad Cat."])))
-	bars = list(map(int, new_df["Bar #"][idx]))
+	bars = list(map(lambda x: int(x), new_df["Bar #"][idx]))
 	beats = list(map(lambda x: float(x) - 1, new_df["Pulse #"][idx]))
 	return list(zip(bars, beats))
 

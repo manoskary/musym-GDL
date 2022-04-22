@@ -76,6 +76,7 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
 
 
 def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, node_features, score_duration, piece_idx, onsets, device):
+    avr_f1 = "binary" if labels.max()+1 == 2 else "macro"
     sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.module.n_layers)
     eval_model = model.module.to(device)
     train_loader = dgl.dataloading.NodeDataLoader(g, train_nids, sampler, batch_size=batch_size)
@@ -153,7 +154,7 @@ def train(scidx, data, args):
     wandb.init(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="LOOCV_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="PoolCLF-kFold_{}x{}".format(config["num_layers"], config["num_hidden"]),
         reinit=True,
         name=model_name
     )
@@ -172,7 +173,7 @@ def train(scidx, data, args):
     wandb_logger = WandbLogger(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="LOOCV_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="PoolCLF-kFold_{}x{}".format(config["num_layers"], config["num_hidden"]),
         name=model_name,
         reinit=True
     )
@@ -214,6 +215,7 @@ def main(args):
     config["shuffle"] = bool(config["shuffle"])
 
     # --------------- Dataset Loading -------------------------
+
     g, n_classes = load_and_save(config["dataset"], args.data_dir)
     g = dgl.add_self_loop(dgl.add_reverse_edges(g))
     # training defs
@@ -249,10 +251,12 @@ def main(args):
         unique_scores = torch.unique(piece_idx)
         num_folds = args.kfold
         for fold_num in range(num_folds):
-            pick = torch.randperm(len(unique_scores))
-            train_fold = pick[:int(len(unique_scores)/2)]
-            val_fold = pick[int(len(unique_scores)/2):]
-            val_nids = test_nids = torch.cat([torch.nonzero(piece_idx==scidx, as_tuple=True)[0] for scidx in val_fold])
+            pick = torch.randperm(len(unique_scores)) + 1
+            train_fold = pick[:int(len(unique_scores)*0.7)]
+            val_fold = pick[int(len(unique_scores)*0.7): int(len(unique_scores)*0.7) + int(len(unique_scores)*0.1)]
+            test_fold = pick[int(len(unique_scores)*0.7) + int(len(unique_scores)*0.1):]
+            val_nids = torch.cat([torch.nonzero(piece_idx==scidx, as_tuple=True)[0] for scidx in val_fold])
+            test_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in test_fold])
             train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
             data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
                    piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
