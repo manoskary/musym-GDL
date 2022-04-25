@@ -94,6 +94,7 @@ class CadModelLightning(LightningModule):
         adj = mfgs[-1].adj().to(self.device)
         batch_pred, upsampl_lab, embed_loss = self.module(mfgs, batch_inputs, adj, batch_labels)
         loss = self.train_loss(batch_pred, upsampl_lab) + embed_loss * self.loss_weight
+        batch_pred = F.softmax(batch_pred, dim=1)
         self.train_acc(batch_pred, upsampl_lab)
         self.train_fscore(batch_pred[:len(batch_labels)], batch_labels)
         self.train_auroc(batch_pred[:len(batch_labels)], batch_labels)
@@ -113,6 +114,7 @@ class CadModelLightning(LightningModule):
         batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
         self.val_acc(batch_pred, batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
+        batch_pred = F.softmax(batch_pred, dim=1)
         self.val_fscore(batch_pred, batch_labels)
         self.val_auroc(batch_pred, batch_labels)
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
@@ -130,6 +132,7 @@ class CadModelLightning(LightningModule):
         batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
         self.test_acc(batch_pred, batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
+        batch_pred = F.softmax(batch_pred, dim=1)
         self.test_fscore(batch_pred, batch_labels)
         self.test_auroc(batch_pred, batch_labels)
         output = {

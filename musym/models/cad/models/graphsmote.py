@@ -306,7 +306,8 @@ class SageClassifier(nn.Module):
 			h = self.dropout(h)
 		h = self.clf(h)
 		# Added softmax
-		return F.softmax(h, dim=1)
+		# return F.softmax(h, dim=1)
+		return h
 
 
 class SageDecoder(nn.Module):
@@ -473,7 +474,7 @@ class GraphSMOTE(nn.Module):
 				mfgs = [mfg.int().to(device) for mfg in mfgs]
 				batch_pred, prev_encs = self.encoder(mfgs, batch_inputs)
 				pred_adj = F.hardshrink(self.decoder(batch_pred, prev_encs), lambd=self.adj_thresh)
-				prediction[seeds] = self.classifier(pred_adj, batch_pred, prev_encs)
+				prediction[seeds] = F.softmax(self.classifier(pred_adj, batch_pred, prev_encs), dim=1)
 			return prediction
 
 	def edge_inference(self, g, node_features, labels, device, batch_size, num_workers=0):

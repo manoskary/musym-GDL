@@ -154,7 +154,7 @@ def train(scidx, data, args, type=""):
     wandb.init(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="PoolCLF-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"]),
+        job_type="PoolCLF_maxA-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"]),
         reinit=True,
         name=model_name
     )
@@ -173,7 +173,7 @@ def train(scidx, data, args, type=""):
     wandb_logger = WandbLogger(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="PoolCLF-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"]),
+        job_type="PoolCLF_maxA-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"]),
         name=model_name,
         reinit=True
     )
