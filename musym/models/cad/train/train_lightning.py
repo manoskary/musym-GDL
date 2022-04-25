@@ -64,8 +64,8 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
                 z = y[sorted_durs == udur]
                 if len(x.shape) > 1:
                     # Can be Max or Mean aggregation of likelihoods.
-                    new_X.append(x.mean(dim=0))
-                    # new_X.append(x.max(0)[0])
+                    # new_X.append(x.mean(dim=0))
+                    new_X.append(x.max(0)[0])
                     new_y.append(z.max().unsqueeze(0))
                 else:
                     new_X.append(x)
