@@ -117,7 +117,7 @@ def post_metrics(preds, target):
     return metrics
 
 
-def train(scidx, data, args):
+def train(scidx, data, args, type=""):
     g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
     piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config = data
 
@@ -154,7 +154,7 @@ def train(scidx, data, args):
     wandb.init(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="PoolCLF-kFold_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="PoolCLF-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"]),
         reinit=True,
         name=model_name
     )
@@ -173,7 +173,7 @@ def train(scidx, data, args):
     wandb_logger = WandbLogger(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="PoolCLF-kFold_{}x{}".format(config["num_layers"], config["num_hidden"]),
+        job_type="PoolCLF-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"]),
         name=model_name,
         reinit=True
     )
@@ -246,7 +246,7 @@ def main(args):
             train_nids = torch.nonzero(piece_idx != scidx, as_tuple=True)[0]
             data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
                    piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
-            train(scidx, data, args)
+            train(scidx, data, args, type="LOOCV")
     elif args.kfold:
         unique_scores = torch.unique(piece_idx)
         num_folds = args.kfold
@@ -260,7 +260,7 @@ def main(args):
             train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
             data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
                    piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
-            train(fold_num, data, args)
+            train(fold_num, data, args, type="kFold")
     else:
         data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
                piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
