@@ -138,6 +138,49 @@ def align_feature(na, ba, ca):
         raise ValueError
 
 
+def check_annotations(cadences, part, na, key, time_signature, labels, note_array, label_num=1):
+    if len(cadences) > 0:
+        if isinstance(cadences[0], tuple):
+            measures = dict()
+            for m in part.iter_all(partitura.score.Measure):
+                # Account for repeat unfolding
+                if m.number in measures.keys():
+                    measures[m.number].append(part.beat_map(m.start.t))
+                else:
+                    measures[m.number] = [part.beat_map(m.start.t)]
+            tmp = [b_map + onset for bar, onset in cadences for b_map in measures[bar]]
+            # transform to list of beats
+            cadences = tmp
+
+        if (not np.all(na["onset_beat"] >= 0)) and (args.source != "mps"):
+            cadences += min(na["onset_beat"])
+
+        if key in MOZART_STRING_QUARTETS:
+            args.source = "msq"
+        elif key in BACH_FUGUES:
+            args.source = "wtc"
+
+        # Corrections of annotations with respect to time signature.
+        if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:
+            cadences = list(map(lambda x: x / 2, cadences))
+        elif time_signature["denominator"][0] == 8 and args.source in ["wtc", "msq"]:
+            if time_signature["nominator"][0] in [6, 9, 12]:
+                cadences = list(map(lambda x: 2 * x / 3, cadences))
+            else:
+                cadences = list(map(lambda x: 2 * x, cadences))
+
+    for cad_onset in cadences:
+        labels[np.hstack((np.where(note_array["onset_beat"] == cad_onset)[0], np.where(
+            (note_array["onset_beat"] + note_array["duration_beat"] > cad_onset) & (
+                    note_array["onset_beat"] < cad_onset))[0]))] = label_num
+        # check for false annotation that does not have match
+        if np.all((note_array["onset_beat"] == cad_onset) == False):
+            raise IndexError(
+                "Annotated beat {} does not match with any score beat in score {}.".format(cad_onset,
+                                                                                           key))
+    return labels
+
+
 def graph_csv_from_na(na, ra, t_sig, labels, feature_fn=None, norm2bar=True):
     '''Turn note_array to homogeneous graph dictionary.
 
@@ -313,47 +356,12 @@ def create_data(args):
             note_array = align_feature(na, ba, ca)
             labels = np.zeros(note_array.shape[0])
             feature_fn = feature_fn + cad_features
-            # In case annotation are of the form Bar & Beat transform to global beat.
-            if len(annotations[key]) > 0:
-                if isinstance(annotations[key][0], tuple):
-                    measures = dict()
-                    for m in part.iter_all(partitura.score.Measure):
-                        # Account for repeat unfolding
-                        if m.number in measures.keys():
-                            measures[m.number].append(part.beat_map(m.start.t))
-                        else:
-                            measures[m.number] = [part.beat_map(m.start.t)]
-                    tmp = [b_map + onset for bar, onset in annotations[key] for b_map in measures[bar]]
-                    # transform to list of beats
-                    annotations[key] = tmp
-
-                if (not np.all(na["onset_beat"] >= 0)) and (args.source != "mps"):
-                    annotations[key] += min(na["onset_beat"])
-
-                if key in MOZART_STRING_QUARTETS:
-                    args.source = "msq"
-                elif key in BACH_FUGUES:
-                    args.source = "wtc"
-                else:
-                    pass
-
-                # Corrections of annotations with respect to time signature.
-                if time_signature["denominator"][0] == 2 and args.source in ["wtc", "msq"]:
-                    annotations[key] = list(map(lambda x: x/2, annotations[key]))
-                elif time_signature["denominator"][0] == 8 and args.source in ["wtc", "msq"]:
-                    if time_signature["nominator"][0] in [6, 9, 12]:
-                        annotations[key] = list(map(lambda x: 2 * x / 3, annotations[key]))
-                    else:
-                        annotations[key] = list(map(lambda x: 2 * x, annotations[key]))
-                else:
-                    pass
-
-
-            for cad_onset in annotations[key]:
-                labels[np.hstack((np.where(note_array["onset_beat"] == cad_onset)[0], np.where((note_array["onset_beat"]+note_array["duration_beat"] > cad_onset) & (note_array["onset_beat"] < cad_onset))[0]))] = 1
-                # check for false annotation that does not have match
-                if np.all((note_array["onset_beat"] == cad_onset) == False):
-                    raise IndexError("Annotated beat {} does not match with any score beat in score {}.".format(cad_onset, key))
+            # Adapted for multiclass
+            if isinstance(annotations[key], dict):
+                for i, cadences in enumerate(annotations[key].values()):
+                    labels = check_annotations(cadences, part, na, key, time_signature, labels, note_array, label_num=i+1)
+            else:
+                labels = check_annotations(annotations[key], part, na, key, time_signature, labels, note_array)
 
             nodes, edges = graph_csv_from_na(note_array, rest_array, time_signature, labels, feature_fn=feature_fn,
                                              norm2bar=args.norm2bar)
@@ -373,6 +381,7 @@ if __name__ == "__main__":
     parser.add_argument("--norm2bar", action="store_true", help="Resize Onset Beat relative to Bar Beat.")
     parser.add_argument("--save-name", default="cad-feature-homo", help="Save Name in the Tonnetz Cadence.")
     parser.add_argument("--cad-type", default="all", choices=["all", "pac", "riac", "hc"], help="Choose type of Cadence to parse in dataset.")
+    parser.add_argument("--multiclass", action="store_true", default=False)
     args = parser.parse_args()
 
     args.save_name = "cad-{}-{}".format(args.cad_type, args.source) if args.cad_type != "all" else "cad-feature-{}".format(args.source)

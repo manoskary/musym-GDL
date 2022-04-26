@@ -322,7 +322,7 @@ class cad_feature_wtc(CadHomoGraphDataset):
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = BACH_FUGUES_CAD, pos_enc_dim=20)
+				piece_list = BACH_FUGUES, pos_enc_dim=20)
 
 
 class cad_pac_wtc(CadHomoGraphDataset):
@@ -367,6 +367,40 @@ class cad_feature_msq(CadHomoGraphDataset):
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
 				piece_list = MOZART_STRING_QUARTETS, pos_enc_dim=20)
+
+
+class cad_pac_msq(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-pac-msq/"
+		super().__init__(
+				name='cad_pac_msq', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = MOZART_STRING_QUARTETS, pos_enc_dim=20)
+
+
+class cad_hc_msq(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-hc-msq/"
+		super().__init__(
+				name='cad_hc_msq', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = MOZART_STRING_QUARTETS, pos_enc_dim=20)
+
+
+class cad_pac_mps(CadHomoGraphDataset):
+	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
+		url = "https://raw.githubusercontent.com/melkisedeath/tonnetzcad/main/node_classification/cad-pac-mps/"
+		super().__init__(
+				name='cad_pac_mps', url=url,
+				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
+				select_piece=select_piece, normalize=False,
+				features=None, save_path=save_path,
+				piece_list = MOZART_PIANO_SONATAS, pos_enc_dim=20)
+
 
 class cad_feature_quartets(CadHomoGraphDataset):
 	def __init__(self, add_inverse_edges=False, add_aug=False, select_piece=None, save_path=None):
