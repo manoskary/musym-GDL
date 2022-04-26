@@ -29,14 +29,15 @@ def extract_ip():
         st.close()
     return IP
 
-def post_evaluate(pm, X, target):
+def post_evaluate(pm, X, target, n_classes):
     y_pred = list()
+    avr_f1 = "binary" if n_classes == 2 else "macro"
     for i, seq in enumerate(X):
         y_pred.append(pm.predict(seq))
     y_true = np.concatenate(target)
     y_pred = np.concatenate(y_pred)
     acc = np.mean((y_true == y_pred).astype(float))
-    fscore = f1_score(y_true, y_pred)
+    fscore = f1_score(y_true, y_pred, average=avr_f1)
     print("Mean Post-Process Model: Accuracy {:.4f} | F score {:.4f} |".format(acc, fscore))
     print()
     return acc, fscore
@@ -58,7 +59,7 @@ def post_evaluate_thresh(X, target):
 
 
 
-def postprocess(X_train, y_train, X_val=None, y_val=None):
+def postprocess(X_train, y_train, X_val=None, y_val=None, n_classes=2):
     # ------------- HMM Learn -------------------------
     pm = hmm.GaussianHMM(n_components=2, covariance_type="diag", init_params="cm", params="cmts", n_iter=100)
     pm.startprob_ = np.array([1.0, 0.0])
@@ -67,10 +68,10 @@ def postprocess(X_train, y_train, X_val=None, y_val=None):
 
     pm.fit(np.concatenate(X_train), [len(x) for x in X_train])
     print("Post-Training Evaluation :")
-    post_evaluate(pm, X_train, y_train)
+    post_evaluate(pm, X_train, y_train, n_classes)
     if X_val is not None:
         print("Post-Validation Evaluation :")
-        val_acc, val_f1 = post_evaluate(pm, X_val, y_val)
+        val_acc, val_f1 = post_evaluate(pm, X_val, y_val, n_classes)
     return val_acc, val_f1
 
 

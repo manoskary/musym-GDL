@@ -21,10 +21,10 @@ import wandb
 import numpy as np
 
 
-def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
+def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classes):
     seqs = list()
     trues = list()
-
+    avr_f1 = "binary" if n_classes == 2 else "macro"
     # Make args same dimensions as preds
     piece_idx = piece_idx[idx]
     labels = labels[idx]
@@ -42,7 +42,7 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
     piece_idx = piece_idx[filter_beats_idx]
     score_duration = score_duration[filter_beats_idx]
     onsets = onsets[filter_beats_idx]
-    f1_score_binary = f1_score(labels.numpy(), preds.argmax(dim=1).numpy(), average="binary")
+    f1_score_binary = f1_score(labels.numpy(), preds.argmax(dim=1).numpy(), average=avr_f1)
     # Start Building Sequence per piece name.
     for name in torch.unique(piece_idx):
         # Gather on non-augmented Pieces
@@ -75,22 +75,22 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets):
     return seqs, trues, f1_score_binary
 
 
-def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, node_features, score_duration, piece_idx, onsets, device):
-    avr_f1 = "binary" if labels.max()+1 == 2 else "macro"
+def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, node_features, score_duration, piece_idx, onsets, device, n_classes):
+    avr_f1 = "binary" if n_classes == 2 else "macro"
     sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.module.n_layers)
     eval_model = model.module.to(device)
     train_loader = dgl.dataloading.NodeDataLoader(g, train_nids, sampler, batch_size=batch_size)
     val_loader = dgl.dataloading.NodeDataLoader(g, val_nids, sampler, batch_size=batch_size)
     train_prediction = eval_model.inference(train_loader, node_features, labels, device)[train_nids]
     val_prediction = eval_model.inference(val_loader, node_features, labels, device)[val_nids]
-    X_train, y_train, _ = to_sequences(labels, train_prediction.detach().cpu(), train_nids, score_duration, piece_idx, onsets)
-    X_val, y_val, val_fscore = to_sequences(labels, val_prediction.detach().cpu(), val_nids, score_duration, piece_idx, onsets)
-    post_val_acc, post_val_f1 = postprocess(X_train, y_train, X_val, y_val)
+    X_train, y_train, _ = to_sequences(labels, train_prediction.detach().cpu(), train_nids, score_duration, piece_idx, onsets, n_classes)
+    X_val, y_val, val_fscore = to_sequences(labels, val_prediction.detach().cpu(), val_nids, score_duration, piece_idx, onsets, n_classes)
+    post_val_acc, post_val_f1 = postprocess(X_train, y_train, X_val, y_val, n_classes)
     X_val = torch.vstack(X_val).numpy()
     y_val = torch.cat(y_val).numpy()
     y_pred = np.argmax(X_val, axis=1)
     thresh_val_acc = np.equal(y_pred, y_val).astype(float).sum() / len(y_val)
-    thresh_pres, thresh_rec, thresh_f1, val_sup = precision_recall_fscore_support(y_val, y_pred, average="binary")
+    thresh_pres, thresh_rec, thresh_f1, val_sup = precision_recall_fscore_support(y_val, y_pred, average=avr_f1)
     metrics = {
         "Onset_wise Fscore": val_fscore,
         "Postprocess Beat-wise Val Accuracy": post_val_acc,
@@ -192,7 +192,7 @@ def train(scidx, data, args, type=""):
                                                                 train_nids, test_nids,
                                                                 labels, node_features,
                                                                 score_duration, piece_idx,
-                                                                onsets, device)
+                                                                onsets, device, n_classes)
 
         wandb.log(metrics)
 
