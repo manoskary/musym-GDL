@@ -223,7 +223,7 @@ class SageConvLayer(nn.Module):
 		if self.neigh_linear.bias is not None:
 			nn.init.constant_(self.neigh_linear.bias, 0.)
 
-	def forward(self, adj, features, neigh_feats):
+	def forward(self, adj, features, neigh_feats=None):
 		"""
 
 		Parameters
@@ -237,6 +237,8 @@ class SageConvLayer(nn.Module):
 		combined : torch.tensor
 			An embeded feature tensor.
 		"""
+		if not neigh_feats:
+			neigh_feats = features
 		h = self.neigh_linear(neigh_feats)
 		if not isinstance(adj, torch.sparse.FloatTensor):
 			# NOTE: Diagonal with a rectangular adjacency doesn't make sense and raises a backward pass error.
@@ -370,6 +372,46 @@ class GaugLoss(nn.Module):
 		norm_w = shape[0]*shape[1] / float((shape[0]*shape[1] - adj_sum) * 2)
 		bce_loss = norm_w * F.binary_cross_entropy_with_logits(torch.transpose(adj_rec[:shape[1], :shape[0]], 0, 1), adj_tgt.to_dense(), pos_weight=bce_weight)
 		return bce_loss
+
+
+class FullGraphEncoder(nn.Module):
+	def __init__(self, in_feats, n_hidden, n_layers, activation, dropout):
+		super(FullGraphEncoder, self).__init__()
+		self.in_feats = in_feats
+		self.n_hidden = n_hidden
+		self.activation = activation
+
+		self.dropout = nn.Dropout(dropout)
+		self.layers = nn.ModuleList()
+		self.attention = False
+		self.out = self.n_hidden
+		self.layers.append(SageConvLayer(self.in_feats, self.out))
+		for i in range(n_layers - 2):
+			self.layers.append(SageConvLayer(self.n_hidden, self.out))
+		self.layers.append(SageConvLayer(self.out, self.out))
+
+	def forward(self, adj, inputs):
+		h = inputs
+		enc_feat_input = h
+		for l, (conv) in enumerate(self.layers):
+			h = conv(adj, h)
+			if l == len(self.layers) - 2 and len(self.layers) > 1:
+				enc_feat_input = h
+				# Should I put normalization and dropout here?
+				enc_feat_input = F.normalize(enc_feat_input)
+				enc_feat_input = self.dropout(enc_feat_input)
+			if l != len(self.layers) - 1:
+				if self.attention:
+					h = h.flatten(1)
+				else:
+					h = self.activation(h)
+				# Should I put normalization and dropout here?
+				h = F.normalize(h)
+				h = self.dropout(h)
+		if self.attention:
+			h = h.mean(1)
+			enc_feat_input = enc_feat_input.mean(1)
+		return h, enc_feat_input
 
 
 class Encoder(nn.Module):
@@ -507,131 +549,43 @@ class GraphSMOTE(nn.Module):
 		return y
 
 
-class SMOTE2Graph(nn.Module):
-	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1):
-		super(SMOTE2Graph, self).__init__()
+
+
+class FullGraphSMOTE(nn.Module):
+	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1, ext_mode=None, adj_thresh=0.01):
+		super(FullGraphSMOTE, self).__init__()
 		self.n_layers = n_layers
 		self.n_classes = n_classes
-		self.decoder = SageDecoder(n_hidden, dropout)
-		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=n_layers, activation=activation, dropout=dropout)
-		self.smote = SMOTE(dims=in_feats, k=3)
-		self.decoder_loss = EdgeLoss()
-
-	def forward(self, blocks, input_feats, adj, batch_labels):
-		x = input_feats
-		x, y = self.smote.fit_generate(x, batch_labels)
-		pred_adj = self.decoder(x)
-		loss = self.decoder_loss(pred_adj, adj)
-		pred_adj = torch.where(pred_adj >= 0.5, pred_adj, torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device()))
-		x = self.classifier(pred_adj, x)
-		return x, y.type(torch.long), loss
-
-
-class SMOTEmbed(nn.Module):
-	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1):
-		super(SMOTEmbed, self).__init__()
-		self.n_layers = n_layers
-		self.n_classes = n_classes
-		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
-		self.classifier = nn.Linear(n_hidden, n_classes)
-		self.smote = SMOTE(dims=n_hidden, k=3)
-		self.decoder_loss = EdgeLoss()
-
-	def forward(self, blocks, input_feats, batch_labels):
-		x = input_feats
-		x, _ = self.encoder(blocks, x)
-		x, y = self.smote.fit_generate(x, batch_labels)
-		x = self.classifier(x)
-		return x, y.type(torch.long)
-
-class EmptySMOTE(object):
-	def __init__(self):
-		super(EmptySMOTE, self).__init__()
-
-	def fit_generate(self, x, y):
-		return x, y
-
-
-class EmptyDecoder(object):
-	def __init__(self):
-		super(EmptyDecoder, self).__init__()
-
-	def __call__(self, x, y):
-		return x
-
-
-class AblationSMOTE(nn.Module):
-	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1, ext_mode=None, adj_thresh=0.5, rem_smote=False, rem_gnn_clf=False, rem_adjmix=False, rem_gnn_enc=False):
-		super(AblationSMOTE, self).__init__()
-		self.n_layers = n_layers
-		self.n_classes = n_classes
-		self.encoder = Encoder(in_feats, n_hidden, n_layers, activation, dropout)
-		# Ablation
-		self.rem_smote = rem_smote
-		self.rem_gnn_clf = rem_gnn_clf
-		self.rem_adjmix = rem_adjmix
-		self.rem_gnn_enc = rem_gnn_enc
-
-		# Layers
+		self.encoder = FullGraphEncoder(in_feats, n_hidden, n_layers, activation, dropout)
+		# n_hidden = int((n_hidden / (2**(n_layers - 2)))) if n_layers >= 2 else n_hidden
 		if n_layers > 1:
 			dec_feats = n_hidden
 		else:
 			dec_feats = in_feats
+		self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
+		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
+		self.smote = SMOTE(dims=n_hidden, k=5)
+		self.decoder_loss = GaugLoss()
+		self.adj_thresh = adj_thresh
 
-		if self.rem_gnn_clf or self.rem_gnn_enc:
-			self.decoder = EmptyDecoder()
-		else:
-			self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
-
-		if self.rem_gnn_clf or self.rem_gnn_enc:
-			self.classifier = nn.Linear(n_hidden, n_classes)
-		else:
-			self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
-		if rem_smote:
-			self.smote = EmptySMOTE()
-		else:
-			self.smote = SMOTE(dims=n_hidden, k=3)
-		self.decoder_loss = EdgeLoss()
-
-	def forward(self, blocks, input_feats, adj, batch_labels):
+	def forward(self, adj, input_feats, adj, batch_labels):
 		x = input_feats
-		x, prev_feats = self.encoder(blocks, x)
+		x, prev_feats = self.encoder(adj, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
 		pred_adj = self.decoder(x, prev_feats)
-		if self.rem_gnn_clf or self.rem_gnn_enc:
-			loss = torch.tensor(0, dtype=pred_adj.dtype).to(pred_adj.get_device())
-		else:
-			loss = self.decoder_loss(pred_adj, adj)
-		if (self.rem_adjmix or self.rem_gnn_enc):
-			pred_adj = F.hardshrink(pred_adj, lambd=0.001)
-		else:
-			pred_adj = F.hardshrink(pred_adj, lambd=0.5)
-		if self.rem_gnn_clf:
-			x = self.classifier(x)
-			x = torch.softmax(x)
-		elif self.rem_gnn_enc:
-			x = self.classifier(pred_adj)
-			x = F.relu(x)
-			x = torch.softmax(x)
-		else:
-			x = self.classifier(pred_adj, x, prev_feats)
+		loss = self.decoder_loss(pred_adj, adj)
+		# Thesholding Adjacency with Harshrink since sigmoid output is positive.
+		pred_adj = F.hardshrink(pred_adj, lambd=self.adj_thresh)
+		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
 
-	def val_forward(self, blocks, input_feats, batch_labels):
-		x = input_feats
-		y = batch_labels
-		x, prev_feats = self.encoder(blocks, x)
-		pred_adj = self.decoder(x, prev_feats)
-		if (self.rem_adjmix or self.rem_gnn_enc):
-			pred_adj = F.hardshrink(pred_adj, lambd=0.001)
-		else:
-			pred_adj = F.hardshrink(pred_adj, lambd=0.5)
-		if self.rem_gnn_clf:
-			x = self.classifier(x)
-			x = torch.softmax(x)
-		elif self.rem_gnn_enc:
-			x = self.classifier(pred_adj)
-			x = F.relu(x)
-		else:
-			x = self.classifier(pred_adj, x, prev_feats)
-		return x, y.type(torch.long)
+	def inference(self, dataloader, node_features, labels, device):
+		prediction = list()
+		with torch.no_grad():
+			for graph in tqdm(dataloader, position=0, leave=True):
+				batch_inputs = graph.ndata["feat"].to(device)
+				adj = graph.adj()
+				batch_pred, prev_encs = self.encoder(adj, batch_inputs)
+				pred_adj = F.hardshrink(self.decoder(batch_pred, prev_encs), lambd=self.adj_thresh)
+				prediction.append(F.softmax(self.classifier(pred_adj, batch_pred, prev_encs), dim=1))
+			return torch.cat(prediction, dim=0)
