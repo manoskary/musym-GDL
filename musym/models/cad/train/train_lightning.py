@@ -64,8 +64,8 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classe
                 z = y[sorted_durs == udur]
                 if len(x.shape) > 1:
                     # Can be Max or Mean aggregation of likelihoods.
-                    # new_X.append(x.mean(dim=0))
-                    new_X.append(x.max(0)[0])
+                    new_X.append(x.mean(dim=0))
+                    # new_X.append(x.max(0)[0])
                     new_y.append(z.max().unsqueeze(0))
                 else:
                     new_X.append(x)
@@ -121,6 +121,8 @@ def train(scidx, data, args, type=""):
     g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
     piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config = data
 
+    group = config["dataset"]
+    job_type = "GSMOTE-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"])
 
     datamodule = CadDataModule(
         g=g, n_classes=n_classes, in_feats=node_features.shape[1],
@@ -153,8 +155,8 @@ def train(scidx, data, args, type=""):
 
     wandb.init(
         project="Cad Learning",
-        group=config["dataset"],
-        job_type="PoolCLF_maxA-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"]),
+        group=group,
+        job_type=job_type,
         reinit=True,
         name=model_name
     )
@@ -162,7 +164,7 @@ def train(scidx, data, args, type=""):
     dt = datetime.today()
     dt_str = "{}.{}.{}.{}.{}".format(dt.year, dt.month, dt.day, dt.hour, dt.minute)
     checkpoint_callback = ModelCheckpoint(
-        dirpath="./cad_checkpoints/{}-{}".format(model_name, dt_str),
+        dirpath="./cad_checkpoints/{}/{}/{}-{}".format(group, job_type, model_name, dt_str),
         monitor='val_fscore_epoch',
         mode="max",
         save_top_k=5,
@@ -172,8 +174,8 @@ def train(scidx, data, args, type=""):
     # early_stopping = EarlyStopping('val_fscore', mode="max", patience=10)
     wandb_logger = WandbLogger(
         project="Cad Learning",
-        group=config["dataset"],
-        job_type="PoolCLF_maxA-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"]),
+        group=group,
+        job_type=job_type,
         name=model_name,
         reinit=True
     )
@@ -262,9 +264,21 @@ def main(args):
                    piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
             train(fold_num, data, args, type="kFold")
     else:
-        data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-               piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
-        train("", data, args)
+        for i in range(3):
+            if "wtc" in args.dataset:
+                train_fold = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+                val_fold = [13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+            elif "hsq" in args.dataset:
+                train_fold = list(range(1, 25, 1))
+                val_fold = list(range(25, 46, 1))
+            else:
+                raise ValueError("Invalid training configuration. A split has not been defined for the {} dataset.".format(args.dataset))
+            val_nids = test_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in val_fold])
+            train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
+
+            data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
+                   piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
+            train("", data, args, type="SOTA")
 
 
 if __name__ == '__main__':

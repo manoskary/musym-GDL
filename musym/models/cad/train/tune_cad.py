@@ -15,7 +15,6 @@ import dgl
 import math
 import wandb
 from datetime import datetime
-from train_lightning import prepare_and_postprocess
 
 
 def train_cad_tune(config, data):
@@ -44,19 +43,12 @@ def train_cad_tune(config, data):
     model_name = "{}-({})x{}_lr={:.04f}_bs={}_lw={:.04f}".format(
         "Net", config["fan_out"], config["num_hidden"],
         config["lr"], config["batch_size"], config["gamma"])
-    wandb.init(
-        project="Cad Learning",
-        group=config["dataset"],
-        job_type="TUNE_{}-Layers_A".format(config["num_layers"]),
-        reinit=True,
-        name=model_name
-    )
-
+    job_type = "GraphSMOTE_TUNE_{}".format(config["num_layers"])
     # Train
     dt = datetime.today()
     dt_str = "{}.{}.{}.{}.{}".format(dt.year, dt.month, dt.day, dt.hour, dt.minute)
     checkpoint_callback = ModelCheckpoint(
-        dirpath="./cad_checkpoints/{}-{}".format(model_name, dt_str),
+        dirpath="./cad_checkpoints/{}/{}/{}-{}".format(config["dataset"], job_type, model_name, dt_str),
         monitor='val_fscore_epoch',
         mode="max",
         save_top_k=5,
@@ -67,7 +59,7 @@ def train_cad_tune(config, data):
     wandb_logger = WandbLogger(
         project="Cad Learning",
         group=config["dataset"],
-        job_type="TUNE_{}-Layers_A".format(config["num_layers"]),
+        job_type=job_type,
         name=model_name,
         reinit=True
     )
@@ -104,23 +96,14 @@ def train_cad_tune(config, data):
         ])
     trainer.fit(model, datamodule=datamodule)
     model.freeze()
-    postprocess_val_acc, postprocess_val_f1, binary_val_fscore = prepare_and_postprocess(g, model, config["batch_size"],
-                                                                                         train_nids, test_nids,
-                                                                                         labels, node_features,
-                                                                                         score_duration, piece_idx,
-                                                                                         onsets, 0)
 
-    wandb.log({"positive_class_val_fscore": binary_val_fscore,
-               "Postprocess Onset-wise Val Accuracy": postprocess_val_acc,
-               "Postprocess Onset-wise Val F1": postprocess_val_f1,
-               })
 
 
 argparser = argparse.ArgumentParser(description='Cadence Learning GraphSMOTE')
 argparser.add_argument('--dataset', type=str, default="cad_pac_wtc")
 argparser.add_argument('--gpus-per-trial', type=float, default=0.5)
 argparser.add_argument("--gpu", type=int, default=0)
-argparser.add_argument('--num-epochs', type=int, default=100)
+argparser.add_argument('--num-epochs', type=int, default=50)
 argparser.add_argument('--num-hidden', type=int, default=128)
 argparser.add_argument('--num-layers', type=int, default=2)
 argparser.add_argument('--lr', type=float, default=0.001123)
@@ -132,8 +115,8 @@ argparser.add_argument("--gamma", type=float, default=0.001248,
 argparser.add_argument("--ext-mode", type=str, default=None, choices=["lstm", "attention"])
 argparser.add_argument("--fan-out", type=str, default="10,25")
 argparser.add_argument('--shuffle', type=int, default=True)
-argparser.add_argument('--adjacency_threshold', type=float, default=0.00)
-argparser.add_argument("--batch-size", type=int, default=2048)
+argparser.add_argument('--adjacency_threshold', type=float, default=0.5)
+argparser.add_argument("--batch-size", type=int, default=1024)
 argparser.add_argument("--num-workers", type=int, default=0)
 argparser.add_argument("--num-samples", type=int, default=100)
 argparser.add_argument('--data-cpu', action='store_true',
@@ -163,10 +146,18 @@ onsets = node_features[:, 0]
 score_duration = node_features[:, 3]
 
 # Validation and Testing
-train_nids = torch.nonzero(g.ndata.pop('train_mask'), as_tuple=True)[0]
-val_nids = torch.nonzero(g.ndata.pop('val_mask'), as_tuple=True)[0]
-train_nids = torch.cat((train_nids, val_nids))
-test_nids = val_nids = torch.nonzero(g.ndata.pop('test_mask'), as_tuple=True)[0]
+if "wtc" in args.dataset:
+    train_fold = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    val_fold = [13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+elif "hsq" in args.dataset:
+    train_fold = list(range(1, 25, 1))
+    val_fold = list(range(25, 46, 1))
+else:
+    raise ValueError(
+        "Invalid training configuration. A split has not been defined for the {} dataset.".format(args.dataset))
+
+val_nids = test_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in val_fold])
+train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
 
 
 node_features = min_max_scaler(node_features)

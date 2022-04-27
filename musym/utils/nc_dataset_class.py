@@ -333,7 +333,7 @@ class cad_pac_wtc(CadHomoGraphDataset):
 				add_inverse_edges=add_inverse_edges, add_aug=add_aug,
 				select_piece=select_piece, normalize=False,
 				features=None, save_path=save_path,
-				piece_list = BACH_FUGUES_PAC, pos_enc_dim=20)
+				piece_list = BACH_FUGUES, pos_enc_dim=20)
 
 
 class cad_riac_wtc(CadHomoGraphDataset):
