@@ -248,7 +248,7 @@ class SageConvLayer(nn.Module):
 				h = torch.mm(adj, h) / (adj.sum(dim=1).reshape(adj.shape[0], -1) + 1)
 		# For Sparse Adjacency Matrices
 		else:
-			h = torch.spmm(adj, h) / (adj.to_dense().sum(dim=1).reshape(adj.shape[0], -1) + 1)
+			h = torch.mm(adj, h) / (adj.to_dense().sum(dim=1).reshape(adj.shape[0], -1) + 1)
 
 		# perform conv
 		z = self.linear(torch.cat([features, h], dim=-1))
@@ -393,7 +393,7 @@ class FullGraphEncoder(nn.Module):
 	def forward(self, adj, inputs):
 		h = inputs
 		enc_feat_input = h
-		for l, (conv) in enumerate(self.layers):
+		for l, conv in enumerate(self.layers):
 			h = conv(adj, h)
 			if l == len(self.layers) - 2 and len(self.layers) > 1:
 				enc_feat_input = h
@@ -401,16 +401,9 @@ class FullGraphEncoder(nn.Module):
 				enc_feat_input = F.normalize(enc_feat_input)
 				enc_feat_input = self.dropout(enc_feat_input)
 			if l != len(self.layers) - 1:
-				if self.attention:
-					h = h.flatten(1)
-				else:
-					h = self.activation(h)
-				# Should I put normalization and dropout here?
+				h = self.activation(h)
 				h = F.normalize(h)
 				h = self.dropout(h)
-		if self.attention:
-			h = h.mean(1)
-			enc_feat_input = enc_feat_input.mean(1)
 		return h, enc_feat_input
 
 
@@ -497,13 +490,12 @@ class GraphSMOTE(nn.Module):
 		self.decoder_loss = GaugLoss()
 		self.adj_thresh = adj_thresh
 
-	def forward(self, blocks, input_feats, adj, batch_labels):
+	def forward(self, adj, input_feats, batch_labels):
 		x = input_feats
-		x, prev_feats = self.encoder(blocks, x)
+		x, prev_feats = self.encoder(adj, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
 		pred_adj = self.decoder(x, prev_feats)
 		loss = self.decoder_loss(pred_adj, adj)
-		# Thesholding Adjacency with Harshrink since sigmoid output is positive.
 		pred_adj = F.hardshrink(pred_adj, lambd=self.adj_thresh)
 		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
@@ -568,7 +560,7 @@ class FullGraphSMOTE(nn.Module):
 		self.decoder_loss = GaugLoss()
 		self.adj_thresh = adj_thresh
 
-	def forward(self, adj, input_feats, adj, batch_labels):
+	def forward(self, adj, input_feats, batch_labels):
 		x = input_feats
 		x, prev_feats = self.encoder(adj, x)
 		x, y = self.smote.fit_generate(x, batch_labels)

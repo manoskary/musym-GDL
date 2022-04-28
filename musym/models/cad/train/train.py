@@ -5,7 +5,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 
-from musym.models.cad.models import CadModelLightning, CadDataModule
+from musym.models.cad.models.cad_model import FullGraphCadLightning, FullGraphDataModule
 from pytorch_lightning import Trainer
 import torch.nn.functional as F
 from pytorch_lightning.loggers import WandbLogger
@@ -122,34 +122,20 @@ def train(scidx, data, args, type=""):
     piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config = data
 
     group = config["dataset"]
-    job_type = "GSMOTE-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"])
+    job_type = "FullNet-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"])
 
-    datamodule = CadDataModule(
-        g=g, n_classes=n_classes, in_feats=node_features.shape[1],
-        train_nid=train_nids, val_nid=val_nids, test_nid=test_nids,
-        data_cpu=args.data_cpu, fan_out=fanouts, batch_size=config["batch_size"],
-        num_workers=config["num_workers"], use_ddp=args.num_gpus > 1)
-    if config["load_from_checkpoints"]:
-        model = CadModelLightning.load_from_checkpoint(
-            checkpoint_path=config["chk_path"],
-            node_features=node_features, labels=labels,
-            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
-            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
-            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
-            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
-            adj_thresh=config["adjacency_threshold"])
-        model_name = "Pretrained-Net"
-    else:
-        model = CadModelLightning(
-            node_features=node_features, labels=labels,
-            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
-            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
-            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
-            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
-            adj_thresh=config["adjacency_threshold"])
-        model_name = "Net"
+    datamodule = FullGraphDataModule(
+        g=g, node_features=node_features, labels=labels, piece_idx=piece_idx,
+        in_feats=node_features.shape[1], train_nid=train_nids, val_nid=val_nids, use_ddp=False
+    )
+    model = FullGraphCadLightning(
+        in_feats=node_features.shape[1], n_hidden=config["num_hidden"],
+        n_classes=labels.max()+1, n_layers=config["num_layers"],
+        activation=F.relu, dropout=config["dropout"], lr=config["lr"],
+        loss_weight=config["gamma"], weight_decay=config["weight_decay"],
+        adj_thresh=config["adjacency_threshold"])
     model_name = "{}_{}-({})x{}_lr={:.04f}_bs={}_lw={:.04f}".format(
-        model_name, scidx,
+        "FullNet", scidx,
         config["fan_out"], config["num_hidden"],
         config["lr"], config["batch_size"], config["gamma"])
 
@@ -179,11 +165,12 @@ def train(scidx, data, args, type=""):
         name=model_name,
         reinit=True
     )
-    trainer = Trainer(gpus=args.num_gpus,
-                      auto_select_gpus=True,
+    trainer = Trainer(gpus=args.num_gpus if args.num_gpus > 0 else None,
+                      auto_select_gpus=True if args.num_gpus > 0 else False,
                       max_epochs=config["num_epochs"],
                       logger=wandb_logger,
-                      callbacks=[checkpoint_callback])
+                      callbacks=[checkpoint_callback],
+                      num_sanity_val_steps=0)
 
     if not args.skip_training:
         trainer.fit(model, datamodule=datamodule)
@@ -302,7 +289,7 @@ if __name__ == '__main__':
     argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument("--batch-size", type=int, default=2048)
     argparser.add_argument("--adjacency_threshold", type=float, default=0.5)
-    argparser.add_argument("--num-workers", type=int, default=10)
+    argparser.add_argument("--num-workers", type=int, default=1)
     argparser.add_argument("--chk_path", type=str, default="")
     argparser.add_argument("--config-path", type=str, default="")
     argparser.add_argument('--data-cpu', action='store_true',
