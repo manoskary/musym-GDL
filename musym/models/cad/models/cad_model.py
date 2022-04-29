@@ -21,8 +21,6 @@ class CadGraphDataset(Dataset):
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx[0]
-        else:
-            print("My index is :", idx)
         sample = (self.graphs[idx].to_dense(), self.node_features[idx], self.labels[idx])
         return sample
 
@@ -60,9 +58,9 @@ class FullGraphCadLightning(LightningModule):
 
     def training_step(self, batch, batch_idx):
         batch_adj, batch_inputs, batch_labels = batch
-        batch_adj = batch_adj.to(self.device)
-        batch_inputs = batch_inputs.to(self.device)
-        batch_labels = batch_labels.to(self.device)
+        batch_adj = batch_adj.squeeze(0).to(self.device)
+        batch_inputs = batch_inputs.squeeze(0).to(self.device)
+        batch_labels = batch_labels.squeeze(0).to(self.device)
         batch_pred, upsampl_lab, embed_loss = self.module(batch_adj, batch_inputs, batch_labels)
         loss = self.train_loss(batch_pred, upsampl_lab) + embed_loss * self.loss_weight
         batch_pred = F.softmax(batch_pred, dim=1)
@@ -77,9 +75,9 @@ class FullGraphCadLightning(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         batch_adj, batch_inputs, batch_labels = batch
-        batch_adj = batch_adj.to(self.device)
-        batch_inputs = batch_inputs.to(self.device)
-        batch_labels = batch_labels.to(self.device)
+        batch_adj = batch_adj.squeeze(0).to(self.device)
+        batch_inputs = batch_inputs.squeeze(0).to(self.device)
+        batch_labels = batch_labels.squeeze(0).to(self.device)
         batch_pred, prev_encs = self.module.encoder(batch_adj, batch_inputs)
         pred_adj = F.hardshrink(self.module.decoder(batch_pred, prev_encs), lambd=self.module.adj_thresh)
         batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
