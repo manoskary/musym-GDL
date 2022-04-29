@@ -130,7 +130,7 @@ def train(scidx, data, args, type=""):
     )
     model = FullGraphCadLightning(
         in_feats=node_features.shape[1], n_hidden=config["num_hidden"],
-        n_classes=labels.max()+1, n_layers=config["num_layers"],
+        n_classes=n_classes, n_layers=config["num_layers"],
         activation=F.relu, dropout=config["dropout"], lr=config["lr"],
         loss_weight=config["gamma"], weight_decay=config["weight_decay"],
         adj_thresh=config["adjacency_threshold"])

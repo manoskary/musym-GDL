@@ -237,7 +237,7 @@ class SageConvLayer(nn.Module):
 		combined : torch.tensor
 			An embeded feature tensor.
 		"""
-		if not neigh_feats:
+		if neigh_feats == None:
 			neigh_feats = features
 		h = self.neigh_linear(neigh_feats)
 		if not isinstance(adj, torch.sparse.FloatTensor):
@@ -364,13 +364,18 @@ class GaugLoss(nn.Module):
 		if adj_tgt.is_sparse:
 			shape = adj_tgt.size()
 			indices = adj_tgt._indices().T
+			adj_sum = torch.sparse.sum(adj_tgt)
+			bce_weight = (shape[0] * shape[1] - adj_sum) / adj_sum
+			norm_w = shape[0] * shape[1] / float((shape[0] * shape[1] - adj_sum) * 2)
+			bce_loss = norm_w * F.binary_cross_entropy_with_logits(torch.transpose(adj_rec[:shape[1], :shape[0]], 0, 1),
+																   adj_tgt.to_dense(), pos_weight=bce_weight)
 		else:
 			shape = adj_tgt.shape
 			indices = adj_tgt.nonzero()
-		adj_sum = torch.sparse.sum(adj_tgt)
-		bce_weight = (shape[0]*shape[1] - adj_sum) / adj_sum
-		norm_w = shape[0]*shape[1] / float((shape[0]*shape[1] - adj_sum) * 2)
-		bce_loss = norm_w * F.binary_cross_entropy_with_logits(torch.transpose(adj_rec[:shape[1], :shape[0]], 0, 1), adj_tgt.to_dense(), pos_weight=bce_weight)
+			adj_sum = torch.sum(adj_tgt)
+			bce_weight = (shape[0]*shape[1] - adj_sum) / adj_sum
+			norm_w = shape[0]*shape[1] / float((shape[0]*shape[1] - adj_sum) * 2)
+			bce_loss = norm_w * F.binary_cross_entropy_with_logits(torch.transpose(adj_rec[:shape[1], :shape[0]], 0, 1), adj_tgt, pos_weight=bce_weight)
 		return bce_loss
 
 
