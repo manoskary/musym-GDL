@@ -393,6 +393,7 @@ class FullGraphEncoder(nn.Module):
 	def forward(self, adj, inputs):
 		h = inputs
 		enc_feat_input = h
+		h_res = 0
 		for l, conv in enumerate(self.layers):
 			h = conv(adj, h)
 			if l == len(self.layers) - 2 and len(self.layers) > 1:
@@ -400,10 +401,13 @@ class FullGraphEncoder(nn.Module):
 				# Should I put normalization and dropout here?
 				enc_feat_input = F.normalize(enc_feat_input)
 				enc_feat_input = self.dropout(enc_feat_input)
+				enc_feat_input = enc_feat_input + h_res
 			if l != len(self.layers) - 1:
 				h = self.activation(h)
 				h = F.normalize(h)
 				h = self.dropout(h)
+				h = h + h_res
+				h_res = h
 		return h, enc_feat_input
 
 
