@@ -5,7 +5,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 
-from musym.models.cad.models.cad_model import FullGraphCadLightning, FullGraphDataModule
+from musym.models.cad.models.cad_model import FullGraphCadLightning, FullGraphDataModule, CadGraphDataset
 from pytorch_lightning import Trainer
 import torch.nn.functional as F
 from pytorch_lightning.loggers import WandbLogger
@@ -14,8 +14,8 @@ import dgl
 import torch
 from datetime import datetime
 import os
+from torch.utils.data import DataLoader
 from musym.utils import load_and_save, min_max_scaler
-from musym.models.cad.train.cad_learning import postprocess
 from sklearn.metrics import f1_score, confusion_matrix, precision_recall_fscore_support
 import wandb
 import numpy as np
@@ -26,10 +26,10 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classe
     trues = list()
     avr_f1 = "binary" if n_classes == 2 else "macro"
     # Make args same dimensions as preds
-    piece_idx = piece_idx[idx]
-    labels = labels[idx]
-    score_duration = score_duration[idx]
-    onsets = onsets[idx]
+    idx = [torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in torch.unique(piece_idx[idx])]
+    piece_idx = torch.cat([piece_idx[scidx] for scidx in idx], dim=0)
+    score_duration = torch.cat([score_duration[scidx] for scidx in idx])
+    onsets = torch.cat([onsets[scidx] for scidx in idx])
 
     # Select Downbeats
     o = torch.zeros(len(onsets))
@@ -75,17 +75,13 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classe
     return seqs, trues, f1_score_binary
 
 
-def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, node_features, score_duration, piece_idx, onsets, device, n_classes):
+def prepare_and_postprocess(g, model, val_nids, labels, node_features, score_duration, piece_idx, onsets, device, n_classes):
     avr_f1 = "binary" if n_classes == 2 else "macro"
-    sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.module.n_layers)
     eval_model = model.module.to(device)
-    train_loader = dgl.dataloading.NodeDataLoader(g, train_nids, sampler, batch_size=batch_size)
-    val_loader = dgl.dataloading.NodeDataLoader(g, val_nids, sampler, batch_size=batch_size)
-    train_prediction = eval_model.inference(train_loader, node_features, labels, device)[train_nids]
-    val_prediction = eval_model.inference(val_loader, node_features, labels, device)[val_nids]
-    X_train, y_train, _ = to_sequences(labels, train_prediction.detach().cpu(), train_nids, score_duration, piece_idx, onsets, n_classes)
-    X_val, y_val, val_fscore = to_sequences(labels, val_prediction.detach().cpu(), val_nids, score_duration, piece_idx, onsets, n_classes)
-    post_val_acc, post_val_f1 = postprocess(X_train, y_train, X_val, y_val, n_classes)
+    dataset = CadGraphDataset(g, val_nids, piece_idx, node_features, labels)
+    val_loader = DataLoader(dataset)
+    val_prediction, val_labels = eval_model.inference(val_loader, device)
+    X_val, y_val, val_fscore = to_sequences(val_labels, val_prediction.detach().cpu(), val_nids, score_duration, piece_idx, onsets, n_classes)
     X_val = torch.vstack(X_val).numpy()
     y_val = torch.cat(y_val).numpy()
     y_pred = np.argmax(X_val, axis=1)
@@ -93,8 +89,6 @@ def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, 
     thresh_pres, thresh_rec, thresh_f1, val_sup = precision_recall_fscore_support(y_val, y_pred, average=avr_f1)
     metrics = {
         "Onset_wise Fscore": val_fscore,
-        "Postprocess Beat-wise Val Accuracy": post_val_acc,
-        "Postprocess Beat-wise Val F1": post_val_f1,
         "Threshold Beat-wise Val Accuracy": thresh_val_acc,
         "Threshold Beat-wise Val F1": thresh_f1,
         "Threshold Beat-wise Val Precision": thresh_pres,
@@ -119,7 +113,7 @@ def post_metrics(preds, target):
 
 def train(scidx, data, args, type=""):
     g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-    piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config = data
+    piece_idx, onsets, score_duration, device, dataloader_device, config = data
 
     group = config["dataset"]
     job_type = "FullNet-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"])
@@ -134,10 +128,10 @@ def train(scidx, data, args, type=""):
         activation=F.relu, dropout=config["dropout"], lr=config["lr"],
         loss_weight=config["gamma"], weight_decay=config["weight_decay"],
         adj_thresh=config["adjacency_threshold"])
-    model_name = "{}_{}-({})x{}_lr={:.04f}_bs={}_lw={:.04f}".format(
+    model_name = "{}_{}-{}x{}_lr={:.04f}_lw={:.01f}".format(
         "FullNet", scidx,
-        config["fan_out"], config["num_hidden"],
-        config["lr"], config["batch_size"], config["gamma"])
+        config["num_layers"], config["num_hidden"],
+        config["lr"], config["gamma"])
 
     wandb.init(
         project="Cad Learning",
@@ -177,11 +171,11 @@ def train(scidx, data, args, type=""):
 
     if args.postprocess:
         model.freeze()
-        metrics = prepare_and_postprocess(g, model, config["batch_size"],
-                                                                train_nids, test_nids,
-                                                                labels, node_features,
-                                                                score_duration, piece_idx,
-                                                                onsets, device, n_classes)
+        metrics = prepare_and_postprocess(
+            g, model,
+            test_nids, labels, node_features,
+            score_duration, piece_idx,
+            onsets, device, n_classes)
 
         wandb.log(metrics)
 
@@ -199,8 +193,6 @@ def main(args):
             config_update = json.load(f)
         config = {k: (config_update[k]["value"] if k in config_update.keys() else v) for k,v in config.items()}
 
-    fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
-    config["num_layers"] = len(fanouts)
     config["shuffle"] = bool(config["shuffle"])
 
     # --------------- Dataset Loading -------------------------
@@ -234,7 +226,7 @@ def main(args):
             val_nids = test_nids = torch.nonzero(piece_idx == scidx, as_tuple=True)[0]
             train_nids = torch.nonzero(piece_idx != scidx, as_tuple=True)[0]
             data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-                   piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
+                   piece_idx, onsets, score_duration, device, dataloader_device, config
             train(scidx, data, args, type="LOOCV")
     elif args.kfold:
         unique_scores = torch.unique(piece_idx)
@@ -248,13 +240,13 @@ def main(args):
             test_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in test_fold])
             train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
             data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-                   piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
+                   piece_idx, onsets, score_duration, device, dataloader_device, config
             train(fold_num, data, args, type="kFold")
     else:
         for i in range(3):
             if "wtc" in args.dataset:
                 train_fold = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-                val_fold = [13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+                val_fold = [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
             elif "hsq" in args.dataset:
                 train_fold = list(range(1, 25, 1))
                 val_fold = list(range(25, 46, 1))
@@ -264,8 +256,8 @@ def main(args):
             train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
 
             data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-                   piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
-            train("", data, args, type="SOTA")
+                   piece_idx, onsets, score_duration, device, dataloader_device, config
+            train("", data, args, type="S")
 
 
 if __name__ == '__main__':
@@ -284,10 +276,7 @@ if __name__ == '__main__':
                            help="Weight for L2 loss")
     argparser.add_argument("--gamma", type=float, default=0.5,
                            help="weight of decoder regularization loss.")
-    argparser.add_argument("--ext-mode", type=str, default=None, choices=["None", "lstm", "attention"])
-    argparser.add_argument("--fan-out", type=str, default='10,25')
     argparser.add_argument('--shuffle', type=int, default=True)
-    argparser.add_argument("--batch-size", type=int, default=2048)
     argparser.add_argument("--adjacency_threshold", type=float, default=0.5)
     argparser.add_argument("--num-workers", type=int, default=1)
     argparser.add_argument("--chk_path", type=str, default="")
@@ -298,9 +287,7 @@ if __name__ == '__main__':
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
     argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
-    argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
     argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
-    argparser.add_argument("--eval", action="store_true", help="Preview Results on Validation set.")
     argparser.add_argument("--load_from_checkpoints", action="store_true")
     argparser.add_argument("--kfold", type=int, default=0)
     argparser.add_argument("--skip_training", action="store_true")

@@ -299,13 +299,19 @@ class SageClassifier(nn.Module):
 
 	def forward(self, adj, inputs, neigh_feats):
 		h = inputs
+		h_res = 0
 		for l, conv in enumerate(self.layers):
-			h = conv(adj, h, neigh_feats)
+			if l == 0:
+				h = conv(adj, h, neigh_feats)
+			else:
+				h = conv(adj, h)
 			# Is activation on the correct position?
 			if l != self.n_layers - 1:
 				h = self.activation(h)
 			h = F.normalize(h)
 			h = self.dropout(h)
+			h = h + h_res
+			h_res = h
 		h = self.clf(h)
 		# Added softmax
 		# return F.softmax(h, dim=1)
@@ -499,9 +505,9 @@ class GraphSMOTE(nn.Module):
 		self.decoder_loss = GaugLoss()
 		self.adj_thresh = adj_thresh
 
-	def forward(self, adj, input_feats, batch_labels):
+	def forward(self, mfgs, input_feats, adj, batch_labels):
 		x = input_feats
-		x, prev_feats = self.encoder(adj, x)
+		x, prev_feats = self.encoder(mfgs, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
 		pred_adj = self.decoder(x, prev_feats)
 		loss = self.decoder_loss(pred_adj, adj)
@@ -550,21 +556,14 @@ class GraphSMOTE(nn.Module):
 		return y
 
 
-
-
 class FullGraphSMOTE(nn.Module):
 	def __init__(self, in_feats, n_hidden, n_classes, n_layers, activation=F.relu, dropout=0.1, ext_mode=None, adj_thresh=0.01):
 		super(FullGraphSMOTE, self).__init__()
-		self.n_layers = n_layers
+		self.n_layers = n_layers if n_layers > 1 else 2
 		self.n_classes = n_classes
 		self.encoder = FullGraphEncoder(in_feats, n_hidden, n_layers, activation, dropout)
-		# n_hidden = int((n_hidden / (2**(n_layers - 2)))) if n_layers >= 2 else n_hidden
-		if n_layers > 1:
-			dec_feats = n_hidden
-		else:
-			dec_feats = in_feats
-		self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
-		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
+		self.decoder = SageDecoder(n_hidden, n_hidden, dropout)
+		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers, activation=activation, dropout=dropout)
 		self.smote = SMOTE(dims=n_hidden, k=5)
 		self.decoder_loss = GaugLoss()
 		self.adj_thresh = adj_thresh
@@ -573,20 +572,24 @@ class FullGraphSMOTE(nn.Module):
 		x = input_feats
 		x, prev_feats = self.encoder(adj, x)
 		x, y = self.smote.fit_generate(x, batch_labels)
-		pred_adj = self.decoder(x, prev_feats)
+		pred_adj = self.decoder(x, x)
 		loss = self.decoder_loss(pred_adj, adj)
 		# Thesholding Adjacency with Harshrink since sigmoid output is positive.
 		pred_adj = F.hardshrink(pred_adj, lambd=self.adj_thresh)
-		x = self.classifier(pred_adj, x, prev_feats)
+		x = self.classifier(pred_adj, x, x)
 		return x, y.type(torch.long), loss
 
-	def inference(self, dataloader, node_features, labels, device):
+	def inference(self, dataloader, device):
 		prediction = list()
+		label = list()
 		with torch.no_grad():
-			for graph in tqdm(dataloader, position=0, leave=True):
-				batch_inputs = graph.ndata["feat"].to(device)
-				adj = graph.adj()
-				batch_pred, prev_encs = self.encoder(adj, batch_inputs)
+			for batch_adj, batch_inputs, batch_labels in tqdm(dataloader, position=0, leave=True):
+				batch_adj = batch_adj.squeeze(0).to(device)
+				batch_inputs = batch_inputs.squeeze(0).to(device)
+				batch_labels = batch_labels.squeeze(0)
+				batch_pred, prev_encs = self.encoder(batch_adj, batch_inputs)
 				pred_adj = F.hardshrink(self.decoder(batch_pred, prev_encs), lambd=self.adj_thresh)
 				prediction.append(F.softmax(self.classifier(pred_adj, batch_pred, prev_encs), dim=1))
-			return torch.cat(prediction, dim=0)
+				label.append(batch_labels)
+			return torch.cat(prediction, dim=0), torch.cat(label, dim=0)
+

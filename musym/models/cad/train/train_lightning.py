@@ -148,7 +148,7 @@ def train(scidx, data, args, type=""):
             loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
             adj_thresh=config["adjacency_threshold"])
         model_name = "Net"
-    model_name = "{}_{}-({})x{}_lr={:.04f}_bs={}_lw={:.04f}".format(
+    model_name = "{}_{}-({})x{}_lr={:.04f}_bs={}_lw={:.01f}".format(
         model_name, scidx,
         config["fan_out"], config["num_hidden"],
         config["lr"], config["batch_size"], config["gamma"])
@@ -278,7 +278,7 @@ def main(args):
 
             data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
                    piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
-            train("", data, args, type="SOTA")
+            train("", data, args, type="S")
 
 
 if __name__ == '__main__':

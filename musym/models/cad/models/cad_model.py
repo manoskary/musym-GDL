@@ -51,8 +51,6 @@ class FullGraphCadLightning(LightningModule):
         self.train_auroc = AUROC(num_classes=n_classes, average="macro")
         self.val_fscore = F1(num_classes=n_classes, average="macro")
         self.val_auroc = AUROC(num_classes=n_classes, average="macro")
-        self.test_fscore = F1(n_classes, average="macro")
-        self.test_auroc = AUROC(num_classes=n_classes, average="macro")
         self.train_loss = torch.nn.CrossEntropyLoss()
         self.n_classes = n_classes
 
@@ -79,8 +77,8 @@ class FullGraphCadLightning(LightningModule):
         batch_inputs = batch_inputs.squeeze(0).to(self.device)
         batch_labels = batch_labels.squeeze(0).to(self.device)
         batch_pred, prev_encs = self.module.encoder(batch_adj, batch_inputs)
-        pred_adj = F.hardshrink(self.module.decoder(batch_pred, prev_encs), lambd=self.module.adj_thresh)
-        batch_pred = self.module.classifier(pred_adj, batch_pred, prev_encs)
+        pred_adj = F.hardshrink(self.module.decoder(batch_pred, batch_pred), lambd=self.module.adj_thresh)
+        batch_pred = self.module.classifier(pred_adj, batch_pred, batch_pred)
         self.val_acc(batch_pred, batch_labels)
         loss = F.cross_entropy(batch_pred, batch_labels)
         batch_pred = F.softmax(batch_pred, dim=1)
