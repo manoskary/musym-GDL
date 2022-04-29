@@ -9,6 +9,28 @@ import partitura
 # Local Imports
 from data_loading import data_loading
 
+CHORDS = {
+    "M/m": [0, 0, 1, 1, 1, 0],
+    "sus4": [0, 1, 0, 0, 2, 0],
+	"M7": [0, 1, 2, 1, 1, 1],
+	"M7wo7": [0, 1, 0, 1, 0, 1],
+	"Mmaj7": [1, 0, 1, 2, 2, 0],
+	"Mmaj7maj9" : [1, 2, 2, 2, 3, 0],
+	"M9": [1, 1, 4, 1, 1, 2],
+	"M9wo5": [1, 1, 2, 1, 0, 1],
+	"m7": [0, 1, 2, 1, 2, 0],
+	"m7wo5": [0, 1, 1, 0, 1, 0],
+	"m9": [1, 2, 2, 2, 3, 0],
+	"m9wo5": [1, 2, 1, 1, 1, 0],
+	"m9wo7": [1, 1, 1, 1, 2, 0],
+	"mmaj7": [1, 0, 1, 3, 1, 0],
+	"Maug": [0, 0, 0, 3, 0, 0],
+	"Maug7": [1, 0, 1, 3, 1, 0],
+	"mdim": [0, 0, 2, 0, 0, 1],
+	"mdim7": [0, 0, 4, 0, 0, 2]
+}
+
+
 MOZART_STRING_QUARTETS = [
 	'k590-01', 'k155-02', 'k156-01', 'k080-02', 'k172-01',
 	'k171-01', 'k172-04', 'k157-01', 'k589-01', 'k458-01',
@@ -29,17 +51,13 @@ BACH_FUGUES = [
 	'wtc1f08', 'wtc1f20', 'wtc1f21',
 	]
 
-CAD_FEATURES = [
-    "int_vec1", "int_vec2", "int_vec3",
-    "int_vec4", "int_vec5", "int_vec6",
-    "memb_of_triad", "memb_of_sus4", "meb_of_v7",
-    "is_maj_triad", "is_min_triad", "is_pmaj_triad",
-    "is_dim", "ped_note",
-    "hv_7", "hv_3", "hv_1",
-    "bass_from_5", "is_onset", "three_from_four",
-    "four_from_three", "one_from_seven", "one_from_two",
-    "bass_moves_2m", "bass_moves_2M", "chord_has_2m", "chord_has_2M"
-    ] + ["interval"+str(i) for i in range(13)]
+CAD_FEATURES = ["int_vec1", "int_vec2", "int_vec3", "int_vec4", "int_vec5", "int_vec6"] + \
+    ["interval"+str(i) for i in range(13)] + list(CHORDS.keys()) + \
+    ["is_maj_triad", "is_pmaj_triad", "is_min_triad", 'ped_note',
+     'hv_7', "hv_5", "hv_3", "hv_1", "chord_has_2m", "chord_has_2M"] + \
+    ["bass_from_5", "three_from_four", "four_from_three", "one_from_seven",
+     "one_from_two", "bass_moves_2m", "bass_moves_2M", "bass_compatible_with_I", "bass_compatible_with_I_scale"]
+
 
 def chord_to_intervalVector(midi_pitches):
 	'''Given a chord it calculates the Interval Vector.
@@ -66,6 +84,8 @@ def chord_to_intervalVector(midi_pitches):
 	return intervalVector, list(PC)
 
 
+
+
 def make_cad_features(na):
     ca = np.zeros((len(na), len(CAD_FEATURES)))
     bass_voice = na["voice"].max()
@@ -75,34 +95,51 @@ def make_cad_features(na):
         n_cons = na[na["onset_beat"]+na["duration_beat"] == n["onset_beat"]]
         chord_pitch = np.hstack((n_onset["pitch"], n_dur["pitch"]))
         int_vec, pc_class = chord_to_intervalVector(chord_pitch.tolist())
+        chords_features = {k: (1 if int_vec == v else 0) for k,v in CHORDS.items()}
         pc_class_recentered = sorted(list(map(lambda x : x - min(pc_class), pc_class)))
-        memb_of_triad = 1 if int_vec == [0, 0, 1, 1, 1, 0] else 0
-        memb_of_sus4 = 1 if int_vec == [0, 1, 0, 0, 2, 0] else 0
-        meb_of_v7 = 1 if int_vec[1] > 0 and int_vec[2] > 1 and int_vec[3] > 0 and int_vec[4] > 1 and int_vec[5] > 0 else 0
-        is_maj_triad = 1 if memb_of_triad and pc_class_recentered in [[0, 4, 7], [0, 5, 9], [0, 3, 8]] else 0
-        is_min_triad = 1 if memb_of_triad and pc_class_recentered in [[0, 3, 7], [0, 5, 8], [0, 4, 9]] else 0
+        is_maj_triad = 1 if chords_features["M/m"] and pc_class_recentered in [[0, 4, 7], [0, 5, 9], [0, 3, 8]] else 0
+        is_min_triad = 1 if chords_features["M/m"] and pc_class_recentered in [[0, 3, 7], [0, 5, 8], [0, 4, 9]] else 0
         is_pmaj_triad = 1 if is_maj_triad and 4 in (chord_pitch - chord_pitch.min())%12 and 7 in (chord_pitch - chord_pitch.min())%12 else 0
-        # New Featyres
-        is_dim = 1 if int_vec == [0, 0, 4, 0, 0, 2] else 0
-        ped_note = 1 if n["duration_beat"] >= 3 else 0
-        # End of New Features
+        ped_note = 1 if n["duration_beat"] > n["ts_beats"] else 0
         hv_7 = 1 if (chord_pitch.max() - chord_pitch.min())%12 == 10 else 0
+        hv_5 = 1 if (chord_pitch.max() - chord_pitch.min()) % 12 == 7 else 0
         hv_3 = 1 if (chord_pitch.max() - chord_pitch.min())%12 in [3, 4] else 0
         hv_1 = 1 if (chord_pitch.max() - chord_pitch.min())%12 == 0 and chord_pitch.max() != chord_pitch.min() else 0
-        is_onset = 1 if n["onset_beat"] % 1 == 0 else 0
         chord_has_2m = 1 if n["pitch"] - chord_pitch.min() in [1, -1] else 0
         chord_has_2M = 1 if n["pitch"] - chord_pitch.min() in [2, -2] else 0
+
         if n_cons.size:
-            bass_from_5 = 1 if (chord_pitch.min()%12 - n_cons["pitch"].min()%12)%12 in [5, 7] else 0
             three_from_four = 1 if (n["pitch"] - chord_pitch.min())%12 in [3, 4] and (n["pitch"]+1 in n_cons["pitch"] or n["pitch"]+2 in n_cons["pitch"]) else 0
             four_from_three = 1 if (n["pitch"] - chord_pitch.min())%12 == 5 and (n["pitch"] - 1 in n_cons["pitch"] or n["pitch"] - 2 in n_cons["pitch"]) else 0
             one_from_seven = 1 if (n["pitch"] - chord_pitch.min())%12 == 0 and n["pitch"] != chord_pitch.min() and n["pitch"] - 1 in n_cons["pitch"] else 0
             one_from_two = 1 if (n["pitch"] - chord_pitch.min())%12 == 0 and n["pitch"] != chord_pitch.min() and (n["pitch"] + 1 in n_cons["pitch"] or n["pitch"] + 2 in n_cons["pitch"]) else 0
-            bass_moves_2m = 1 if n["pitch"] - n_cons["pitch"].min() in [1, -1] and n["voice"] == bass_voice and bass_voice in n_cons[n_cons["pitch"] == n_cons["pitch"].min()]["voice"] else 0
-            bass_moves_2M = 1 if n["pitch"] - n_cons["pitch"].min() in [2, -2] and n["voice"] == bass_voice and bass_voice in n_cons[n_cons["pitch"] == n_cons["pitch"].min()]["voice"] else 0
             # New Features
             n_cons_voice = n_cons[n_cons["voice"] == n["voice"]]
             # same voice intervals
+            if n["voice"] == bass_voice:
+                prev_voice_notes = na[np.where((na["onset_beat"] < n["onset_beat"]) & (na["voice"] == bass_voice) & (na["pitch"]%12 != n["pitch"]%12))]
+                prev_4beats = na[np.where((na["onset_beat"] < n["onset_beat"]) & (na["onset_beat"] > n["onset_beat"] - 4))]["pitch"]%12
+                prev_8beats = na[np.where((na["onset_beat"] < n["onset_beat"]) & (na["onset_beat"] > n["onset_beat"] - 8))]["pitch"]%12
+                if prev_voice_notes.size:
+                    bass_from_5 = 1 if (prev_voice_notes["onset_beat"].max() - n["onset_beat"])%12 in [5, 7] else 0
+                    bass_moves_2m = 1 if n["pitch"] - n_cons["pitch"].min() in [1, -1] else 0
+                    bass_moves_2M = 1 if n["pitch"] - n_cons["pitch"].min() in [2, -2] else 0
+                else:
+                    bass_from_5 = 0
+                    bass_moves_2m = 0
+                    bass_moves_2M = 0
+                scale = [2, 3, 5, 7, 8, 11] if (n["pitch"] + 3) in chord_pitch % 12 else [2, 4, 5, 7, 9, 11]
+                if prev_4beats.size:
+
+                    bass_compatible_with_I = 1 if (n["pitch"] + 5)%12 in prev_4beats and (n["pitch"] + 11)%12 else 0
+                else:
+                    bass_compatible_with_I = 0
+
+                if prev_8beats.size:
+                    bass_compatible_with_I_scale = 1 if all([(n["pitch"] + ni)%12 in prev_8beats for ni in scale]) else 0
+                else:
+                    bass_compatible_with_I_scale = 0
+
             if n_cons_voice.size:
                 intervals = {"interval"+str(i): (1 if i in (n_cons_voice["pitch"] - n["pitch"]) or -i in (n_cons_voice["pitch"] - n["pitch"]) else 0) for i in range(13)}
             else:
@@ -116,14 +153,15 @@ def make_cad_features(na):
             one_from_two = 0
             bass_moves_2m = 0
             bass_moves_2M = 0
+            bass_compatible_with_I = 0
+            bass_compatible_with_I_scale = 0
             intervals = {"interval" + str(i): 0 for i in range(13)}
         ca[i] = np.array(int_vec +
-                         [memb_of_triad, memb_of_sus4, meb_of_v7,
-                          is_maj_triad, is_min_triad, is_pmaj_triad,
-                          is_dim, ped_note,
-                          hv_7, hv_3, hv_1, bass_from_5, is_onset,
-                          three_from_four, four_from_three, one_from_seven,
-                          one_from_two, bass_moves_2m, bass_moves_2M, chord_has_2m, chord_has_2M]+list(intervals.values()))
+                         list(intervals.values()) + list(chords_features.values()) +
+                         [is_maj_triad, is_pmaj_triad, is_min_triad, ped_note, hv_7, hv_5, hv_3, hv_1, chord_has_2m,
+                          chord_has_2M] +
+                         [bass_from_5, three_from_four, four_from_three, one_from_seven,
+                          one_from_two, bass_moves_2m, bass_moves_2M, bass_compatible_with_I, bass_compatible_with_I_scale])
     feature_fn = CAD_FEATURES
     ca = np.array([tuple(x) for x in ca], dtype=[(x, '<f8') for x in feature_fn])
     return ca, feature_fn
@@ -349,7 +387,7 @@ def create_data(args):
                 ],
                 dtype=[('onset_beat', '<f4'), ('end_beat', '<f4'), ("nominator", "<i4"), ("denominator", "<i4")]
             )
-            na = partitura.utils.ensure_notearray(part)
+            na = partitura.utils.ensure_notearray(part, include_time_signature=True)
             ca, cad_features = make_cad_features(na)
             ba, feature_fn = partitura.musicanalysis.make_note_feats(part, "all")
             ba = np.array([tuple(x) for x in ba], dtype=[(x, '<f8') for x in feature_fn])
