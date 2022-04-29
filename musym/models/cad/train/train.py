@@ -126,7 +126,7 @@ def train(scidx, data, args, type=""):
 
     datamodule = FullGraphDataModule(
         g=g, node_features=node_features, labels=labels, piece_idx=piece_idx,
-        in_feats=node_features.shape[1], train_nid=train_nids, val_nid=val_nids, use_ddp=False
+        in_feats=node_features.shape[1], train_nid=train_nids, val_nid=val_nids, num_workers=config["num_workers"]
     )
     model = FullGraphCadLightning(
         in_feats=node_features.shape[1], n_hidden=config["num_hidden"],

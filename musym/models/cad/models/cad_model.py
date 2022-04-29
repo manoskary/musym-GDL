@@ -127,7 +127,7 @@ class FullGraphDataModule(LightningDataModule):
             batch_size=1,
             shuffle=True,
             drop_last=False,
-            num_workers=0)
+            num_workers=self.num_workers)
 
     def val_dataloader(self):
         return DataLoader(
@@ -135,7 +135,7 @@ class FullGraphDataModule(LightningDataModule):
             batch_size=1,
             shuffle=True,
             drop_last=False,
-            num_workers=0)
+            num_workers=self.num_workers)
 
 
 
