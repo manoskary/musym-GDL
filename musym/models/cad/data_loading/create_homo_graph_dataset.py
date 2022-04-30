@@ -13,7 +13,7 @@ CHORDS = {
     "M/m": [0, 0, 1, 1, 1, 0],
     "sus4": [0, 1, 0, 0, 2, 0],
 	"M7": [0, 1, 2, 1, 1, 1],
-	"M7wo7": [0, 1, 0, 1, 0, 1],
+	"M7wo5": [0, 1, 0, 1, 0, 1],
 	"Mmaj7": [1, 0, 1, 2, 2, 0],
 	"Mmaj7maj9" : [1, 2, 2, 2, 3, 0],
 	"M9": [1, 1, 4, 1, 1, 2],
@@ -84,9 +84,83 @@ def chord_to_intervalVector(midi_pitches):
 	return intervalVector, list(PC)
 
 
-
-
 def make_cad_features(na):
+    features = list()
+    bass_voice = na["voice"].max() if na["voice" == na["voice"].max()]["pitch"].mean() < na["voice" == na["voice"].min()]["pitch"].mean() else na["voice"].min()
+    high_voice = na["voice"].min() if na["voice" == na["voice"].min()]["pitch"].mean() > \
+                                      na["voice" == na["voice"].max()]["pitch"].mean() else na["voice"].max()
+    for i, n in enumerate(na):
+        d = {}
+        n_onset = na[na["onset_beat"] == n["onset_beat"]]
+        n_dur = na[np.where((na["onset_beat"] < n["onset_beat"]) & (na["onset_beat"] + na["duration_beat"] > n["onset_beat"]))]
+        chord_pitch = np.hstack((n_onset["pitch"], n_dur["pitch"]))
+        int_vec, pc_class = chord_to_intervalVector(chord_pitch.tolist())
+        pc_class_recentered = sorted(list(map(lambda x: x - min(pc_class), pc_class)))
+        maj_int_vecs = [[0, 0, 1, 1, 1, 0], [0, 0, 1, 0, 0, 0], [0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 1, 0]]
+        prev_4beats = na[np.where((na["onset_beat"] < n["onset_beat"]) & (na["onset_beat"] > n["onset_beat"] - 4))][
+                          "pitch"] % 12
+        prev_8beats = na[np.where((na["onset_beat"] < n["onset_beat"]) & (na["onset_beat"] > n["onset_beat"] - 8))][
+                          "pitch"] % 12
+        maj_pcs = [[0, 4, 7], [0, 5, 9], [0, 3, 8], [0, 4], [0, 8], [0, 7], [0, 5]]
+        scale = [2, 3, 5, 7, 8, 11] if (n["pitch"] + 3) in chord_pitch % 12 else [2, 4, 5, 7, 9, 11]
+        v7 = [[0, 1, 2, 1, 1, 1], [0, 1, 0, 1, 0, 1], [0, 1, 0, 0, 0, 0]]
+        next_voice_notes = na[np.where((na["voice"] == n["voice"]) & (na["onset_beat"] > n["onset_beat"]))]
+        prev_voice_notes = na[np.where((na["voice"] == n["voice"]) & (na["onset_beat"] < n["onset_beat"]))]
+
+        # start Z features
+        d["perfect_triad"] = int_vec in maj_int_vecs
+        d["perfect_major_triad"] = d["perfect_triad"] and pc_class_recentered in maj_pcs
+        d["is_sus4"] = int_vec == [0, 1, 0, 0, 2, 0] or pc_class_recentered == [0, 5]
+        d["in_perfect_triad_or_sus4"] = d["perfect_triad"] or d["is_sus4"]
+        d["hv_3"] = (chord_pitch.max() - chord_pitch.min()) % 12 in [3, 4]
+        d["hv_1"] = (chord_pitch.max() - chord_pitch.min()) % 12 == 0 and chord_pitch.max() != chord_pitch.min()
+        if prev_4beats.size:
+            d["bass_compatible_with_I"] = (n["pitch"] + 5) % 12 in prev_4beats and (n["pitch"] + 11) % 12 in prev_4beats
+        else:
+            d["bass_compatible_with_I"] = False
+        if prev_8beats.size:
+            d["bass_compatible_with_I_scale"] = all([(n["pitch"] + ni) % 12 in prev_8beats for ni in scale])
+        else:
+            d["bass_compatible_with_I_scale"] = False
+
+        # Make R features
+        d["strong_beat"] = (n["ts_beats"]==4 and n["onset_beat"]%2==0) or (n["onset_beat"]%n['ts_beat']==0) # to debug
+        d["sustained_note"] = n_dur.size > 0
+        if next_voice_notes.size:
+            d["rest_highest"] = n["voice"] == high_voice and next_voice_notes["onset_beat"].min() > n["onset_beat"]+n["duration_beat"]
+            d["rest_lowest"] = n["voice"] == bass_voice and next_voice_notes["onset_beat"].min() > n[
+                "onset_beat"] + n["duration_beat"]
+            d["rest_middle"] = n["voice"] != high_voice and n["voice"] != bass_voice and next_voice_notes["onset_beat"].min() > n[
+                "onset_beat"] + n["duration_beat"]
+            d["voice_ends"] = False
+        else:
+            d["rest_highest"] = False
+            d["rest_middle"] = False
+            d["rest_middle"] = False
+            d["voice_ends"] = True
+
+        # start Y features
+        d["v7"] = int_vec in v7
+        d["v7-3"] = int_vec in v7 and 4 in pc_class_recentered
+        d["has_7"] = 10 in pc_class_recentered
+        d["has_9"] = 1 in pc_class_recentered or 2 in pc_class_recentered
+        d["bass_voice"] = n["voice"] == bass_voice
+        if prev_voice_notes.size:
+            x = prev_voice_notes[prev_voice_notes["onset_beat"] == prev_voice_notes["onset_beat"].max()]["pitch"]
+            d["bass_moves_chromatic"] = n["voice"] == bass_voice and (1 in x - n["pitch"] or -1 in x-n["pitch"])
+            d["bass_moves_octave"] = n["voice"] == bass_voice and (12 in x - n["pitch"] or -12 in x - n["pitch"])
+            d["bass_compatible_v-i"] = n["voice"] == bass_voice and (7 in x - n["pitch"] or -5 in x - n["pitch"])
+            d["bass_compatible_i-v"] = n["voice"] == bass_voice and (-7 in x - n["pitch"] or 5 in x - n["pitch"])
+        # X features
+            d["bass_moves_2M"] = n["voice"] == bass_voice and (2 in x - n["pitch"] or -2 in x - n["pitch"])
+        else:
+            d["bass_moves_chromatic"] = d["bass_moves_octave"] = d["bass_compatible_v-i"] = d["bass_compatible_i-v"] = d["bass_moves_2M"] = False
+        features.append(tuple(d.values()))
+    feat_array = np.array(features, dtype=list(map(lambda x: (x, '<f8'), d.keys())))
+    return feat_array, list(d.keys())
+
+
+def make_general_features(na):
     ca = np.zeros((len(na), len(CAD_FEATURES)))
     bass_voice = na["voice"].max()
     for i, n in enumerate(na):
@@ -422,7 +496,7 @@ if __name__ == "__main__":
     parser.add_argument("--multiclass", action="store_true", default=False)
     args = parser.parse_args()
 
-    args.save_name = "cad-{}-{}".format(args.cad_type, args.source) if args.cad_type != "all" else "cad-feature-{}".format(args.source)
+    args.save_name = "cadence-{}-{}".format(args.cad_type, args.source) if args.cad_type != "all" else "cad-feature-{}".format(args.source)
 
     dirname = os.path.abspath(os.path.dirname(__file__))
     par = lambda x: os.path.abspath(os.path.join(x, os.pardir))
