@@ -90,7 +90,7 @@ CHORDS = {
     "M/m": [0, 0, 1, 1, 1, 0],
     "sus4": [0, 1, 0, 0, 2, 0],
 	"M7": [0, 1, 2, 1, 1, 1],
-	"M7wo7": [0, 1, 0, 1, 0, 1],
+	"M7wo5": [0, 1, 0, 1, 0, 1],
 	"Mmaj7": [1, 0, 1, 2, 2, 0],
 	"Mmaj7maj9" : [1, 2, 2, 2, 3, 0],
 	"M9": [1, 1, 4, 1, 1, 2],
@@ -127,9 +127,17 @@ BASIS_FN = [
 	'vertical_neighbor_feature.pitch_range'
 	]
 
-CAD_FEATURES = ["int_vec1", "int_vec2", "int_vec3", "int_vec4", "int_vec5", "int_vec6"] + \
+NOTE_FEATURES = ["int_vec1", "int_vec2", "int_vec3", "int_vec4", "int_vec5", "int_vec6"] + \
     ["interval"+str(i) for i in range(13)] + list(CHORDS.keys()) + \
     ["is_maj_triad", "is_pmaj_triad", "is_min_triad", 'ped_note',
-     'hv_7', "hv_5", "hv_3", "hv_1", "chord_has_2m", "chord_has_2M"] + \
-    ["bass_from_5", "three_from_four", "four_from_three", "one_from_seven",
-     "one_from_two", "bass_moves_2m", "bass_moves_2M", "bass_compatible_with_I", "bass_compatible_with_I_scale"]
+     'hv_7', "hv_5", "hv_3", "hv_1", "chord_has_2m", "chord_has_2M"]
+
+CAD_FEATURES = [
+	'perfect_triad', 'perfect_major_triad','is_sus4', 'in_perfect_triad_or_sus4',
+	'highest_is_3', 'highest_is_1', 'bass_compatible_with_I', 'bass_compatible_with_I_scale',
+	'one_comes_from_7', 'one_comes_from_1', 'one_comes_from_2', 'three_comes_from_4',
+	'five_comes_from_5', 'strong_beat', 'sustained_note', 'rest_highest',
+	'rest_lowest', 'rest_middle', 'voice_ends', 'v7',
+	'v7-3', 'has_7', 'has_9', 'bass_voice',
+	'bass_moves_chromatic', 'bass_moves_octave', 'bass_compatible_v-i', 'bass_compatible_i-v',
+	'bass_moves_2M']

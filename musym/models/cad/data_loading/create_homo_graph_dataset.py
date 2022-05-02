@@ -115,30 +115,29 @@ def make_cad_features(na):
 
         d["bass_compatible_with_I"] = (n["pitch"] + 5) % 12 in prev_4beats and (n["pitch"] + 11) % 12 in prev_4beats if prev_4beats.size else False
         d["bass_compatible_with_I_scale"] = all([(n["pitch"] + ni) % 12 in prev_8beats for ni in scale]) if prev_8beats.size else False
-        d["one_comes_from_7"] = (prev_voice_pitch - chord_pitch.min())%12 == 11 and (
+        d["one_comes_from_7"] = 11 in (prev_voice_pitch - chord_pitch.min())%12 and (
                 n["pitch"] - chord_pitch.min())%12 == 0 if prev_voice_notes.size and len(chord_pitch)>1 else False
-        d["one_comes_from_1"] = (prev_voice_pitch - chord_pitch.min()) % 12 == 0 and (
+        d["one_comes_from_1"] = 0 in (prev_voice_pitch - chord_pitch.min())%12 and (
                     n["pitch"] - chord_pitch.min())%12 == 0 if prev_voice_notes.size and len(chord_pitch)>1 else False
-        d["one_comes_from_2"] = (prev_voice_pitch - chord_pitch.min()) % 12 == 2 and (
+        d["one_comes_from_2"] = 2 in (prev_voice_pitch - chord_pitch.min()) % 12 and (
                 n["pitch"] - chord_pitch.min())%12 == 0 if prev_voice_notes.size and len(chord_pitch)>1 else False
-        d["three_comes_from_4"] = (prev_voice_pitch - chord_pitch.min()) % 12 == 5 and (
+        d["three_comes_from_4"] = 5 in (prev_voice_pitch - chord_pitch.min()) % 12 and (
                 n["pitch"] - chord_pitch.min())%12 in [3, 4] if prev_voice_notes.size else False
-        d["three_comes_from_4"] = (prev_voice_pitch - chord_pitch.min()) % 12 == 7 and (
+        d["five_comes_from_5"] = 7 in (prev_voice_pitch - chord_pitch.min()) % 12 and (
                 n["pitch"] - chord_pitch.min()) % 12 == 7 if prev_voice_notes.size else False
 
         # Make R features
-        d["strong_beat"] = (n["ts_beats"]==4 and n["onset_beat"]%2==0) or (n["onset_beat"]%n['ts_beat']==0) # to debug
+        d["strong_beat"] = (n["ts_beats"] == 4 and n["onset_beat"] % 2 == 0) or (n["onset_beat"] % n['ts_beats'] == 0) # to debug
         d["sustained_note"] = n_dur.size > 0
         if next_voice_notes.size:
-            d["rest_highest"] = n["voice"] == high_voice and next_voice_notes["onset_beat"].min() > n["onset_beat"]+n["duration_beat"]
-            d["rest_lowest"] = n["voice"] == bass_voice and next_voice_notes["onset_beat"].min() > n[
-                "onset_beat"] + n["duration_beat"]
+            d["rest_highest"] = n["voice"] == high_voice and next_voice_notes["onset_beat"].min() > n["onset_beat"] + n["duration_beat"]
+            d["rest_lowest"] = n["voice"] == bass_voice and next_voice_notes["onset_beat"].min() > n["onset_beat"] + n["duration_beat"]
             d["rest_middle"] = n["voice"] != high_voice and n["voice"] != bass_voice and next_voice_notes["onset_beat"].min() > n[
                 "onset_beat"] + n["duration_beat"]
             d["voice_ends"] = False
         else:
             d["rest_highest"] = False
-            d["rest_middle"] = False
+            d["rest_lowest"] = False
             d["rest_middle"] = False
             d["voice_ends"] = True
 
