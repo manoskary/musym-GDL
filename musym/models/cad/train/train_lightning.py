@@ -20,6 +20,25 @@ from sklearn.metrics import f1_score, confusion_matrix, precision_recall_fscore_
 import wandb
 import numpy as np
 
+def save_predictions(labels, preds, idx, score_duration, piece_idx):
+    import pandas as pd
+    piece_idx = piece_idx[idx]
+    labels = labels[idx]
+    score_duration = score_duration[idx]
+    for name in torch.unique(piece_idx):
+        durs = score_duration[piece_idx == name]
+        X = preds[piece_idx == name]
+        y = labels[piece_idx == name]
+        sorted_durs, resorted_idx = torch.sort(durs)
+        X = X[resorted_idx]
+        y = y[resorted_idx]
+        z1, z2, z3 = list(
+            zip(*[(udur.item(), X[sorted_durs == udur].argmax(1).tolist(), y[sorted_durs == udur].tolist()) for udur in
+                  torch.unique(sorted_durs)]))
+        pd.DataFrame(data={"score_duration": z1, "predictions": z2, "target": z3}).to_csv(
+            "../samples/predictions_score_{}.csv".format(name))
+
+
 
 def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classes):
     seqs = list()
@@ -30,7 +49,6 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classe
     labels = labels[idx]
     score_duration = score_duration[idx]
     onsets = onsets[idx]
-
     # Select Downbeats
     o = torch.zeros(len(onsets))
     o[torch.nonzero(onsets == 0, as_tuple=True)[0]] = 1.00
@@ -70,7 +88,8 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classe
                 else:
                     new_X.append(x)
                     new_y.append(z)
-            seqs.append(torch.vstack(new_X))
+            s = torch.vstack(new_X)
+            seqs.append(s)
             trues.append(torch.cat(new_y))
     return seqs, trues, f1_score_binary
 
@@ -79,13 +98,9 @@ def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, 
     avr_f1 = "binary" if n_classes == 2 else "macro"
     sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.module.n_layers)
     eval_model = model.module.to(device)
-    train_loader = dgl.dataloading.NodeDataLoader(g, train_nids, sampler, batch_size=batch_size)
     val_loader = dgl.dataloading.NodeDataLoader(g, val_nids, sampler, batch_size=batch_size)
-    train_prediction = eval_model.inference(train_loader, node_features, labels, device)[train_nids]
     val_prediction = eval_model.inference(val_loader, node_features, labels, device)[val_nids]
-    X_train, y_train, _ = to_sequences(labels, train_prediction.detach().cpu(), train_nids, score_duration, piece_idx, onsets, n_classes)
     X_val, y_val, val_fscore = to_sequences(labels, val_prediction.detach().cpu(), val_nids, score_duration, piece_idx, onsets, n_classes)
-    post_val_acc, post_val_f1 = postprocess(X_train, y_train, X_val, y_val, n_classes)
     X_val = torch.vstack(X_val).numpy()
     y_val = torch.cat(y_val).numpy()
     y_pred = np.argmax(X_val, axis=1)
@@ -93,8 +108,6 @@ def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, 
     thresh_pres, thresh_rec, thresh_f1, val_sup = precision_recall_fscore_support(y_val, y_pred, average=avr_f1)
     metrics = {
         "Onset_wise Fscore": val_fscore,
-        "Postprocess Beat-wise Val Accuracy": post_val_acc,
-        "Postprocess Beat-wise Val F1": post_val_f1,
         "Threshold Beat-wise Val Accuracy": thresh_val_acc,
         "Threshold Beat-wise Val F1": thresh_f1,
         "Threshold Beat-wise Val Precision": thresh_pres,
@@ -123,6 +136,20 @@ def train(scidx, data, args, type=""):
 
     group = config["dataset"]
     job_type = "GSMOTE-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"])
+    mn = "Pretrained-Net" if config["load_from_checkpoints"] else "Net"
+    model_name = "{}_{}-({})x{}_lr={:.04f}_bs={}_lw={:.01f}".format(
+        mn, scidx,
+        config["fan_out"], config["num_hidden"],
+        config["lr"], config["batch_size"], config["gamma"])
+
+    run = wandb.init(
+        project="Cadence Detection",
+        group=group,
+        job_type=job_type,
+        reinit=True,
+        name=model_name,
+        config=config
+    )
 
     datamodule = CadDataModule(
         g=g, n_classes=n_classes, in_feats=node_features.shape[1],
@@ -130,15 +157,16 @@ def train(scidx, data, args, type=""):
         data_cpu=args.data_cpu, fan_out=fanouts, batch_size=config["batch_size"],
         num_workers=config["num_workers"], use_ddp=args.num_gpus > 1)
     if config["load_from_checkpoints"]:
+        artifact = run.use_artifact('melkisedeath/Cadence Detection/model-{}:latest'.format(config["run_id"]), type='model')
+        artifact_dir = artifact.download()
         model = CadModelLightning.load_from_checkpoint(
-            checkpoint_path=config["chk_path"],
+            checkpoint_path=os.path.join(os.path.normpath(artifact_dir), "model.ckpt"),
             node_features=node_features, labels=labels,
             in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
             n_classes=datamodule.n_classes, n_layers=config["num_layers"],
             activation=F.relu, dropout=config["dropout"], lr=config["lr"],
             loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
             adj_thresh=config["adjacency_threshold"])
-        model_name = "Pretrained-Net"
     else:
         model = CadModelLightning(
             node_features=node_features, labels=labels,
@@ -147,43 +175,33 @@ def train(scidx, data, args, type=""):
             activation=F.relu, dropout=config["dropout"], lr=config["lr"],
             loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
             adj_thresh=config["adjacency_threshold"])
-        model_name = "Net"
-    model_name = "{}_{}-({})x{}_lr={:.04f}_bs={}_lw={:.01f}".format(
-        model_name, scidx,
-        config["fan_out"], config["num_hidden"],
-        config["lr"], config["batch_size"], config["gamma"])
 
-    wandb.init(
-        project="Cad Learning",
-        group=group,
-        job_type=job_type,
-        reinit=True,
-        name=model_name
-    )
     # Train
-    dt = datetime.today()
-    dt_str = "{}.{}.{}.{}.{}".format(dt.year, dt.month, dt.day, dt.hour, dt.minute)
-    checkpoint_callback = ModelCheckpoint(
-        dirpath="./cad_checkpoints/{}/{}/{}-{}".format(group, job_type, model_name, dt_str),
-        monitor='val_fscore_epoch',
-        mode="max",
-        save_top_k=5,
-        save_last=True,
-        filename='{epoch}-{val_fscore_epoch:.2f}-{train_loss:.2f}'
-    )
+    # dt = datetime.today()
+    # dt_str = "{}.{}.{}.{}.{}".format(dt.year, dt.month, dt.day, dt.hour, dt.minute)
+    # checkpoint_callback = ModelCheckpoint(
+    #     dirpath="./cad_checkpoints/{}/{}/{}-{}".format(group, job_type, model_name, dt_str),
+    #     monitor='val_fscore_epoch',
+    #     mode="max",
+    #     save_top_k=1,
+    #     save_last=True,
+    #     filename='{epoch}-{val_fscore_epoch:.2f}-{train_loss:.2f}'
+    # )
     # early_stopping = EarlyStopping('val_fscore', mode="max", patience=10)
     wandb_logger = WandbLogger(
-        project="Cad Learning",
+        project="Cadence Detection",
         group=group,
         job_type=job_type,
         name=model_name,
+        log_model=True,
         reinit=True
     )
     trainer = Trainer(gpus=args.num_gpus,
-                      auto_select_gpus=True,
+                      auto_select_gpus=True if args.num_gpus else False,
                       max_epochs=config["num_epochs"],
                       logger=wandb_logger,
-                      callbacks=[checkpoint_callback])
+                      # callbacks=[checkpoint_callback]
+                      )
 
     if not args.skip_training:
         trainer.fit(model, datamodule=datamodule)
@@ -217,11 +235,28 @@ def main(args):
     config["shuffle"] = bool(config["shuffle"])
 
     # --------------- Dataset Loading -------------------------
-
-    g, n_classes = load_and_save(config["dataset"], args.data_dir)
+    if args.features == "all":
+        g, n_classes = load_and_save("cad_feature_" + args.dataset, args.data_dir)
+    elif args.features == "local":
+        g, n_classes = load_and_save("cad_local_" + args.dataset, args.data_dir)
     g = dgl.add_self_loop(dgl.add_reverse_edges(g))
     # training defs
     labels = g.ndata.pop('label')
+    if args.cad_type == "pac":
+        labels = (labels == 1).long()
+        n_classes = 2
+    elif args.cad_type == "riac":
+        labels = (labels != 0).long()
+        n_classes = 2
+    elif args.cad_type == "hc":
+        labels = (labels == 2).long()
+        n_classes = 2
+    elif args.cad_type in ["multiclass", "multi"]:
+        pass
+    else:
+        raise AttributeError("Cadence Type {} not recognized".format(args.cad_type))
+
+    # training defs
     train_nids = torch.nonzero(g.ndata.pop('train_mask'), as_tuple=True)[0]
     node_features = g.ndata.pop('feat')
     piece_idx = g.ndata.pop("score_name")
@@ -264,21 +299,22 @@ def main(args):
                    piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
             train(fold_num, data, args, type="kFold")
     else:
-        for i in range(3):
-            if "wtc" in args.dataset:
-                train_fold = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-                val_fold = [13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
-            elif "hsq" in args.dataset:
-                train_fold = list(range(1, 25, 1))
-                val_fold = list(range(25, 46, 1))
-            else:
-                raise ValueError("Invalid training configuration. A split has not been defined for the {} dataset.".format(args.dataset))
-            val_nids = test_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in val_fold])
-            train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
+        if "wtc" in args.dataset:
+            train_fold = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            val_fold = [13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        elif "hsq" in args.dataset:
+            train_fold = list(range(1, 25, 1))
+            val_fold = list(range(25, 46, 1))
+        else:
+            num_scores = len(torch.unique(piece_idx))
+            train_fold = list(range(int(num_scores*0.7)))
+            val_fold = list(range(int(num_scores*0.7), num_scores, 1))
+        val_nids = test_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in val_fold])
+        train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
 
-            data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-                   piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
-            train("", data, args, type="S")
+        data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
+               piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
+        train("", data, args, type="S")
 
 
 if __name__ == '__main__':
@@ -287,7 +323,9 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("--num-gpus", type=int, default=1)
-    argparser.add_argument("--dataset", type=str, default="cad_pac_wtc")
+    argparser.add_argument("--dataset", type=str, default="wtc", choices=["wtc", "hsq", "msq", "quartets"])
+    argparser.add_argument("--cad-type", type=str, default="pac", choices=["pac", "riac", "hc", "multiclass", "multi"])
+    argparser.add_argument("--features", type=str, default="all", choices=["local", "all"])
     argparser.add_argument('--num-epochs', type=int, default=100)
     argparser.add_argument('--num-hidden', type=int, default=256)
     argparser.add_argument('--num-layers', type=int, default=2)
@@ -300,10 +338,10 @@ if __name__ == '__main__':
     argparser.add_argument("--ext-mode", type=str, default=None, choices=["None", "lstm", "attention"])
     argparser.add_argument("--fan-out", type=str, default='10,25')
     argparser.add_argument('--shuffle', type=int, default=True)
-    argparser.add_argument("--batch-size", type=int, default=2048)
+    argparser.add_argument("--batch-size", type=int, default=1024)
     argparser.add_argument("--adjacency_threshold", type=float, default=0.5)
-    argparser.add_argument("--num-workers", type=int, default=10)
-    argparser.add_argument("--chk_path", type=str, default="")
+    argparser.add_argument("--num-workers", type=int, default=4)
+    argparser.add_argument("--wandb_id", type=str, default="")
     argparser.add_argument("--config-path", type=str, default="")
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts all node features and labels "

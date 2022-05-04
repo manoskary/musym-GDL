@@ -225,9 +225,7 @@ def check_annotations(cadences, part, na, key, time_signature, labels, note_arra
                 cadences = list(map(lambda x: 2 * x, cadences))
 
     for cad_onset in cadences:
-        labels[np.hstack((np.where(note_array["onset_beat"] == cad_onset)[0], np.where(
-            (note_array["onset_beat"] + note_array["duration_beat"] > cad_onset) & (
-                    note_array["onset_beat"] < cad_onset))[0]))] = label_num
+        labels[np.where(note_array["onset_beat"] == cad_onset)[0]] = label_num
         # check for false annotation that does not have match
         if np.all((note_array["onset_beat"] == cad_onset) == False):
             raise IndexError(
@@ -440,7 +438,7 @@ if __name__ == "__main__":
     parser.add_argument("--multiclass", action="store_true", default=False)
     args = parser.parse_args()
 
-    args.save_name = "cadence-{}-{}".format(args.cad_type, args.source) if args.cad_type != "all" else "cad-feature-{}".format(args.source)
+    args.save_name = "cad-{}-{}".format(args.cad_type, args.source) if args.cad_type != "all" else "cad-feature-{}".format(args.source)
 
     dirname = os.path.abspath(os.path.dirname(__file__))
     par = lambda x: os.path.abspath(os.path.join(x, os.pardir))

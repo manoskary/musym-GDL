@@ -138,7 +138,8 @@ def train(scidx, data, args, type=""):
         group=group,
         job_type=job_type,
         reinit=True,
-        name=model_name
+        name=model_name,
+        config=config
     )
     # Train
     dt = datetime.today()
@@ -153,7 +154,8 @@ def train(scidx, data, args, type=""):
     )
     # early_stopping = EarlyStopping('val_fscore', mode="max", patience=10)
     wandb_logger = WandbLogger(
-        project="Cad Learning",
+        project="Cadence Detection",
+        log_model=True,
         group=group,
         job_type=job_type,
         name=model_name,
@@ -196,11 +198,24 @@ def main(args):
     config["shuffle"] = bool(config["shuffle"])
 
     # --------------- Dataset Loading -------------------------
-
-    g, n_classes = load_and_save(config["dataset"], args.data_dir)
+    if args.features == "all":
+        g, n_classes = load_and_save("cad_feature_"+args.dataset, args.data_dir)
+    elif args.features == "local":
+        g, n_classes = load_and_save("cad_local_" + args.dataset, args.data_dir)
     g = dgl.add_self_loop(dgl.add_reverse_edges(g))
     # training defs
     labels = g.ndata.pop('label')
+    if args.cad_type == "pac":
+        labels = (labels == 1).long()
+    elif args.cad_type == "riac":
+        labels = (labels != 0).long()
+    elif args.cad_type == "hc":
+        labels = (labels == 2).long()
+    elif args.cad_type in ["multiclass", "multi"]:
+        pass
+    else:
+        raise AttributeError("Cadence Type {} not recognized".format(args.cad_type))
+
     train_nids = torch.nonzero(g.ndata.pop('train_mask'), as_tuple=True)[0]
     node_features = g.ndata.pop('feat')
     piece_idx = g.ndata.pop("score_name")
@@ -266,7 +281,9 @@ if __name__ == '__main__':
     argparser.add_argument('--gpu', type=int, default=0,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument("--num-gpus", type=int, default=1)
-    argparser.add_argument("--dataset", type=str, default="cad_pac_wtc")
+    argparser.add_argument("--dataset", type=str, default="wtc", choices=["wtc", "hsq", "msq", "quartets"])
+    argparser.add_argument("--cad-type", type=str, default="pac", choices=["pac", "riac", "hc", "multiclass", "multi"])
+    argparser.add_argument("--features", type=str, default="all", choices=["local", "all"])
     argparser.add_argument('--num-epochs', type=int, default=100)
     argparser.add_argument('--num-hidden', type=int, default=256)
     argparser.add_argument('--num-layers', type=int, default=2)
