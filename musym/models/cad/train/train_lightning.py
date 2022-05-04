@@ -157,7 +157,7 @@ def train(scidx, data, args, type=""):
         data_cpu=args.data_cpu, fan_out=fanouts, batch_size=config["batch_size"],
         num_workers=config["num_workers"], use_ddp=args.num_gpus > 1)
     if config["load_from_checkpoints"]:
-        artifact = run.use_artifact('melkisedeath/Cadence Detection/model-{}:latest'.format(config["run_id"]), type='model')
+        artifact = run.use_artifact('melkisedeath/Cadence Detection/model-{}:latest'.format(config["wandb_id"]), type='model')
         artifact_dir = artifact.download()
         model = CadModelLightning.load_from_checkpoint(
             checkpoint_path=os.path.join(os.path.normpath(artifact_dir), "model.ckpt"),
