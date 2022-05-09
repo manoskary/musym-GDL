@@ -9,16 +9,14 @@ from musym.models.cad.models import CadModelLightning, CadDataModule
 from pytorch_lightning import Trainer
 import torch.nn.functional as F
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
 import dgl
 import torch
-from datetime import datetime
 import os
 from musym.utils import load_and_save, min_max_scaler
-from musym.models.cad.train.cad_learning import postprocess
-from sklearn.metrics import f1_score, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import f1_score, precision_recall_fscore_support
 import wandb
 import numpy as np
+
 
 def save_predictions(labels, preds, idx, score_duration, piece_idx):
     import pandas as pd
@@ -37,7 +35,6 @@ def save_predictions(labels, preds, idx, score_duration, piece_idx):
                   torch.unique(sorted_durs)]))
         pd.DataFrame(data={"score_duration": z1, "predictions": z2, "target": z3}).to_csv(
             "../samples/predictions_score_{}.csv".format(name))
-
 
 
 def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classes):
@@ -66,18 +63,15 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classe
         # Gather on non-augmented Pieces
         if name != 0:
             durs = score_duration[piece_idx == name]
-            is_onset = onsets[piece_idx == name]
             X = preds[piece_idx == name]
             y = labels[piece_idx == name]
             sorted_durs, resorted_idx = torch.sort(durs)
             X = X[resorted_idx]
             y = y[resorted_idx]
-            is_onset = is_onset[resorted_idx]
             new_X = []
             new_y = []
             # group by onset
             for udur in torch.unique(sorted_durs):
-                # x = torch.cat((X[sorted_durs == udur], is_onset[sorted_durs == udur].unsqueeze(1)), dim=1)
                 x = X[sorted_durs == udur]
                 z = y[sorted_durs == udur]
                 if len(x.shape) > 1:
@@ -114,19 +108,6 @@ def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, 
         "Threshold Beat-wise Val Recall": thresh_rec,
         "Threshold Beat-wise Val Support": val_sup,
         }
-    return metrics
-
-
-def post_metrics(preds, target):
-    tn, fp, fn, tp = confusion_matrix(target, preds).ravel()
-    f1 = f1_score(target, preds, average = "binary")
-    metrics = {
-        "true_positives": tp,
-        "true_negatives": tn,
-        "false_negatives": fn,
-        "num_beats": len(preds),
-        "f1_score": f1
-    }
     return metrics
 
 
@@ -176,18 +157,6 @@ def train(scidx, data, args, type=""):
             loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
             adj_thresh=config["adjacency_threshold"])
 
-    # Train
-    # dt = datetime.today()
-    # dt_str = "{}.{}.{}.{}.{}".format(dt.year, dt.month, dt.day, dt.hour, dt.minute)
-    # checkpoint_callback = ModelCheckpoint(
-    #     dirpath="./cad_checkpoints/{}/{}/{}-{}".format(group, job_type, model_name, dt_str),
-    #     monitor='val_fscore_epoch',
-    #     mode="max",
-    #     save_top_k=1,
-    #     save_last=True,
-    #     filename='{epoch}-{val_fscore_epoch:.2f}-{train_loss:.2f}'
-    # )
-    # early_stopping = EarlyStopping('val_fscore', mode="max", patience=10)
     wandb_logger = WandbLogger(
         project="Cadence Detection",
         group=group,
@@ -199,22 +168,20 @@ def train(scidx, data, args, type=""):
     trainer = Trainer(gpus=args.num_gpus,
                       auto_select_gpus=True if args.num_gpus else False,
                       max_epochs=config["num_epochs"],
-                      logger=wandb_logger,
-                      # callbacks=[checkpoint_callback]
+                      logger=wandb_logger
                       )
 
     if not args.skip_training:
         trainer.fit(model, datamodule=datamodule)
 
-    if args.postprocess:
-        model.freeze()
-        metrics = prepare_and_postprocess(g, model, config["batch_size"],
-                                                                train_nids, test_nids,
-                                                                labels, node_features,
-                                                                score_duration, piece_idx,
-                                                                onsets, device, n_classes)
+    model.freeze()
+    metrics = prepare_and_postprocess(g, model, config["batch_size"],
+                                                            train_nids, test_nids,
+                                                            labels, node_features,
+                                                            score_duration, piece_idx,
+                                                            onsets, device, n_classes)
 
-        wandb.log(metrics)
+    wandb.log(metrics)
 
 
 def main(args):
@@ -349,9 +316,6 @@ if __name__ == '__main__':
                                 "be undesired if they cannot fit in GPU memory at once. "
                                 "This flag disables that.")
     argparser.add_argument("--data-dir", type=str, default=os.path.abspath("../data/"))
-    argparser.add_argument("--preprocess", action="store_true", help="Train and store graph embedding")
-    argparser.add_argument("--postprocess", action="store_true", help="Train and DBNN")
-    argparser.add_argument("--eval", action="store_true", help="Preview Results on Validation set.")
     argparser.add_argument("--load_from_checkpoints", action="store_true")
     argparser.add_argument("--kfold", type=int, default=0)
     argparser.add_argument("--skip_training", action="store_true")
