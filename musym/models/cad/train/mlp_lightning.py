@@ -5,7 +5,6 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 
-from musym.models.cad.models import CadModelLightning, CadDataModule
 from pytorch_lightning import Trainer
 import torch.nn.functional as F
 from pytorch_lightning.loggers import WandbLogger
@@ -16,6 +15,117 @@ from musym.utils import load_and_save, min_max_scaler
 from sklearn.metrics import f1_score, precision_recall_fscore_support
 import wandb
 import numpy as np
+from musym.models.cad.models import MLPSMOTE
+from torchmetrics import Accuracy, AUROC, F1
+from pytorch_lightning import LightningDataModule, LightningModule
+from torch.utils.data import DataLoader, Dataset
+
+
+class CustomCadDataset(Dataset):
+    def __init__(self, idx, features, labels):
+        super(CustomCadDataset, self).__init__()
+        self.cad_features = features[idx]
+        self.cad_labels = labels[idx]
+
+    def __len__(self):
+        return len(self.cad_labels)
+
+    def __getitem__(self, idx):
+        feat = self.cad_features[idx]
+        label = self.cad_labels[idx]
+        return feat, label
+
+class CadModelLightning(LightningModule):
+    def __init__(self,
+                 in_feats,
+                 n_hidden,
+                 n_classes,
+                 activation,
+                 dropout,
+                 lr,
+                 loss_weight = 0.007,
+                 weight_decay=5e-4,
+        ):
+        super(CadModelLightning, self).__init__()
+        self.save_hyperparameters()
+        self.loss_weight = loss_weight
+        self.module = MLPSMOTE(in_feats, n_hidden, n_classes, activation, dropout)
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.train_acc = Accuracy()
+        self.val_acc = Accuracy()
+        self.test_acc = Accuracy()
+        self.train_fscore = F1(num_classes=n_classes, average="macro")
+        self.train_auroc = AUROC(num_classes=n_classes, average="macro")
+        self.val_fscore = F1(num_classes=n_classes, average="macro")
+        self.val_auroc = AUROC(num_classes=n_classes, average="macro")
+        self.test_fscore = F1(n_classes, average="macro")
+        self.test_auroc = AUROC(num_classes=n_classes, average="macro")
+        self.train_loss = torch.nn.CrossEntropyLoss()
+        self.n_classes = n_classes
+
+    def training_step(self, batch, batch_idx):
+        cad_features, cad_labels = batch
+        batch_inputs = cad_features.to(self.device)
+        batch_labels = cad_labels.to(self.device)
+        batch_pred, upsampl_lab = self.module(batch_inputs, batch_labels)
+        loss = self.train_loss(batch_pred, upsampl_lab)
+        batch_pred = F.softmax(batch_pred, dim=1)
+        self.train_acc(batch_pred, upsampl_lab)
+        self.train_fscore(batch_pred[:len(batch_labels)], batch_labels)
+        self.train_auroc(batch_pred[:len(batch_labels)], batch_labels)
+        self.log('train_loss', loss.item(), prog_bar=True, on_step=True, on_epoch=True)
+        self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True)
+        self.log("train_fscore", self.train_fscore, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("train_auroc", self.train_auroc, on_step=True, on_epoch=True, sync_dist=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        cad_features, cad_labels = batch
+        batch_inputs = cad_features.to(self.device)
+        batch_labels = cad_labels.to(self.device)
+        batch_pred = self.module.pred_forward(batch_inputs)
+        self.val_acc(batch_pred, batch_labels)
+        loss = F.cross_entropy(batch_pred, batch_labels)
+        batch_pred = F.softmax(batch_pred, dim=1)
+        self.val_fscore(batch_pred, batch_labels)
+        self.val_auroc(batch_pred, batch_labels)
+        self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
+        self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val_fscore", self.val_fscore, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val_auroc", self.val_auroc, on_step=True, on_epoch=True, sync_dist=True)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max"),
+                "interval": "epoch",
+                "frequency": 1,
+                "monitor": "val_fscore"
+            }
+        }
+
+
+class CadDataModule(LightningDataModule):
+    def __init__(self, features, labels, train_nid, val_nid=[], test_nid=[], batch_size=1000, num_workers=4):
+        super().__init__()
+        self.train_nid, self.val_nid, self.test_nid = train_nid, val_nid, test_nid
+        self.train_dataset = CustomCadDataset(train_nid, features, labels)
+        self.val_dataset = CustomCadDataset(val_nid, features, labels)
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers)
+
+
+
+
 
 
 def save_predictions(labels, preds, idx, score_duration, piece_idx):
@@ -90,10 +200,9 @@ def to_sequences(labels, preds, idx, score_duration, piece_idx, onsets, n_classe
 
 def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, node_features, score_duration, piece_idx, onsets, device, n_classes):
     avr_f1 = "binary" if n_classes == 2 else "macro"
-    sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.module.n_layers)
     eval_model = model.module.to(device)
-    val_loader = dgl.dataloading.NodeDataLoader(g, val_nids, sampler, batch_size=batch_size)
-    val_prediction = eval_model.inference(val_loader, node_features, labels, device)[val_nids]
+    val_loader = DataLoader(CustomCadDataset(val_nids, node_features, labels), batch_size=batch_size, shuffle=False, drop_last=False)
+    val_prediction = eval_model.inference(val_loader, device)
     X_val, y_val, val_fscore = to_sequences(labels, val_prediction.detach().cpu(), val_nids, score_duration, piece_idx, onsets, n_classes)
     X_val = torch.vstack(X_val).numpy()
     y_val = torch.cat(y_val).numpy()
@@ -113,10 +222,10 @@ def prepare_and_postprocess(g, model, batch_size, train_nids, val_nids, labels, 
 
 def train(scidx, data, args, type=""):
     g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-    piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config = data
+    piece_idx, onsets, score_duration, device, dataloader_device, config = data
 
     group = config["dataset"]
-    job_type = "GSMOTE-{}_{}x{}".format(type, config["num_layers"], config["num_hidden"])
+    job_type = "MLP-{}-{}".format(type, config["num_hidden"])
     mn = "Pretrained-Net" if config["load_from_checkpoints"] else "Net"
     model_name = "{}_{}-({})x{}_lr={:.04f}_bs={}_lw={:.01f}".format(
         mn, scidx,
@@ -133,29 +242,23 @@ def train(scidx, data, args, type=""):
     )
 
     datamodule = CadDataModule(
-        g=g, n_classes=n_classes, in_feats=node_features.shape[1],
+        features=node_features, labels=labels,
         train_nid=train_nids, val_nid=val_nids, test_nid=test_nids,
-        data_cpu=args.data_cpu, fan_out=fanouts, batch_size=config["batch_size"],
-        num_workers=config["num_workers"], use_ddp=args.num_gpus > 1)
+        batch_size=config["batch_size"], num_workers=config["num_workers"])
     if config["load_from_checkpoints"]:
         artifact = run.use_artifact('melkisedeath/Cadence Detection/model-{}:latest'.format(config["wandb_id"]), type='model')
         artifact_dir = artifact.download()
         model = CadModelLightning.load_from_checkpoint(
             checkpoint_path=os.path.join(os.path.normpath(artifact_dir), "model.ckpt"),
-            node_features=node_features, labels=labels,
-            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
-            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
-            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
-            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
-            adj_thresh=config["adjacency_threshold"])
+            in_feats=node_features.shape[1], n_hidden=config["num_hidden"],
+            n_classes=n_classes, activation=F.relu, dropout=config["dropout"],
+            lr=config["lr"], weight_decay=config["weight_decay"])
     else:
         model = CadModelLightning(
-            node_features=node_features, labels=labels,
-            in_feats=datamodule.in_feats, n_hidden=config["num_hidden"],
-            n_classes=datamodule.n_classes, n_layers=config["num_layers"],
-            activation=F.relu, dropout=config["dropout"], lr=config["lr"],
-            loss_weight=config["gamma"], ext_mode=config["ext_mode"], weight_decay=config["weight_decay"],
-            adj_thresh=config["adjacency_threshold"])
+            in_feats=node_features.shape[1], n_hidden=config["num_hidden"],
+            n_classes=n_classes, activation=F.relu, dropout=config["dropout"],
+            lr=config["lr"], weight_decay=config["weight_decay"]
+            )
 
     wandb_logger = WandbLogger(
         project="Cadence Detection",
@@ -200,8 +303,6 @@ def main(args):
             config_update = json.load(f)
         config = {k: (config_update[k]["value"] if k in config_update.keys() else v) for k,v in config.items()}
 
-    fanouts = [int(fanout) for fanout in config["fan_out"].split(',')]
-    config["num_layers"] = len(fanouts)
     config["shuffle"] = bool(config["shuffle"])
 
     # --------------- Dataset Loading -------------------------
@@ -254,7 +355,7 @@ def main(args):
             val_nids = test_nids = torch.nonzero(piece_idx == scidx, as_tuple=True)[0]
             train_nids = torch.nonzero(piece_idx != scidx, as_tuple=True)[0]
             data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-                   piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
+                   piece_idx, onsets, score_duration, device, dataloader_device, config
             train(scidx, data, args, type="LOOCV")
     elif args.kfold:
         unique_scores = torch.unique(piece_idx)
@@ -268,7 +369,7 @@ def main(args):
             test_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in test_fold])
             train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
             data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-                   piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
+                   piece_idx, onsets, score_duration, device, dataloader_device, config
             train(fold_num, data, args, type="kFold")
     else:
         if "wtc" in args.dataset:
@@ -285,7 +386,7 @@ def main(args):
         train_nids = torch.cat([torch.nonzero(piece_idx == scidx, as_tuple=True)[0] for scidx in train_fold])
 
         data = g, n_classes, labels, train_nids, val_nids, test_nids, node_features, \
-               piece_idx, onsets, score_duration, device, dataloader_device, fanouts, config
+               piece_idx, onsets, score_duration, device, dataloader_device, config
         train("", data, args, type="S")
 
 
@@ -300,7 +401,7 @@ if __name__ == '__main__':
     argparser.add_argument("--features", type=str, default="all", choices=["local", "all", "cad"])
     argparser.add_argument('--num-epochs', type=int, default=100)
     argparser.add_argument('--num-hidden', type=int, default=256)
-    argparser.add_argument('--num-layers', type=int, default=2)
+    argparser.add_argument('--num-layers', type=int, default=0)
     argparser.add_argument('--lr', type=float, default=0.0007)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument("--weight-decay", type=float, default=0.005,
@@ -308,7 +409,7 @@ if __name__ == '__main__':
     argparser.add_argument("--gamma", type=float, default=0.5,
                            help="weight of decoder regularization loss.")
     argparser.add_argument("--ext-mode", type=str, default=None, choices=["None", "lstm", "attention"])
-    argparser.add_argument("--fan-out", type=str, default='10,25')
+    argparser.add_argument("--fan-out", type=str, default='')
     argparser.add_argument('--shuffle', type=int, default=True)
     argparser.add_argument("--batch-size", type=int, default=1024)
     argparser.add_argument("--adjacency_threshold", type=float, default=0.5)
@@ -327,3 +428,6 @@ if __name__ == '__main__':
     argparser.add_argument("--loocv", action="store_true")
     args = argparser.parse_args()
     pred = main(args)
+
+
+

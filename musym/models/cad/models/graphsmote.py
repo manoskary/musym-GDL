@@ -7,6 +7,7 @@ from random import randint
 import random
 import dgl
 
+
 class SMOTE(object):
 	"""
 	Minority Sampling with SMOTE.
@@ -209,9 +210,12 @@ class MBSMOTE(object):
 
 # Graphsage layer
 class SageConvLayer(nn.Module):
-	def __init__(self, in_features, out_features, bias=False):
+	def __init__(self, in_features, out_features, neigh_features=None, bias=False):
 		super(SageConvLayer, self).__init__()
-		self.neigh_linear = nn.Linear(in_features, in_features, bias=bias)
+		if neigh_features:
+			self.neigh_linear = nn.Linear(neigh_features, in_features, bias=bias)
+		else:
+			self.neigh_linear = nn.Linear(in_features, in_features, bias=bias)
 		self.linear = nn.Linear(in_features * 2, out_features, bias=bias)
 		self.reset_parameters()
 
@@ -276,8 +280,51 @@ class SageEncoder(nn.Module):
 		return h
 
 
+class MLPSMOTE(nn.Module):
+	def __init__(self, in_feats, n_hidden, n_classes, activation=F.relu, dropout=0.5):
+		super(MLPSMOTE, self).__init__()
+		self.n_classes = n_classes
+		self.activation = activation
+		self.dropout = nn.Dropout(dropout)
+		self.encoder = nn.Linear(in_feats, n_hidden)
+		self.interlinear = nn.Linear(n_hidden, n_hidden)
+		self.clf = nn.Linear(n_hidden, n_classes)
+		self.smote = SMOTE(dims=n_hidden, k=3)
+		self.reset_parameters()
+
+	def reset_parameters(self):
+		nn.init.xavier_uniform_(self.encoder.weight, gain=nn.init.calculate_gain('relu'))
+		nn.init.xavier_uniform_(self.interlinear.weight, gain=nn.init.calculate_gain('relu'))
+		nn.init.xavier_uniform_(self.clf.weight, gain=nn.init.calculate_gain('relu'))
+
+	def forward(self, input_feats, batch_labels):
+		x = self.encoder(input_feats)
+		x = self.dropout(F.normalize(self.activation(x)))
+		x, y = self.smote.fit_generate(x, batch_labels)
+		x = self.interlinear(x)
+		x = self.dropout(F.normalize(self.activation(x)))
+		x = self.clf(x)
+		return x, y.long()
+
+	def pred_forward(self, input_feats):
+		x = self.encoder(input_feats)
+		x = self.dropout(F.normalize(self.activation(x)))
+		x = self.interlinear(x)
+		x = self.dropout(F.normalize(self.activation(x)))
+		x = self.clf(x)
+		return x
+
+	def inference(self, dataloader, device):
+		prediction = list()
+		with torch.no_grad():
+			for batch_inputs, batch_labels in tqdm(dataloader, position=0, leave=True):
+				batch_inputs = batch_inputs.to(device)
+				prediction.append(self.pred_forward(batch_inputs))
+			return torch.cat(prediction, dim=0)
+
+
 class SageClassifier(nn.Module):
-	def __init__(self, in_feats, n_hidden, n_classes, n_layers=1, activation=F.relu, dropout=0.1):
+	def __init__(self, in_feats, n_hidden, n_classes, n_layers=1, activation=F.relu, dropout=0.1, neigh_features=None):
 		super(SageClassifier, self).__init__()
 		self.in_feats = in_feats
 		self.n_hidden = n_hidden
@@ -287,7 +334,7 @@ class SageClassifier(nn.Module):
 		self.clf = nn.Linear(n_hidden, n_classes)
 		self.layers = nn.ModuleList()
 		self.linear = nn.Linear(n_hidden, n_hidden)
-		self.layers.append(SageConvLayer(self.in_feats, self.n_hidden))
+		self.layers.append(SageConvLayer(self.in_feats, self.n_hidden, neigh_features))
 		for i in range(n_layers - 1):
 			self.layers.append(SageConvLayer(self.n_hidden, self.n_hidden))
 
@@ -452,10 +499,8 @@ class Encoder(nn.Module):
 				aggregator_type = "pool"
 			self.out = self.n_hidden
 			self.layers.append(dglnn.SAGEConv(self.in_feats, self.out, aggregator_type=aggregator_type))
-			for i in range(n_layers - 2):
-				# self.out = int(self.out / 2)
-				self.layers.append(dglnn.SAGEConv(self.n_hidden, self.out, aggregator_type=aggregator_type))
-			self.layers.append(dglnn.SAGEConv(self.out, self.out, aggregator_type=aggregator_type))
+			for i in range(n_layers - 1):
+				self.layers.append(dglnn.SAGEConv(self.out, self.out, aggregator_type=aggregator_type))
 
 	def forward(self, blocks, inputs):
 		h = inputs
@@ -499,7 +544,7 @@ class GraphSMOTE(nn.Module):
 			dec_feats = in_feats
 		self.decoder = SageDecoder(n_hidden, dec_feats, dropout)
 		self.linear = nn.Linear(( n_hidden if n_layers > 1 else in_feats), n_hidden)
-		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout)
+		self.classifier = SageClassifier(n_hidden, n_hidden, n_classes, n_layers=1, activation=activation, dropout=dropout, neigh_features=dec_feats)
 		# self.smote = MBSMOTE(n_classes=n_classes, dims=n_hidden, k=2)
 		self.smote = SMOTE(dims=n_hidden, k=3)
 		self.decoder_loss = GaugLoss()
@@ -514,6 +559,14 @@ class GraphSMOTE(nn.Module):
 		pred_adj = F.hardshrink(pred_adj, lambd=self.adj_thresh)
 		x = self.classifier(pred_adj, x, prev_feats)
 		return x, y.type(torch.long), loss
+
+	def pred_forward(self, mfgs, input_feats):
+		x = input_feats
+		x, prev_feats = self.encoder(mfgs, x)
+		pred_adj = self.decoder(x, prev_feats)
+		pred_adj = F.hardshrink(pred_adj, lambd=self.adj_thresh)
+		x = self.classifier(pred_adj, x, prev_feats)
+		return x
 
 	def inference(self, dataloader, node_features, labels, device):
 		prediction = torch.zeros(len(labels), self.n_classes).to(device)
