@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from torch_scatter import scatter_add
 from torch_sparse import coalesce
 from torch_geometric.utils import softmax
+from torch_geometric.nn import SAGEConv, GraphConv
+from collections import namedtuple
 
 
 class SageConvLayer(nn.Module):
@@ -36,22 +38,22 @@ class SageConvLayer(nn.Module):
         return z
 
 
-class SageEncoder(nn.Module):
+class Encoder(nn.Module):
     def __init__(self, in_feats, n_hidden, n_layers, activation=F.relu, dropout=0.1):
-        super(SageEncoder, self).__init__()
+        super(Encoder, self).__init__()
         self.in_feats = in_feats
         self.n_hidden = n_hidden
         self.activation = activation
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList()
-        self.layers.append(SageConvLayer(self.in_feats, self.n_hidden))
+        self.layers.append(SAGEConv(self.in_feats, self.n_hidden))
         for i in range(n_layers - 1):
-            self.layers.append(SageConvLayer(self.n_hidden, self.n_hidden))
+            self.layers.append(SAGEConv(self.n_hidden, self.n_hidden))
 
-    def forward(self, adj, inputs):
+    def forward(self, edge_index, inputs):
         h = inputs
         for l, conv in enumerate(self.layers):
-            h = conv(adj, h)
+            h = conv(edge_index, h)
             h = self.activation(F.normalize(h))
             h = self.dropout(h)
         return h
@@ -145,17 +147,13 @@ class EdgePooling(torch.nn.Module):
         # Run nodes on each edge through a linear layer
         e = torch.cat([x[edge_index[0]], x[edge_index[1]]], dim=-1)
         e = self.lin(e).view(-1)
-        # Edge score is the cosine similarity between respective nodes
-        # e = F.cosine_similarity(x[edge_index[0]], x[edge_index[1]])
-
         e = F.dropout(e, p=self.dropout, training=self.training)
         e = self.compute_edge_score(e, edge_index, x.size(0))
         e = e + self.add_to_edge_score
-
         x, edge_index, batch, unpool_info = self.__merge_edges__(
             x, edge_index, batch, e)
 
-        return x, edge_index, batch, unpool_info
+        return x, edge_index.long(), batch, unpool_info
 
     def __merge_edges__(self, x, edge_index, batch, edge_score):
         nodes_remaining = set(range(x.size(0)))
@@ -170,7 +168,6 @@ class EdgePooling(torch.nn.Module):
         new_edge_indices = []
         edge_index_cpu = edge_index.cpu()
         for edge_idx in edge_argsort.tolist():
-            # print(edge_score[edge_idx], edge_index[:,edge_idx])
             source = edge_index_cpu[0, edge_idx].item()
             if source not in nodes_remaining:
                 continue
@@ -231,7 +228,6 @@ class EdgePooling(torch.nn.Module):
             * **edge_index** *(LongTensor)* - The new edge indices.
             * **batch** *(LongTensor)* - The new batch vector.
         """
-
         new_x = x / unpool_info.new_edge_score.view(-1, 1)
         new_x = new_x[unpool_info.cluster]
         return new_x, unpool_info.edge_index, unpool_info.batch
@@ -239,104 +235,109 @@ class EdgePooling(torch.nn.Module):
     def __repr__(self):
         return '{}({})'.format(self.__class__.__name__, self.in_channels)
 
-
-class HierarchicalGraphNet(torch.nn.Module):
-    """The Hierarchical GraphNet
-    TODO: update docstring
-    """
-    def __init__(self, in_channels, hidden_channels, out_channels, depth,
-                 dropout_ratio, normalize, activation=F.relu):
-        super().__init__()
-        assert depth >= 1
+class HGEncoder(nn.Module):
+    def __init__(self, in_channels, hidden_channels, depth,
+                 dropout_ratio, activation=F.relu):
+        super(HGEncoder, self).__init__()
         self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.depth = depth
+        self.activation = activation
+        self.dropout = nn.Dropout(dropout_ratio)
+        self.gcn_layers = nn.ModuleList()
+        self.pool_layers = nn.ModuleList()
+        self.mu_layer = nn.Linear(self.hidden_channels, self.hidden_channels)
+        self.log_var_layer = nn.Linear(self.hidden_channels, self.hidden_channels)
+        self.gcn_layers.append(GraphConv(in_channels, self.hidden_channels))
+        for layer in range(depth):
+            self.gcn_layers.append(GraphConv(self.hidden_channels, self.hidden_channels))
+            self.pool_layers.append(EdgePooling(self.hidden_channels))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.mu_layer.weight, gain=nn.init.calculate_gain('relu'))
+        nn.init.xavier_uniform_(self.log_var_layer.weight, gain=nn.init.calculate_gain('relu'))
+
+    def forward(self, x, edge_index, batch):
+        unpool_infos = []
+        h = x
+        for i, conv in enumerate(self.gcn_layers):
+            h = conv(h, edge_index)
+            h = F.normalize(h)
+            h = self.activation(h)
+            h = self.dropout(h)
+            if i != len(self.gcn_layers) - 1:
+                h, edge_index, batch, unpool_info = self.pool_layers[i](h, edge_index, batch)
+                unpool_infos += [unpool_info]
+        mu = self.mu_layer(h)
+        log_var = self.log_var_layer(h)
+        return h, mu, log_var, unpool_infos
+
+
+class HGDecoder(nn.Module):
+    def __init__(self, hidden_channels, out_channels, depth,
+                 dropout_ratio, activation=F.relu):
+        super(HGDecoder, self).__init__()
         self.hidden_channels = hidden_channels
         self.out_channels = out_channels
         self.depth = depth
         self.activation = activation
-        self.dropout_ratio = dropout_ratio
-        self.normalize = normalize
-        assert inter_connect in ('sum', 'concat', 'edge', 'addnode'),\
-            f"Unknown inter-layer connection type: {inter_connect}"
-        self.inter_connect = inter_connect
+        self.dropout = nn.Dropout(dropout_ratio)
+        self.gcn_layers = nn.ModuleList()
+        self.pool_layers = nn.ModuleList()
+        self.gcn_layers.append(GraphConv(self.hidden_channels, out_channels))
+        for layer in range(depth):
+            self.gcn_layers.append(GraphConv(self.hidden_channels, self.hidden_channels))
 
-        channels = hidden_channels
-        norm_class = torch.nn.BatchNorm1d
+    def unpool(self, x, unpool_info):
+        new_x = x / unpool_info.new_edge_score.view(-1, 1)
+        new_x = new_x[unpool_info.cluster]
+        return new_x, unpool_info.edge_index, unpool_info.batch
 
-        # Pooling and Convolutions going UP the hierarchy towards coarsest level
-        self.node_preembedder = torch.nn.Linear(in_channels, channels)
-        self.up_convs = torch.nn.ModuleList()
-        self.up_norms = torch.nn.ModuleList()
-        self.pools = torch.nn.ModuleList()
+    def forward(self, x, edge_index, unpool_infos):
+        h = x
+        for i, conv in reversed(list(enumerate(self.gcn_layers))):
+            if i != 0:
+                h, edge_index, batch = self.unpool(h, unpool_infos[i-1])
+                h = conv(h, edge_index)
+                h = F.normalize(h)
+                h = self.activation(h)
+                h = self.dropout(h)
+            else:
+                h = conv(h, edge_index)
+        return h
 
-        self.up_convs.append(SageConvLayer(in_channels, channels))
-        self.up_norms.append(norm_class(channels))
-        for _ in range(depth):
-            self.pools.append(EdgePooling(channels, dropout=0))
-            self.up_convs.append(SageConvLayer(channels, channels))
-            self.up_norms.append(norm_class(channels))
-        if self.no_up_convs:  # wipe
-            self.up_convs = torch.nn.ModuleList()
+class VAELoss(nn.Module):
+    def __init__(self):
+        super(VAELoss, self).__init__()
+        self.mse = nn.MSELoss(reduction="sum")
 
-        # Convolutions going back DOWN the hierarchy from coarsest to finest level
-        in_channels = 2 * channels if inter_connect == 'concat' else channels
-        self.down_convs = torch.nn.ModuleList()
-        self.down_norms = torch.nn.ModuleList()
-        self.down_convs.append(SageConvLayer(in_channels, out_channels))
-        self.down_norms.append(norm_class(out_channels))
-        for _ in range(depth - 1):
-            self.down_convs.append(SageConvLayer(in_channels, channels))
-            self.down_norms.append(norm_class(channels))
-        if not self.normalize:  # wipe
-            self.up_norms = torch.nn.ModuleList()
-            self.down_norms = torch.nn.ModuleList()
+    def forward(self, recon_x, x, mean, log_var):
+        if recon_x.shape[1] != x.shape[1]:
+            x = x[:, :recon_x.shape[1]]
+        recon_loss = self.mse(recon_x, x)
+        kl_loss = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
+        return torch.add(recon_loss, kl_loss)
 
+
+class HGVAE(nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, depth, dropout_ratio, activation=F.relu):
+        super(HGVAE, self).__init__()
+        self.encoder = HGEncoder(in_channels, hidden_channels, depth, dropout_ratio, activation)
+        self.decoder = HGDecoder(hidden_channels, out_channels, depth, dropout_ratio, activation)
+
+    def sampling(self, mean, log_var):
+        std = torch.exp(0.5*log_var)
+        eps = torch.rand_like(std)
+        return torch.mul(eps, torch.add(std, mean))
 
     def forward(self, x, edge_index, batch=None):
         if batch is None:
             batch = edge_index.new_zeros(x.size(0))
-        # TODO: support edge weights (need to augment the pooling)
-        # edge_weight = x.new_ones(edge_index.size(1))
+        h, mu, log_var, unpool_infos = self.encoder(x, edge_index, batch)
+        z = self.sampling(mu, log_var)
+        h = self.decoder(z, edge_index, unpool_infos) # sampled z causes gradient computation to fail.
+        return h, mu, log_var
 
-        # x = self.up_convs[0](x, edge_index, edge_weight)
 
-        xs = [x]
-        edge_indices = [edge_index]
-        # edge_weights = [edge_weight]
-        unpool_infos = []
 
-        for level in range(1, self.depth + 1):
-            x, edge_index, batch, unpool_info = self.pools[level - 1](
-                x, edge_index, batch)
-
-            if not self.no_up_convs or level == self.depth:
-                x = self.up_convs[level](x, edge_index)
-                x = self.activation(x)
-                x = F.dropout(x, self.dropout_ratio, training=self.training)
-
-            if level < self.depth:
-                xs += [x]
-                edge_indices += [edge_index]
-            unpool_infos += [unpool_info]
-
-        for level in reversed(range(self.depth)):
-            res = xs[level]
-
-            unpool_info = unpool_infos[level]
-
-            unpooled, edge_index, batch = self.pools[level].unpool(x, unpool_info)
-
-            x = torch.cat((res, unpooled), dim=-1)
-
-            if level > 0:
-                x = self.act(x)
-                x = F.dropout(x, self.dropout_ratio, training=self.training)
-
-        return x
-
-    def __repr__(self):
-        rep = '{}({}, {}, {}, depth={}, inter_connect={})'.format(
-            self.__class__.__name__, self.in_channels, self.hidden_channels,
-            self.out_channels, self.depth, self.inter_connect)
-        rep += '\n'
-        rep += super().__repr__()
-        return rep
