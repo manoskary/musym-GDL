@@ -38,7 +38,7 @@ class VoicePredSage(nn.Module):
         super().__init__()
         self.n_hidden = n_hidden
         self.layers = nn.ModuleList()
-        self.normalize = nn.BatchNorm1d()
+        self.normalize = nn.BatchNorm1d(n_hidden)
         self.activation = activation
         self.dropout = nn.Dropout(dropout)
         self.layers.append(SageConvLayer(in_feats, n_hidden))
@@ -56,7 +56,7 @@ class VoicePredSage(nn.Module):
 
     def forward(self, pos_edges, neg_edges, adj, x):
         h = x
-        for l, layer in enumerate(zip(self.layers)):
+        for l, layer in enumerate(self.layers):
             h = layer(h, adj)
             if l != len(self.layers) - 1:
                 h = self.activation(h)

@@ -6,7 +6,8 @@ import dgl
 import time
 import numpy as np
 import tqdm
-from .model import VoicePredSage
+from musym.models.rgcn_homo.VoiceDet.model import VoicePredSage
+from musym.models.rgcn_homo.VoiceDet.utils import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pure-gpu', action='store_true',
@@ -14,7 +15,6 @@ parser.add_argument('--pure-gpu', action='store_true',
 args = parser.parse_args()
 
 device = 'cuda'
-
 
 
 def compute_mrr(model, node_emb, src, dst, neg_dst, device, batch_size=500):
@@ -32,21 +32,28 @@ def compute_mrr(model, node_emb, src, dst, neg_dst, device, batch_size=500):
 
 
 def main():
-    graphs = score_graphs()
-    model = VoicePredSage(in_feats=135, n_hidden=256, n_layers=2)
+    load_dir = "/home/manos/Desktop/JKU/data/asap_graphs/"
+    graphs = [load_score_graph(load_dir, fn) for fn in os.listdir(load_dir)]
+    model = VoicePredSage(in_feats=12, n_hidden=128, n_layers=2)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     for epoch in range(10):
         model.train()
-        t0 = time.time()
         for graph in graphs:
+            print(graph.name)
             adj = graph.adj()
-            edges = graph.edge_index
-            x = graph.x
-            y = graph.y
-            labels = torch.nonzero(y[edges[0]] == y[edges[1]]).squeeze()
-            non_labels = torch.nonzero(y[edges[0]] != y[edges[1]]).squeeze()
-            pos_edges = edges[:, labels.int()]
-            neg_edges = edges[:, non_labels.int()]
+            row = torch.from_numpy(adj.row.astype(np.int64)).to(torch.long)
+            col = torch.from_numpy(adj.col.astype(np.int64)).to(torch.long)
+            edge_index = torch.stack([row, col], dim=0)
+            val = torch.from_numpy(adj.data.astype(int)).to(int)
+            adj = torch.sparse.FloatTensor(edge_index, val, torch.Size(adj.shape)).to_dense().float()
+
+            edges = torch.Tensor(graph.edge_index).long()
+            x = torch.Tensor(graph.x)
+            y = torch.Tensor(graph.y).long()
+            labels = torch.all(y[edges[0]] == y[edges[1]], dim=1)
+
+            pos_edges = edges.t()[labels].t()
+            neg_edges = edges.t()[torch.logical_not(labels)].t()
             pos_score, neg_score = model(pos_edges, neg_edges, adj, x)
             pos_label = torch.ones_like(pos_score)
             neg_label = torch.zeros_like(neg_score)
@@ -56,3 +63,7 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            print(loss)
+
+if __name__ == '__main__':
+    main()
