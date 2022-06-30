@@ -4,6 +4,394 @@ import torch.nn.functional as F
 import numpy as np
 import pytorch_lightning as pl
 
+
+class GraphFlow(nn.Module):
+    """
+    Generic class for GraphFlow functions.
+    """
+    def __init__(self):
+        super(GraphFlow, self).__init__()
+
+    def forward(self, z, adj):
+        """
+        Parameters:
+        -----------
+        z : torch tensor
+            Input variable, first dimension is batch dim.
+        adj : torch tensor
+            Input variable, first dimension is batch dim.
+        """
+        raise NotImplementedError('Forward pass has not been implemented.')
+
+    def inverse(self, z, adj):
+        raise NotImplementedError('This flow has no algebraic inverse.')
+
+
+class Split(GraphFlow):
+    """
+    Split features into two sets
+    """
+    def __init__(self, mode='channel'):
+        """
+        Constructor
+        :param mode: Splitting mode, can be
+            channel: Splits first feature dimension, usually channels, into two halfs
+            channel_inv: Same as channel, but with z1 and z2 flipped
+            checkerboard: Splits features using a checkerboard pattern (last feature dimension must be even)
+            checkerboard_inv: Same as checkerboard, but with inverted coloring
+        """
+        super().__init__()
+        self.mode = mode
+
+    def forward(self, z, adj):
+        if self.mode == 'channel':
+            z1, z2 = z.chunk(2, dim=1)
+        elif self.mode == 'channel_inv':
+            z2, z1 = z.chunk(2, dim=1)
+        elif 'checkerboard' in self.mode:
+            n_dims = z.dim()
+            cb0 = 0
+            cb1 = 1
+            for i in range(1, n_dims):
+                cb0_ = cb0
+                cb1_ = cb1
+                cb0 = [cb0_ if j % 2 == 0 else cb1_ for j in range(z.size(n_dims - i))]
+                cb1 = [cb1_ if j % 2 == 0 else cb0_ for j in range(z.size(n_dims - i))]
+            cb = cb1 if 'inv' in self.mode else cb0
+            cb = torch.tensor(cb)[None].repeat(len(z), *((n_dims - 1) * [1]))
+            cb = cb.to(z.device)
+            z_size = z.size()
+            z1 = z.reshape(-1)[torch.nonzero(cb.view(-1), as_tuple=False)].view(*z_size[:-1], -1)
+            z2 = z.reshape(-1)[torch.nonzero((1 - cb).view(-1), as_tuple=False)].view(*z_size[:-1], -1)
+        else:
+            raise NotImplementedError('Mode ' + self.mode + ' is not implemented.')
+        log_det = 0
+        return [z1, z2], log_det
+
+    def inverse(self, z, adj):
+        z1, z2 = z
+        if self.mode == 'channel':
+            z = torch.cat([z1, z2], 1)
+        elif self.mode == 'channel_inv':
+            z = torch.cat([z2, z1], 1)
+        elif 'checkerboard' in self.mode:
+            n_dims = z1.dim()
+            z_size = list(z1.size())
+            z_size[-1] *= 2
+            cb0 = 0
+            cb1 = 1
+            for i in range(1, n_dims):
+                cb0_ = cb0
+                cb1_ = cb1
+                cb0 = [cb0_ if j % 2 == 0 else cb1_ for j in range(z_size[n_dims - i])]
+                cb1 = [cb1_ if j % 2 == 0 else cb0_ for j in range(z_size[n_dims - i])]
+            cb = cb1 if 'inv' in self.mode else cb0
+            cb = torch.tensor(cb)[None].repeat(z_size[0], *((n_dims - 1) * [1]))
+            cb = cb.to(z1.device)
+            z1 = z1[..., None].repeat(*(n_dims * [1]), 2).view(*z_size[:-1], -1)
+            z2 = z2[..., None].repeat(*(n_dims * [1]), 2).view(*z_size[:-1], -1)
+            z = cb * z1 + (1 - cb) * z2
+        else:
+            raise NotImplementedError('Mode ' + self.mode + ' is not implemented.')
+        log_det = 0
+        return z, log_det
+
+
+class Merge(Split):
+    """
+    Same as Split but with forward and backward pass interchanged
+    """
+    def __init__(self, mode='channel'):
+        super().__init__(mode)
+
+    def forward(self, z, adj):
+        return super().inverse(z, adj)
+
+    def inverse(self, z, adj):
+        return super().forward(z, adj)
+
+
+class Squeeze(GraphFlow):
+    """
+    Squeeze operation of multi-scale architecture, RealNVP or Glow paper
+    """
+    def __init__(self):
+        """
+        Constructor
+        """
+        super().__init__()
+
+    def forward(self, z, adj):
+        log_det = 0
+        s = z.size()
+        z = z.view(s[0], s[1] // 4, 2, 2, s[2], s[3])
+        z = z.permute(0, 1, 4, 2, 5, 3).contiguous()
+        z = z.view(s[0], s[1] // 4, 2 * s[2], 2 * s[3])
+        return z, log_det
+
+    def inverse(self, z, adj):
+        log_det = 0
+        s = z.size()
+        z = z.view(*s[:2], s[2] // 2, 2, s[3] // 2, 2)
+        z = z.permute(0, 1, 3, 5, 2, 4).contiguous()
+        z = z.view(s[0], 4 * s[1], s[2] // 2, s[3] // 2)
+        return z, log_det
+
+
+class AffineCoupling(GraphFlow):
+    """
+    Affine Coupling layer as introduced RealNVP paper, see arXiv: 1605.08803
+    """
+
+    def __init__(self, param_map, scale=True, scale_map='exp'):
+        """
+        Constructor
+        :param param_map: Maps features to shift and scale parameter (if applicable)
+        :param scale: Flag whether scale shall be applied
+        :param scale_map: Map to be applied to the scale parameter, can be 'exp' as in
+        RealNVP or 'sigmoid' as in Glow, 'sigmoid_inv' uses multiplicative sigmoid
+        scale when sampling from the model
+        """
+        super().__init__()
+        self.add_module('param_map', param_map)
+        self.scale = scale
+        self.scale_map = scale_map
+
+    def forward(self, z, adj):
+        """
+        z is a list of z1 and z2; z = [z1, z2]
+        z1 is left constant and affine map is applied to z2 with parameters depending
+        on z1
+        """
+        z1, z2 = z
+        param = self.param_map(z1)
+        if self.scale:
+            shift = param[:, 0::2, ...]
+            scale_ = param[:, 1::2, ...]
+            if self.scale_map == 'exp':
+                z2 = z2 * torch.exp(scale_) + shift
+                log_det = torch.sum(scale_, dim=list(range(1, shift.dim())))
+            elif self.scale_map == 'sigmoid':
+                scale = torch.sigmoid(scale_ + 2)
+                z2 = z2 / scale + shift
+                log_det = -torch.sum(torch.log(scale),
+                                     dim=list(range(1, shift.dim())))
+            elif self.scale_map == 'sigmoid_inv':
+                scale = torch.sigmoid(scale_ + 2)
+                z2 = z2 * scale + shift
+                log_det = torch.sum(torch.log(scale),
+                                    dim=list(range(1, shift.dim())))
+            else:
+                raise NotImplementedError('This scale map is not implemented.')
+        else:
+            z2 += param
+            log_det = 0
+        return [z1, z2], log_det
+
+    def inverse(self, z, adj):
+        z1, z2 = z
+        param = self.param_map(z1)
+        if self.scale:
+            shift = param[:, 0::2, ...]
+            scale_ = param[:, 1::2, ...]
+            if self.scale_map == 'exp':
+                z2 = (z2 - shift) * torch.exp(-scale_)
+                log_det = -torch.sum(scale_, dim=list(range(1, shift.dim())))
+            elif self.scale_map == 'sigmoid':
+                scale = torch.sigmoid(scale_ + 2)
+                z2 = (z2 - shift) * scale
+                log_det = torch.sum(torch.log(scale),
+                                    dim=list(range(1, shift.dim())))
+            elif self.scale_map == 'sigmoid_inv':
+                scale = torch.sigmoid(scale_ + 2)
+                z2 = (z2 - shift) / scale
+                log_det = -torch.sum(torch.log(scale),
+                                     dim=list(range(1, shift.dim())))
+            else:
+                raise NotImplementedError('This scale map is not implemented.')
+        else:
+            z2 -= param
+            log_det = 0
+        return [z1, z2], log_det
+
+
+class AffineCouplingBlock(GraphFlow):
+    """
+    Affine Coupling layer including split and merge operation
+    """
+    def __init__(self, param_map, scale=True, scale_map='exp', split_mode='channel'):
+        """
+        Constructor
+        :param param_map: Maps features to shift and scale parameter (if applicable)
+        :param scale: Flag whether scale shall be applied
+        :param scale_map: Map to be applied to the scale parameter, can be 'exp' as in
+        RealNVP or 'sigmoid' as in Glow
+        :param split_mode: Splitting mode, for possible values see Split class
+        """
+        super().__init__()
+        self.flows = nn.ModuleList([])
+        # Split layer
+        self.flows += [Split(split_mode)]
+        # Affine coupling layer
+        self.flows += [AffineCoupling(param_map, scale, scale_map)]
+        # Merge layer
+        self.flows += [Merge(split_mode)]
+
+    def forward(self, z, adj):
+        log_det_tot = torch.zeros(z.shape[0], dtype=z.dtype, device=z.device)
+        for flow in self.flows:
+            z, log_det = flow(z, adj)
+            log_det_tot += log_det
+        return z, log_det_tot
+
+    def inverse(self, z, adj):
+        log_det_tot = torch.zeros(z.shape[0], dtype=z.dtype, device=z.device)
+        for i in range(len(self.flows) - 1, -1, -1):
+            z, log_det = self.flows[i].inverse(z, adj)
+            log_det_tot += log_det
+        return z, log_det_tot
+
+
+class AffineConstFlow(GraphFlow):
+    """
+    scales and shifts with learned constants per dimension. In the NICE paper there is a
+    scaling layer which is a special case of this where t is None
+    """
+
+    def __init__(self, shape, scale=True, shift=True):
+        """
+        Constructor
+        :param shape: Shape of the coupling layer
+        :param scale: Flag whether to apply scaling
+        :param shift: Flag whether to apply shift
+        :param logscale_factor: Optional factor which can be used to control
+        the scale of the log scale factor
+        """
+        super().__init__()
+        if scale:
+            self.s = nn.Parameter(torch.zeros(shape)[None])
+        else:
+            self.register_buffer('s', torch.zeros(shape)[None])
+        if shift:
+            self.t = nn.Parameter(torch.zeros(shape)[None])
+        else:
+            self.register_buffer('t', torch.zeros(shape)[None])
+        self.n_dim = self.s.dim()
+        self.batch_dims = torch.nonzero(torch.tensor(self.s.shape) == 1, as_tuple=False)[:, 0].tolist()
+
+    def forward(self, z, adj):
+        z_ = z * torch.exp(self.s) + self.t
+        if len(self.batch_dims) > 1:
+            prod_batch_dims = np.prod([z.size(i) for i in self.batch_dims[1:]])
+        else:
+            prod_batch_dims = 1
+        log_det = prod_batch_dims * torch.sum(self.s)
+        return z_, log_det
+
+    def inverse(self, z, adj):
+        z_ = (z - self.t) * torch.exp(-self.s)
+        if len(self.batch_dims) > 1:
+            prod_batch_dims = np.prod([z.size(i) for i in self.batch_dims[1:]])
+        else:
+            prod_batch_dims = 1
+        log_det = -prod_batch_dims * torch.sum(self.s)
+        return z_, log_det
+
+
+class ActNorm(AffineConstFlow):
+    """
+    An AffineConstFlow but with a data-dependent initialization,
+    where on the very first batch we clever initialize the s,t so that the output
+    is unit gaussian. As described in Glow paper.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.data_dep_init_done_cpu = torch.tensor(0.)
+        self.register_buffer('data_dep_init_done', self.data_dep_init_done_cpu)
+
+    def forward(self, z, adj):
+        # first batch is used for initialization, c.f. batchnorm
+        if not self.data_dep_init_done > 0.:
+            assert self.s is not None and self.t is not None
+            s_init = -torch.log(z.std(dim=self.batch_dims, keepdim=True) + 1e-6)
+            self.s.data = s_init.data
+            self.t.data = (-z.mean(dim=self.batch_dims, keepdim=True) * torch.exp(self.s)).data
+            self.data_dep_init_done = torch.tensor(1.)
+        return super().forward(z, adj)
+
+    def inverse(self, z, adj):
+        # first batch is used for initialization, c.f. batchnorm
+        if not self.data_dep_init_done:
+            assert self.s is not None and self.t is not None
+            s_init = torch.log(z.std(dim=self.batch_dims, keepdim=True) + 1e-6)
+            self.s.data = s_init.data
+            self.t.data = z.mean(dim=self.batch_dims, keepdim=True).data
+            self.data_dep_init_done = torch.tensor(1.)
+        return super().inverse(z, adj)
+
+
+class GraphGlowBlock(GraphFlow):
+    """
+    Glow: Generative Flow with Invertible 1×1 Convolutions, arXiv: 1807.03039
+    One Block of the Glow model, comprised of
+    MaskedAffineFlow (affine coupling layer
+    Invertible1x1Conv (dropped if there is only one channel)
+    ActNorm (first batch used for initialization)
+    """
+    def __init__(self, channels, hidden_channels, scale=True, scale_map='sigmoid',
+                 split_mode='channel', leaky=0.0, init_zeros=True, use_lu=True,
+                 net_actnorm=False):
+        """
+        Constructor
+        :param channels: Number of channels of the data
+        :param hidden_channels: number of channels in the hidden layer of the ConvNet
+        :param scale: Flag, whether to include scale in affine coupling layer
+        :param scale_map: Map to be applied to the scale parameter, can be 'exp' as in
+        RealNVP or 'sigmoid' as in Glow
+        :param split_mode: Splitting mode, for possible values see Split class
+        :param leaky: Leaky parameter of LeakyReLUs of ConvNet2d
+        :param init_zeros: Flag whether to initialize last conv layer with zeros
+        :param use_lu: Flag whether to parametrize weights through the LU decomposition
+        in invertible 1x1 convolution layers
+        :param logscale_factor: Factor which can be used to control the scale of
+        the log scale factor, see https://github.com/openai/glow
+        """
+        super().__init__()
+        self.flows = nn.ModuleList([])
+        # Coupling layer
+        num_param = 2 if scale else 1
+        if 'channel' == split_mode:
+            channels_ = (channels // 2,) + 2 * (hidden_channels,)
+            channels_ += (num_param * ((channels + 1) // 2),)
+        elif 'channel_inv' == split_mode:
+            channels_ = ((channels + 1) // 2,) + 2 * (hidden_channels,)
+            channels_ += (num_param * (channels // 2),)
+        elif 'checkerboard' in split_mode:
+            channels_ = (channels,) + 2 * (hidden_channels,)
+            channels_ += (num_param * channels,)
+        else:
+            raise NotImplementedError('Mode ' + split_mode + ' is not implemented.')
+        # Have to add activation and normalization here.
+        param_map = SageConvLayer(channels_, hidden_channels)
+        self.flows += [AffineCouplingBlock(param_map, scale, scale_map, split_mode)]
+        # Activation normalization
+        self.flows += [ActNorm((channels,) + (1, 1))]
+
+    def forward(self, z, adj):
+        log_det_tot = torch.zeros(z.shape[0], dtype=z.dtype, device=z.device)
+        for flow in self.flows:
+            z, log_det = flow(z, adj)
+            log_det_tot += log_det
+        return z, log_det_tot
+
+    def inverse(self, z, adj):
+        log_det_tot = torch.zeros(z.shape[0], dtype=z.dtype, device=z.device)
+        for i in range(len(self.flows) - 1, -1, -1):
+            z, log_det = self.flows[i].inverse(z, adj)
+            log_det_tot += log_det
+        return z, log_det_tot
+
+
 class SageConvLayer(nn.Module):
     def __init__(self, in_features, out_features, bias=False):
         super(SageConvLayer, self).__init__()

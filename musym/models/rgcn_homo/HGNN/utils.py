@@ -40,3 +40,4 @@ def log_map_zero(v, eps=1e-5):
 def h_mul(u, v):
     out = torch.mm(u, log_map_zero(v))
     out = exp_map_zero(out)
+    return out
