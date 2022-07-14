@@ -1,14 +1,67 @@
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from .utils import *
 
 
+class CentroidDistance(nn.Module):
+    """
+    Implement a model that calculates the pairwise distances between node representations
+    and centroids
+    """
+    def __init__(self, args, logger, manifold):
+        super(CentroidDistance, self).__init__()
+        self.args = args
+        self.logger = logger
+        self.manifold = manifold
+
+        # centroid embedding
+        self.centroid_embedding = nn.Embedding(
+            args.num_centroid, args.embed_size,
+            sparse=False,
+            scale_grad_by_freq=False)
+        self.init_embed()
+
+    def init_embed(self, irange=1e-2):
+        self.centroid_embeddin.weight.data.uniform_(-irange, irange)
+        self.centroid_embeddin.weight.data.copy_(self.normalize(self.centroid_embeddin.weight.data))
+
+    def forward(self, node_repr, mask):
+        """
+        Args:
+            node_repr: [node_num, embed_size]
+            mask: [node_num, 1] 1 denote real node, 0 padded node
+        return:
+            graph_centroid_dist: [1, num_centroid]
+            node_centroid_dist: [1, node_num, num_centroid]
+        """
+        node_num = node_repr.size(0)
+
+        # broadcast and reshape node_repr to [node_num * num_centroid, embed_size]
+        node_repr = node_repr.unsqueeze(1).expand(
+                                                -1,
+                                                self.args.num_centroid,
+                                                -1).contiguous().view(-1, self.args.embed_size)
+
+        # broadcast and reshape centroid embeddings to [node_num * num_centroid, embed_size]
+        if self.args.embed_manifold == 'hyperbolic':
+            centroid_repr = self.centroid_embedding(torch.arange(self.args.num_centroid).cuda())
+        else:
+            centroid_repr = self.manifold.exp_map_zero(
+                self.centroid_embedding(torch.arange(self.args.num_centroid).cuda()))
+        centroid_repr = centroid_repr.unsqueeze(0).expand(
+                                                node_num,
+                                                -1,
+                                                -1).contiguous().view(-1, self.args.embed_size)
+        # get distance
+        node_centroid_dist = self.manifold.distance(node_repr, centroid_repr)
+        node_centroid_dist = node_centroid_dist.view(1, node_num, self.args.num_centroid) * mask
+        # average pooling over nodes
+        graph_centroid_dist = torch.sum(node_centroid_dist, dim=1) / torch.sum(mask)
+        return graph_centroid_dist, node_centroid_dist
 
 
 class HyperbolicSageConv(nn.Module):
     def __init__(self, in_feats, out_feats, bias=True):
-        super(self, HyperbolicSageConv).__init__()
+        super(HyperbolicSageConv, self).__init__()
         self.bias = bias
         self.embed = torch.zeros((in_feats, in_feats), requires_grad=True)
         self.layer = torch.zeros((2*in_feats, out_feats), requires_grad=True)
