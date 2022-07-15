@@ -7,15 +7,12 @@ class CentroidDistance(nn.Module):
     Implement a model that calculates the pairwise distances between node representations
     and centroids
     """
-    def __init__(self, args, logger, manifold):
+    def __init__(self, in_feats, out_feats):
         super(CentroidDistance, self).__init__()
-        self.args = args
-        self.logger = logger
-        self.manifold = manifold
-
         # centroid embedding
-        self.centroid_embedding = nn.Embedding(
-            args.num_centroid, args.embed_size,
+        self.in_feats = in_feats
+        self.out_feats = out_feats
+        self.centroid_embedding = nn.Embedding(in_feats, out_feats,
             sparse=False,
             scale_grad_by_freq=False)
         self.init_embed()
@@ -36,27 +33,72 @@ class CentroidDistance(nn.Module):
         node_num = node_repr.size(0)
 
         # broadcast and reshape node_repr to [node_num * num_centroid, embed_size]
-        node_repr = node_repr.unsqueeze(1).expand(
-                                                -1,
-                                                self.args.num_centroid,
-                                                -1).contiguous().view(-1, self.args.embed_size)
+        node_repr = node_repr.unsqueeze(1).expand(-1, self.in_feats, -1).contiguous().view(-1, self.out_feats)
 
         # broadcast and reshape centroid embeddings to [node_num * num_centroid, embed_size]
-        if self.args.embed_manifold == 'hyperbolic':
-            centroid_repr = self.centroid_embedding(torch.arange(self.args.num_centroid).cuda())
-        else:
-            centroid_repr = self.manifold.exp_map_zero(
-                self.centroid_embedding(torch.arange(self.args.num_centroid).cuda()))
-        centroid_repr = centroid_repr.unsqueeze(0).expand(
-                                                node_num,
-                                                -1,
-                                                -1).contiguous().view(-1, self.args.embed_size)
+        centroid_repr = self.centroid_embedding(torch.arange(self.in_feats).cuda())
+        centroid_repr = centroid_repr.unsqueeze(0).expand(node_num, -1,-1).contiguous().view(-1, self.out_feats)
         # get distance
         node_centroid_dist = self.manifold.distance(node_repr, centroid_repr)
-        node_centroid_dist = node_centroid_dist.view(1, node_num, self.args.num_centroid) * mask
+        node_centroid_dist = node_centroid_dist.view(1, node_num, self.out_feats) * mask
         # average pooling over nodes
         graph_centroid_dist = torch.sum(node_centroid_dist, dim=1) / torch.sum(mask)
         return graph_centroid_dist, node_centroid_dist
+
+
+class RiemannianSGD(torch.optim.optimizer.Optimizer):
+    """Riemannian stochastic gradient descent.
+    Args:
+        model_params (iterable): iterable of parameters to optimize or dicts defining
+            parameter groups
+        lr (float): learning rate
+    """
+
+    def __init__(self,model_params, lr):
+        defaults = dict(lr=lr)
+        self.tanh = nn.Tanh()
+        super(RiemannianSGD, self).__init__(model_params, defaults)
+
+    def step(self, lr=None):
+        """
+        Performs a single optimization step.
+        Arguments:
+            lr (float, optional): learning rate for the current update.
+        """
+        loss = None
+
+        for group in self.param_groups:
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                d_p = p.grad.data
+                d_p = self.rgrad(p, d_p)
+                if lr is None:
+                    lr = group['lr']
+                p.data = torch.renorm(self.exp_map_x(p, -lr * d_p), 2, 0, (1. - 1e-5))
+        return loss
+
+    def exp_map_x(self, x, v):
+        """
+        Exp map from tangent space of x to hyperbolic space
+        """
+        v = v + 1e-5 # Perturbe v to avoid dealing with v = 0
+        norm_v = torch.norm(v, 2, 1, keepdim=True)
+        lambda_x = 2. / (1 - torch.sum(x * x, dim=1, keepdim=True))
+        second_term = (self.tanh(lambda_x * norm_v / 2) / norm_v) * v
+        return torch.renorm(h_add(x, second_term), 2, 0, (1. - 1e-5))
+
+    def rgrad(self, p, d_p):
+        """
+        Function to compute Riemannian gradient from the
+        Euclidean gradient in the Poincare ball.
+        Args:
+            p (Tensor): Current point in the ball
+            d_p (Tensor): Euclidean gradient at p
+        """
+        p_sqnorm = torch.sum(p.data ** 2, dim=-1, keepdim=True)
+        d_p = d_p * ((1 - p_sqnorm) ** 2 / 4.0).expand_as(d_p)
+        return d_p
 
 
 class HyperbolicSageConv(nn.Module):
@@ -111,3 +153,32 @@ class HGNN(nn.Module):
                 h = exp_map_zero(self.activation(log_map_zero(h)))
                 h = self.dropout(h)
         return h
+
+class HGNN_NODE(nn.Module):
+    def __init__(self, in_feats, n_hidden, out_feats, n_layers, activation=F.relu, dropout=0.5):
+        self.input_embedding  = nn.Linear(in_feats, n_hidden)
+        self.hgnn = HGNN(n_hidden, n_hidden, n_hidden, n_layers, activation, dropout)
+        self.distance = CentroidDistance(n_hidden, n_hidden)
+        self.output_linear = nn.Linear(n_hidden, n_hidden)
+        self.log_softmax = nn.LogSoftmax(dim=1)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        gain = nn.init.calculate_gain("relu")
+        nn.init.xavier_uniform_(self.input_embedding.weight, gain=gain)
+        nn.init.xavier_uniform_(self.output_linear.weight, gain=gain)
+
+    def forward(self, adj, features):
+        """
+        Args:
+            adj: the neighbor ids of each node [1, node_num, max_neighbor]
+            weight: the weight of each neighbor [1, node_num, max_neighbor]
+            features: [1, node_num, input_dim]
+        """
+
+        node_repr = self.activation(self.input_embedding(features))
+        mask = torch.ones((features.shape[0], 1)).cuda()  # [node_num, 1]
+        node_repr = self.hgnn(node_repr, adj)  # [node_num, embed_size]
+        _, node_centroid_sim = self.distance(node_repr, mask)  # [1, node_num, num_centroid]
+        class_logit = self.output_linear(node_centroid_sim.squeeze())
+        return self.log_softmax(class_logit)
