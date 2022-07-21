@@ -1,5 +1,5 @@
 import torch.nn as nn
-from .utils import *
+from utils import *
 
 
 class CentroidDistance(nn.Module):
@@ -46,7 +46,7 @@ class CentroidDistance(nn.Module):
         return graph_centroid_dist, node_centroid_dist
 
 
-class RiemannianSGD(torch.optim.optimizer.Optimizer):
+class RiemannianSGD(torch.optim.Optimizer):
     """Riemannian stochastic gradient descent.
     Args:
         model_params (iterable): iterable of parameters to optimize or dicts defining
@@ -107,12 +107,12 @@ class HyperbolicSageConv(nn.Module):
         self.bias = bias
         self.embed = torch.zeros((in_feats, in_feats), requires_grad=True)
         self.layer = torch.zeros((2*in_feats, out_feats), requires_grad=True)
-        self.reset_parameters()
         self.embed = nn.Parameter(self.embed)
         self.layer = nn.Parameter(self.layer)
         if self.bias:
-            self.embed_bias = torch.zeros((in_feats, 1), requires_grad=True)
-            self.layer_bias = torch.zeros((out_feats, 1), requires_grad=True)
+            self.embed_bias = torch.zeros((1, in_feats), requires_grad=True)
+            self.layer_bias = torch.zeros((1, out_feats), requires_grad=True)
+        self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.embed, gain=nn.init.calculate_gain('relu'))
@@ -122,11 +122,11 @@ class HyperbolicSageConv(nn.Module):
             nn.init.constant(self.layer_bias, 0.)
 
     def forward(self, x, adj):
-        h = h_mul(self.embed_bias, x)
+        h = h_mul(x, self.embed)
         if self.bias:
             h = h_add(h, self.embed_bias)
-        neigh = exp_map_zero(torch.mm(adj, log_map_zero(h)).sum(dim=1))
-        h = h_mul(self.layer, torch.cat((x, neigh)))
+        neigh = exp_map_zero(torch.mm(adj, log_map_zero(h)))
+        h = h_mul(torch.cat((x, neigh), dim=1), self.layer)
         if self.bias:
             h = h_add(h, self.layer_bias)
         return h
@@ -148,8 +148,8 @@ class HGNN(nn.Module):
         # 0-projection to Poincare Hyperbolic space.
         h = self.init_layer(x)
         for i, layer in enumerate(self.layers):
-            h = layer(x, adj)
-            if i != len(layer)-1:
+            h = layer(h, adj)
+            if i != len(self.layers)-1:
                 h = exp_map_zero(self.activation(log_map_zero(h)))
                 h = self.dropout(h)
         return h
@@ -177,7 +177,7 @@ class HGNN_NODE(nn.Module):
         """
 
         node_repr = self.activation(self.input_embedding(features))
-        mask = torch.ones((features.shape[0], 1)).cuda()  # [node_num, 1]
+        mask = torch.ones((features.shape[0], 1)) # [node_num, 1]
         node_repr = self.hgnn(node_repr, adj)  # [node_num, embed_size]
         _, node_centroid_sim = self.distance(node_repr, mask)  # [1, node_num, num_centroid]
         class_logit = self.output_linear(node_centroid_sim.squeeze())

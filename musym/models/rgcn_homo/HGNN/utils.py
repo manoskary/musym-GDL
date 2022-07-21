@@ -33,7 +33,7 @@ def log_map_zero(v, eps=1e-5):
     """
     diff = v + eps
     norm_diff = torch.norm(v, 2, 1, keepdim=True)
-    atanh = torch.min(norm_diff, torch.Tensor([1.0 - eps]).to(v.get_device()))
+    atanh = torch.min(norm_diff, torch.Tensor([1.0 - eps])) #.to(v.get_device()))
     return 1. / atanh / norm_diff * diff
 
 
